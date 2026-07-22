@@ -57,19 +57,15 @@ filter_chains:
     let _proxy = start_full_proxy(&config);
     wait_for_tcp(&format!("127.0.0.1:{proxy_port}"));
 
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{proxy_port}"))
-        .expect("should connect to proxy listener");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{proxy_port}")).expect("should connect to proxy listener");
+    stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     drop(stream.write_all(b"hello"));
 
-    let mut buf = vec![0u8; 128];
+    let mut buf = vec![0_u8; 128];
     let n = stream.read(&mut buf).unwrap_or(0);
     assert_eq!(
         n, 0,
-        "proxy should close connection without forwarding to private upstream, got {} bytes",
-        n
+        "proxy should close connection without forwarding to private upstream, got {n} bytes",
     );
 }
 
@@ -111,19 +107,13 @@ filter_chains:
     let _proxy = start_full_proxy(&config);
     wait_for_tcp(&format!("127.0.0.1:{proxy_port}"));
 
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{proxy_port}"))
-        .expect("should connect to proxy listener");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{proxy_port}")).expect("should connect to proxy listener");
+    stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     stream.write_all(b"hello").unwrap();
 
-    let mut buf = vec![0u8; 128];
+    let mut buf = vec![0_u8; 128];
     let n = stream.read(&mut buf).expect("should receive data from backend");
-    assert!(
-        n > 0,
-        "with allow_private_upstreams, proxy should forward to backend"
-    );
+    assert!(n > 0, "with allow_private_upstreams, proxy should forward to backend");
     let resp = String::from_utf8_lossy(&buf[..n]);
     assert!(
         resp.contains("hello"),
