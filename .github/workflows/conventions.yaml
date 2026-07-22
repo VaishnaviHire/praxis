@@ -279,10 +279,10 @@ jobs:
           fi
 
   # ----------------------------------------------------------------------------
-  # AI Authorship Check
+  # Authorship Check
   # ----------------------------------------------------------------------------
 
-  ai-authorship-check:
+  authorship-check:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     steps:
@@ -298,14 +298,6 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          labels=$(gh pr view "$PR_NUMBER" \
-            --repo "${{ github.repository }}" \
-            --json labels -q '.labels[].name')
-          if echo "$labels" | grep -q '^skip/ai-authorship$'; then
-            echo "skip/ai-authorship label present — skipping"
-            exit 0
-          fi
-
           commits=$(gh api \
             "repos/${{ github.repository }}/pulls/${PR_NUMBER}/commits" \
             --paginate)
@@ -363,14 +355,15 @@ jobs:
               gh pr comment "$PR_NUMBER" \
                 --repo "${{ github.repository }}" \
                 --body "${marker}
-          **AI tool authorship detected**:
+          **Tool authorship detected**:
 
           ${violations}
 
-          Sorry, this project does not accept commits authored by tools as valid.
-          Commits need to be authored by and signed-off by the human(s) responsible for the PR, with their name and contact."
+          This project doesn't allow commits which are authored or signed-off by tools.
+          Commits need to be authored by and signed-off by the human(s) responsible for the PR, with their name and contact.
+          Please see our development documentation for more details."
             fi
-            echo "::error::AI tool authorship found in PR commits"
+            echo "::error::Tool authorship found in PR commits"
             exit 1
           fi
 
