@@ -34,39 +34,49 @@ Maintainers have write access to one or more
 repositories and are responsible for the direction
 and quality of the project within their area.
 
-Praxis defines two maintainer scopes:
+Praxis defines three maintainer scopes:
 
-- **Core Maintainers** oversee the proxy framework,
-  operator, and ExtProc components.
-- **AI Maintainers** oversee the AI gateway and
-  related components.
+- **Project Lead** oversee all aspects of the
+  project and all repositories.
+- **Core Maintainers** oversee the core proxy
+  framework and server builds.
+- **AI Maintainers** oversee the AI capabilities and
+  AI server builds.
 
 All maintainers share equal authority within their
 scope.
 
-### Project Lead
+#### Project Lead
 
-The Project Lead is a Core Maintainer who serves as
-the final decision-maker when consensus cannot be
-reached. The initial Project Lead is
-[@shaneutt](https://github.com/shaneutt).
+The Project Lead is a maintainer who oversees all
+aspects of the project and all repositories. They
+serve as the final decision-maker when consensus
+cannot be reached.
+
+The Project Lead is [@shaneutt](https://github.com/shaneutt).
 
 ### Emeritus
 
 Maintainers who step down or become inactive are
 moved to Emeritus status. Emeritus maintainers are
-recognized for their contributions but do not hold
-voting rights or write access.
+recognized for their contributions but generally
+don't hold any specific position or responsibilities.
 
 ## Becoming a Maintainer
 
 To be nominated as a maintainer:
 
-1. Sustained contributions over at least 3 months
-2. Demonstrated understanding of the codebase and
-   project goals
-3. Nomination by an existing maintainer
-4. Approval by the Project Lead
+1. Sustained contributions over at least 6 months
+2. Demonstrated understanding of the codebase, the
+   underlying technologies and the project goals
+3. Demonstrates **being a good net-citizen**: is patient
+   and respectful to everyone else. Guides productive
+   conversation and seeks progress and resolutions.
+   Demonstrates a will to **put the good of the project
+   and the community above theirs or their organizations
+   needs**.
+5. Nomination by an existing maintainer
+6. Approval by the Project Lead
 
 Nominations are made via a GitHub issue. The
 nominee should have a track record of quality
@@ -78,16 +88,16 @@ alignment with the project's direction.
 Maintainers may step down at any time by notifying
 the Project Lead. They will be moved to Emeritus.
 
-If a maintainer is inactive for 6 or more months
+If a maintainer is inactive for 3 or more months
 (no commits, reviews, or issue activity), a
 conversation will be initiated. If inactivity
 continues, they will be moved to Emeritus with
-an open invitation to return.
+potential to return later.
 
 ## Decision Making
 
 Decisions are made by lazy consensus among
-maintainers. Silence is consent.
+maintainers. Silence is _not_ consent.
 
 When consensus cannot be reached:
 
@@ -101,10 +111,11 @@ When consensus cannot be reached:
   document, role changes, maintainer removal):
   two-thirds supermajority of all maintainers.
 
-If a vote is tied or contested, the Project Lead
-makes the final call.
+If a vote is tied, contested, or there's a lack of
+engagement (e.g. silence) the Project Lead makes the
+call.
 
-Votes are cast via GitHub issue comments and remain
+Votes are cast via GitHub discussion comments and remain
 open for at least one week.
 
 ## Code of Conduct
