@@ -13,9 +13,9 @@ pub(in crate::http::pingora::handler) fn is_reserved_internal_header(name: &http
     praxis_core::reserved_headers::is_reserved(name.as_str())
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]

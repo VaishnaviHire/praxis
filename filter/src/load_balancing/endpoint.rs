@@ -94,9 +94,9 @@ mod tests {
         assert!(weighted.is_empty(), "empty cluster should produce empty vec");
     }
 
-    // ---------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Test Utilities
-    // ---------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     /// Assert a [`WeightedEndpoint`] has the expected address, weight, and index.
     fn assert_endpoint(ep: &WeightedEndpoint, addr: &str, weight: u32, index: usize) {

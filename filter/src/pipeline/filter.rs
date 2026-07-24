@@ -10,9 +10,9 @@ use praxis_core::config::{Condition, FailureMode, ResponseCondition};
 use super::branch::ResolvedBranch;
 use crate::any_filter::AnyFilter;
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // PipelineFilter
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 
 /// A filter with its conditions and branches.
 ///
