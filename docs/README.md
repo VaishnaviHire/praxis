@@ -19,6 +19,8 @@ and security. AI Gateway docs live in
   all built-in filter configurations
 - [TLS](operating/tls.md):
   certificates, mTLS, SNI, hot-reload
+- [Observability](operating/observability.md):
+  Prometheus metrics, access logs, admin endpoints
 - [Health Checking](operating/health-checking.md):
   active/passive probes, thresholds, admin endpoints
 - [Security Hardening](operating/security-hardening.md):
