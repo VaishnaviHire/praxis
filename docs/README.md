@@ -49,6 +49,8 @@ and security. AI Gateway docs live in
   body access, StreamBuffer, conditions
 - [Crate Layout](architecture/crate-layout.md):
   workspace structure, module tree, dependency graph
+- [TCP Proxy](architecture/tcp-proxy.md):
+  SNI peek-and-forward, timeout layering, SSRF
 - [HTTP Correctness](architecture/http-correctness.md):
   RFC enforcement, Pingora boundary
 
