@@ -6,8 +6,7 @@
 use std::collections::HashMap;
 
 use praxis_test_utils::{
-    free_port, http_send, parse_body, parse_status, start_backend_with_shutdown,
-    start_header_echo_backend, start_proxy,
+    free_port, http_send, parse_body, parse_status, start_backend_with_shutdown, start_header_echo_backend, start_proxy,
 };
 
 use super::load_example_config;
