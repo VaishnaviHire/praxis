@@ -23,6 +23,9 @@ and security. AI Gateway docs live in
   Prometheus metrics, access logs, admin endpoints
 - [Health Checking](operating/health-checking.md):
   active/passive probes, thresholds, admin endpoints
+- [Load Balancing](operating/load-balancing.md):
+  strategy selection, weighted endpoints, health-aware
+  routing
 - [Security Hardening](operating/security-hardening.md):
   production deployment guidance
 
