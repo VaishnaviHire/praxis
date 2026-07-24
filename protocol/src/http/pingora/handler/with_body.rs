@@ -2,6 +2,14 @@
 // Copyright (c) 2024 Praxis Contributors
 
 //! Pingora HTTP handler with body filter hooks enabled.
+//!
+//! [`PingoraHttpHandler`] is the full-featured `ProxyHttp` implementation
+//! used when the pipeline's [`BodyCapabilities`] declare request or
+//! response body access. It delegates each Pingora lifecycle hook to
+//! the corresponding submodule and enables Pingora's compression
+//! module when a compression filter is configured.
+//!
+//! [`BodyCapabilities`]: praxis_filter::body::BodyCapabilities
 
 use std::{sync::Arc, time::Duration};
 

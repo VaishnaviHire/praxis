@@ -1,7 +1,17 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2024 Praxis Contributors
 
-//! Network listener configuration: bind address, protocol, TLS, and filter chains.
+//! Network listener configuration: bind address, protocol, TLS, and
+//! filter chains.
+//!
+//! Each [`Listener`] maps to one bound socket. It declares the
+//! protocol ([`ProtocolKind`]), optional TLS settings, filter chain
+//! references, timeout overrides, and connection limits. The server
+//! creates one Pingora service per listener at startup; filter
+//! chains are resolved into a [`FilterPipeline`] by the build step.
+//!
+//! [`ProtocolKind`]: ProtocolKind
+//! [`FilterPipeline`]: praxis_filter::FilterPipeline
 
 pub use praxis_tls::ListenerTls;
 use serde::Deserialize;

@@ -2,6 +2,17 @@
 // Copyright (c) 2024 Praxis Contributors
 
 //! Pingora `ProxyHttp` implementation: the main HTTP reverse-proxy handler.
+//!
+//! Bridges Pingora's hook-based lifecycle (`request_filter`,
+//! `upstream_peer`, `upstream_request_filter`, etc.) to the Praxis
+//! [`FilterPipeline`]. Two handler variants exist: [`PingoraHttpHandler`]
+//! enables body filter hooks when the pipeline declares body access;
+//! [`PingoraHttpHandlerNoBody`] skips them for zero-overhead forwarding.
+//!
+//! Each submodule implements one Pingora hook. The pipeline is held
+//! behind `Arc<ArcSwap<FilterPipeline>>` for lock-free hot reload.
+//!
+//! [`FilterPipeline`]: praxis_filter::FilterPipeline
 
 use std::{sync::Arc, time::Duration};
 

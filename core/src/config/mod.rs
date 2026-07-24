@@ -2,6 +2,20 @@
 // Copyright (c) 2024 Praxis Contributors
 
 //! YAML configuration parsing, defaults, and validation.
+//!
+//! Defines [`Config`], the root struct deserialized from `praxis.yaml`.
+//! Submodules provide per-section types ([`Listener`], [`RuntimeConfig`],
+//! [`AdminConfig`], [`BodyLimitsConfig`]), filter chain and branch chain
+//! models, and a validation pass that checks structural invariants
+//! before the server starts. The [`bootstrap`] module handles config
+//! file discovery and fallback resolution.
+//!
+//! [`Config`]: Config
+//! [`Listener`]: listener::Listener
+//! [`RuntimeConfig`]: runtime::RuntimeConfig
+//! [`AdminConfig`]: admin::AdminConfig
+//! [`BodyLimitsConfig`]: body_limits::BodyLimitsConfig
+//! [`bootstrap`]: bootstrap
 
 use std::path::Path;
 

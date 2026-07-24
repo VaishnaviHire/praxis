@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2024 Praxis Contributors
 
-//! Runtime tuning: worker thread count, work-stealing toggle, logging overrides, and upstream CA.
+//! Runtime tuning: worker thread count, work-stealing toggle, logging
+//! overrides, and upstream CA.
+//!
+//! [`RuntimeConfig`] controls Tokio and Pingora runtime parameters
+//! that are fixed for the lifetime of the process (not hot-reloadable).
+//! The server module reads these values once at startup to configure
+//! the thread pool, upstream keepalive pool, and global CA trust.
 
 use std::collections::HashMap;
 

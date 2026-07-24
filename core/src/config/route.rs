@@ -2,6 +2,12 @@
 // Copyright (c) 2024 Praxis Contributors
 
 //! Shorthand routing rules.
+//!
+//! [`PathMatch`] and [`Route`] provide the YAML-level routing model
+//! consumed by the router filter. Routes match requests by path
+//! (exact or prefix), optional host, and optional header predicates,
+//! then select a target cluster. These types are config-only; runtime
+//! matching logic lives in the router filter's `matching` module.
 
 use std::{collections::HashMap, sync::Arc};
 

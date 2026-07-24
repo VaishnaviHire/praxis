@@ -2,6 +2,14 @@
 // Copyright (c) 2026 Praxis Contributors
 
 //! Reserved internal header helpers for proxy-owned routing metadata.
+//!
+//! Headers prefixed with `x-praxis-` and AI extension prefixes are
+//! proxy-internal routing metadata that must never be forwarded to
+//! clients or leaked from upstream responses. This module wraps the
+//! core [`is_reserved`] check for use in the upstream response and
+//! response filter hooks.
+//!
+//! [`is_reserved`]: praxis_core::reserved_headers::is_reserved
 
 /// Return whether a header name belongs to Praxis reserved internal metadata.
 ///
