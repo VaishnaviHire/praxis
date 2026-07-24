@@ -8,10 +8,7 @@
 //! protocol ([`ProtocolKind`]), optional TLS settings, filter chain
 //! references, timeout overrides, and connection limits. The server
 //! creates one Pingora service per listener at startup; filter
-//! chains are resolved into a [`FilterPipeline`] by the build step.
-//!
-//! [`ProtocolKind`]: ProtocolKind
-//! [`FilterPipeline`]: praxis_filter::FilterPipeline
+//! chains are resolved into a pipeline by the build step.
 
 pub use praxis_tls::ListenerTls;
 use serde::Deserialize;

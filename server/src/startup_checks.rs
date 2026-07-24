@@ -233,6 +233,7 @@ mod tests {
 
     #[test]
     fn warn_insecure_options_each_flag_produces_one_warning() {
+        #[expect(clippy::type_complexity, reason = "test-local inline table")]
         let flags: &[(&str, fn(&mut InsecureOptions))] = &[
             ("allow_unbounded_body", |o| o.allow_unbounded_body = true),
             ("allow_open_security_filters", |o| o.allow_open_security_filters = true),
@@ -277,10 +278,11 @@ mod tests {
 
     #[test]
     fn warn_insecure_options_pipeline_check_flags_each_produce_warning() {
+        #[expect(clippy::type_complexity, reason = "test-local inline table")]
         let flags: &[(&str, fn(&mut SkipPipelineChecks))] = &[
             ("conditional_security", |s| s.conditional_security = true),
             ("conflicting_cluster_selectors", |s| {
-                s.conflicting_cluster_selectors = true
+                s.conflicting_cluster_selectors = true;
             }),
             ("duplicate_load_balancers", |s| s.duplicate_load_balancers = true),
             ("duplicate_rewrite_filters", |s| s.duplicate_rewrite_filters = true),
