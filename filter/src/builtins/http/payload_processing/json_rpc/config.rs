@@ -47,7 +47,7 @@ pub const DEFAULT_MAX_BATCH_SIZE: usize = 100;
 /// [`Reject`]: BatchPolicy::Reject
 /// [`First`]: BatchPolicy::First
 /// [`max_batch_size`]: JsonRpcConfig::max_batch_size
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum BatchPolicy {
     /// Reject all JSON-RPC batch arrays with HTTP 400.
@@ -78,7 +78,7 @@ pub enum BatchPolicy {
 // -----------------------------------------------------------------------------
 
 /// Header configuration for JSON-RPC metadata promotion.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JsonRpcHeaders {
     /// Header name for JSON-RPC id (e.g., `X-Json-Rpc-Id`).

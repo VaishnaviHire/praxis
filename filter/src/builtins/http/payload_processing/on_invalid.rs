@@ -13,7 +13,7 @@ use serde::Deserialize;
 ///
 /// Used by classifier filters (e.g. JSON-RPC) to control what happens
 /// when parsing fails.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum OnInvalidBehavior {
     /// Continue processing without classifier metadata.

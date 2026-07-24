@@ -19,7 +19,7 @@ use praxis_core::config::Cluster;
 /// assert_eq!(ep.weight, 3);
 /// assert_eq!(ep.index, 0);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct WeightedEndpoint {
     /// Socket address as `host:port`.
     pub(crate) address: Arc<str>,

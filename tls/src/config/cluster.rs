@@ -28,7 +28,7 @@ use crate::TlsError;
 /// assert_eq!(tls.sni.as_deref(), Some("api.example.com"));
 /// assert!(tls.verify);
 /// ```
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ClusterTls {
     /// Custom CA for verifying upstream certs.
     #[serde(skip_serializing_if = "Option::is_none")]

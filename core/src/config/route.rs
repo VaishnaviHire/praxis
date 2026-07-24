@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// [`Exact`]: PathMatch::Exact
 /// [`Prefix`]: PathMatch::Prefix
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum PathMatch {
     /// Exact path match.
@@ -151,7 +151,7 @@ impl PathMatch {
 /// assert!(route.path_match.is_exact());
 /// assert_eq!(route.path_match.value(), "/one");
 /// ```
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Route {
     /// Path matching strategy (exact or prefix).
     #[serde(flatten)]

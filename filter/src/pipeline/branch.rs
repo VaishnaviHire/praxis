@@ -33,7 +33,7 @@ use crate::actions::Rejection;
 // -----------------------------------------------------------------------------
 
 /// Where to resume after a branch completes.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum RejoinTarget {
     /// Continue with the next filter (default).
     Next,

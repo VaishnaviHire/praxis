@@ -58,7 +58,7 @@ const MAX_VALUE_LEN: usize = 256;
 /// assert!(results.matches("status", "hit"));
 /// assert!(!results.matches("status", "miss"));
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct FilterResultSet {
     /// Key-value result entries.
     entries: HashMap<Cow<'static, str>, Cow<'static, str>>,

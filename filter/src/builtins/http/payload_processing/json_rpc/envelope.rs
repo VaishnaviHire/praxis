@@ -13,7 +13,7 @@ use crate::builtins::http::payload_processing::OnInvalidBehavior;
 // -----------------------------------------------------------------------------
 
 /// JSON-RPC message kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JsonRpcKind {
     /// Request with id (expects response).
     Request,
@@ -41,7 +41,7 @@ impl JsonRpcKind {
 }
 
 /// JSON-RPC id type classification.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JsonRpcIdKind {
     /// String id.
     String,
@@ -73,7 +73,7 @@ impl JsonRpcIdKind {
 }
 
 /// Parsed JSON-RPC envelope metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsonRpcEnvelope {
     /// Batch length (for batches only).
     pub batch_len: Option<usize>,
@@ -92,7 +92,7 @@ pub struct JsonRpcEnvelope {
 // -----------------------------------------------------------------------------
 
 /// JSON-RPC parsing error.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum JsonRpcParseError {
     /// Batch array exceeds [`max_batch_size`].
     ///

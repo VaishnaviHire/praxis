@@ -74,7 +74,7 @@ pub(crate) async fn dispatch_kv_request(registry: &KvStoreRegistry, session: &mu
 }
 
 /// Resolved KV API route from method + path.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Eq, PartialEq)]
 enum KvRoute {
     /// `GET /api/kv/{store}`
     List(String),
