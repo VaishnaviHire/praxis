@@ -431,7 +431,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "benchmarks"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -2948,7 +2948,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-proxy"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cargo_metadata",
  "clap",
@@ -2969,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-proxy-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "dashmap 6.2.1",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-proxy-filter"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-proxy-protocol"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3046,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-proxy-tls"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "arc-swap",
  "notify",
@@ -3064,7 +3064,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-test-utils"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3091,7 +3091,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-tests-conformance"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "h2",
  "http",
@@ -3104,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-tests-integration"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3133,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-tests-resilience"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "benchmarks",
@@ -3149,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-tests-schema"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3164,7 +3164,7 @@ dependencies = [
 
 [[package]]
 name = "praxis-tests-security"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "praxis-proxy-core",
  "praxis-proxy-filter",
@@ -5462,7 +5462,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "benchmarks",
  "chrono",
