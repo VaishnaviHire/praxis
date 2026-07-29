@@ -106,6 +106,7 @@ page.
 
 | File | Description |
 | ------ | ------------- |
+| [basic-auth.yaml](configs/security/basic-auth.yaml) | Authenticate requests using HTTP Basic Authentication (RFC 7617) |
 | [cors.yaml](configs/security/cors.yaml) | Spec-compliant CORS filter with preflight handling, origin validation, and credential support |
 | [credential-injection.yaml](configs/security/credential-injection.yaml) | Injects per-cluster API credentials into upstream requests |
 | [csrf.yaml](configs/security/csrf.yaml) | Cross-site request forgery protection via origin validation |
