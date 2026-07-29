@@ -309,7 +309,7 @@ fn parse_sni_extension(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
             let hostname = std::str::from_utf8(name_bytes).map_err(|_utf8| SniParseError::InvalidHostname)?;
 
             reject_ip_literal(hostname)?;
-            validate_dns_hostname(hostname)?;
+            crate::dns::validate_dns_hostname(hostname).map_err(|_dns| SniParseError::InvalidHostname)?;
 
             return Ok(ClientHelloInfo {
                 sni: Some(hostname.to_owned()),
@@ -365,30 +365,6 @@ fn reject_ip_literal(hostname: &str) -> Result<(), SniParseError> {
     Ok(())
 }
 
-/// Reject hostnames that are not valid DNS names.
-///
-/// Labels must be 1-63 ASCII alphanumeric/hyphen characters with
-/// no leading or trailing hyphens. Total hostname length must not
-/// exceed 253 characters per [RFC 1035].
-///
-/// [RFC 1035]: https://datatracker.ietf.org/doc/html/rfc1035
-fn validate_dns_hostname(hostname: &str) -> Result<(), SniParseError> {
-    if hostname.len() > 253 {
-        return Err(SniParseError::InvalidHostname);
-    }
-    for label in hostname.split('.') {
-        if label.is_empty() || label.len() > 63 {
-            return Err(SniParseError::InvalidHostname);
-        }
-        if !label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-            return Err(SniParseError::InvalidHostname);
-        }
-        if label.starts_with('-') || label.ends_with('-') {
-            return Err(SniParseError::InvalidHostname);
-        }
-    }
-    Ok(())
-}
 
 // -----------------------------------------------------------------------------
 // Tests
@@ -712,35 +688,38 @@ mod tests {
 
     #[test]
     fn dns_validation_accepts_valid_hostname() {
-        assert!(validate_dns_hostname("example.com").is_ok());
-        assert!(validate_dns_hostname("a-b.example.com").is_ok());
-        assert!(validate_dns_hostname("sub.domain.example.com").is_ok());
+        assert!(crate::dns::validate_dns_hostname("example.com").is_ok());
+        assert!(crate::dns::validate_dns_hostname("a-b.example.com").is_ok());
+        assert!(crate::dns::validate_dns_hostname("sub.domain.example.com").is_ok());
     }
 
     #[test]
     fn dns_validation_rejects_leading_hyphen() {
         assert_eq!(
-            validate_dns_hostname("-example.com"),
-            Err(SniParseError::InvalidHostname),
-            "leading hyphen should be rejected"
+            crate::dns::validate_dns_hostname("-example.com"),
+            Err(crate::dns::DnsHostnameError::Label(
+                crate::dns::DnsLabelError::HyphenBoundary
+            )),
         );
     }
 
     #[test]
     fn dns_validation_rejects_trailing_hyphen() {
         assert_eq!(
-            validate_dns_hostname("example-.com"),
-            Err(SniParseError::InvalidHostname),
-            "trailing hyphen should be rejected"
+            crate::dns::validate_dns_hostname("example-.com"),
+            Err(crate::dns::DnsHostnameError::Label(
+                crate::dns::DnsLabelError::HyphenBoundary
+            )),
         );
     }
 
     #[test]
     fn dns_validation_rejects_space() {
         assert_eq!(
-            validate_dns_hostname("ex ample.com"),
-            Err(SniParseError::InvalidHostname),
-            "space in hostname should be rejected"
+            crate::dns::validate_dns_hostname("ex ample.com"),
+            Err(crate::dns::DnsHostnameError::Label(
+                crate::dns::DnsLabelError::InvalidCharacter
+            )),
         );
     }
 
@@ -749,9 +728,10 @@ mod tests {
         let long_label = "a".repeat(64);
         let hostname = format!("{long_label}.com");
         assert_eq!(
-            validate_dns_hostname(&hostname),
-            Err(SniParseError::InvalidHostname),
-            "label >63 chars should be rejected"
+            crate::dns::validate_dns_hostname(&hostname),
+            Err(crate::dns::DnsHostnameError::Label(
+                crate::dns::DnsLabelError::LabelTooLong
+            )),
         );
     }
 
@@ -759,34 +739,35 @@ mod tests {
     fn dns_validation_rejects_total_over_253_chars() {
         let hostname = format!("{}.com", "a".repeat(250));
         assert_eq!(
-            validate_dns_hostname(&hostname),
-            Err(SniParseError::InvalidHostname),
-            "hostname >253 chars should be rejected"
+            crate::dns::validate_dns_hostname(&hostname),
+            Err(crate::dns::DnsHostnameError::HostnameTooLong),
         );
     }
 
     #[test]
     fn dns_validation_rejects_control_chars() {
         assert_eq!(
-            validate_dns_hostname("host\r\nname.com"),
-            Err(SniParseError::InvalidHostname),
-            "CRLF in hostname should be rejected"
+            crate::dns::validate_dns_hostname("host\r\nname.com"),
+            Err(crate::dns::DnsHostnameError::Label(
+                crate::dns::DnsLabelError::InvalidCharacter
+            )),
         );
     }
 
     #[test]
     fn trailing_dot_hostname_rejected() {
         assert_eq!(
-            validate_dns_hostname("example.com."),
-            Err(SniParseError::InvalidHostname),
-            "trailing dot produces an empty label which should be rejected"
+            crate::dns::validate_dns_hostname("example.com."),
+            Err(crate::dns::DnsHostnameError::Label(
+                crate::dns::DnsLabelError::EmptyLabel
+            )),
         );
     }
 
     #[test]
     fn single_label_hostname_accepted() {
         assert!(
-            validate_dns_hostname("localhost").is_ok(),
+            crate::dns::validate_dns_hostname("localhost").is_ok(),
             "single-label hostname like 'localhost' should be accepted"
         );
     }
