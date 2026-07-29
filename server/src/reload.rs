@@ -54,7 +54,7 @@ pub(crate) fn reload_pipelines(
     live: &ListenerPipelines,
     health_shutdown: &Arc<Mutex<CancellationToken>>,
     kv_stores: &praxis_core::kv::KvStoreRegistry,
-    subrequest_connector: &praxis_core::subrequest::SubRequestConnector,
+    subrequest_client: &praxis_core::subrequest::SubRequestClient,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("building new pipelines from reloaded config");
 
@@ -65,8 +65,13 @@ pub(crate) fn reload_pipelines(
 
     let health_registry = build_health_registry(&new_config.clusters);
 
-    let new_pipelines = match resolve_pipelines(new_config, registry, &health_registry, kv_stores, subrequest_connector)
-    {
+    let new_ceiling = new_config.body_limits.max_response_bytes.unwrap_or(usize::MAX);
+    let updated_client = praxis_core::subrequest::SubRequestClient::with_max_response_bytes(
+        subrequest_client.connector().clone(),
+        new_ceiling,
+    );
+
+    let new_pipelines = match resolve_pipelines(new_config, registry, &health_registry, kv_stores, &updated_client) {
         Ok(p) => p,
         Err(e) => {
             error!(error = %e, "config reload failed: pipeline build error");
@@ -186,7 +191,7 @@ mod tests {
             &live,
             &shutdown,
             &empty_kv_stores(),
-            &empty_subrequest_connector(),
+            &empty_subrequest_client(),
         );
 
         assert!(result.is_ok(), "valid reload should succeed");
@@ -220,7 +225,7 @@ filter_chains:
             &live,
             &shutdown,
             &empty_kv_stores(),
-            &empty_subrequest_connector(),
+            &empty_subrequest_client(),
         );
         assert!(result.is_err(), "invalid filter should return Err");
 
@@ -241,7 +246,7 @@ filter_chains:
             &live,
             &shutdown,
             &empty_kv_stores(),
-            &empty_subrequest_connector(),
+            &empty_subrequest_client(),
         )
         .unwrap();
 
@@ -264,7 +269,7 @@ filter_chains:
             &live,
             &shutdown,
             &empty_kv_stores(),
-            &empty_subrequest_connector(),
+            &empty_subrequest_client(),
         )
         .unwrap();
 
@@ -302,7 +307,7 @@ filter_chains:
             &live,
             &shutdown,
             &empty_kv_stores(),
-            &empty_subrequest_connector(),
+            &empty_subrequest_client(),
         );
         assert!(
             !old_token.is_cancelled(),
@@ -339,7 +344,7 @@ filter_chains:
             &live,
             &shutdown,
             &empty_kv_stores(),
-            &empty_subrequest_connector(),
+            &empty_subrequest_client(),
         );
         assert!(result.is_ok(), "reload with new listener should succeed");
         assert!(
@@ -931,7 +936,7 @@ filter_chains:
             &registry,
             &health_registry,
             &empty_kv_stores(),
-            &empty_subrequest_connector(),
+            &empty_subrequest_client(),
         )
         .unwrap();
         let shutdown = Arc::new(Mutex::new(CancellationToken::new()));
@@ -943,8 +948,8 @@ filter_chains:
         praxis_core::kv::KvStoreRegistry::new()
     }
 
-    /// Empty sub-request connector for tests.
-    fn empty_subrequest_connector() -> praxis_core::subrequest::SubRequestConnector {
-        praxis_core::subrequest::SubRequestConnector::new(8, None)
+    /// Empty sub-request client for tests.
+    fn empty_subrequest_client() -> praxis_core::subrequest::SubRequestClient {
+        praxis_core::subrequest::SubRequestClient::new(praxis_core::subrequest::SubRequestConnector::new(8, None))
     }
 }
