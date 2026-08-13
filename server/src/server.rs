@@ -107,9 +107,12 @@ pub fn run_server_with_registry(config: Config, registry: FilterRegistry, config
     register_admin_endpoints(
         &mut server,
         &config,
-        health_registry,
-        &state.kv_stores,
-        (Arc::clone(&state.pipelines), Arc::clone(&state.listener_meta)),
+        praxis_protocol::http::pingora::health::AdminEndpointOptions {
+            health_registry: Some(health_registry),
+            kv_registry: Some(state.kv_stores.clone()),
+            pipelines: Some((Arc::clone(&state.pipelines), Arc::clone(&state.listener_meta))),
+            verbose: config.admin.verbose,
+        },
         prometheus_recorder,
     );
 
@@ -263,24 +266,14 @@ fn spawn_watcher(
 fn register_admin_endpoints(
     server: &mut PingoraServerRuntime,
     config: &Config,
-    health_registry: HealthRegistry,
-    kv_stores: &praxis_core::kv::KvStoreRegistry,
-    pipelines_admin: (
-        Arc<ListenerPipelines>,
-        praxis_protocol::http::pingora::health::ListenerMetaStore,
-    ),
+    options: praxis_protocol::http::pingora::health::AdminEndpointOptions,
     prometheus_recorder: Option<praxis_protocol::http::pingora::health::PrometheusAdminRecorder>,
 ) {
     if let (Some(admin_addr), Some(prometheus_recorder)) = (&config.admin.address, prometheus_recorder) {
         praxis_protocol::http::pingora::health::add_admin_endpoints_to_pingora_server_with_recorder(
             server.server_mut(),
             admin_addr,
-            praxis_protocol::http::pingora::health::AdminEndpointOptions {
-                health_registry: Some(health_registry),
-                kv_registry: Some(kv_stores.clone()),
-                pipelines: Some(pipelines_admin),
-                verbose: config.admin.verbose,
-            },
+            options,
             prometheus_recorder,
         );
     }
