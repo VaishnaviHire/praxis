@@ -83,7 +83,14 @@ influence downstream processing:
 Request `conditions` gate both the request and body
 hooks. Response `response_conditions` gate only the
 response hooks. A filter skipped on request is also
-skipped on response.
+skipped on response and on both body hooks. A filter
+that never saw the request headers is never handed the
+body either.
+
+The one exception is a `stream_buffer` pre-read, which
+runs the request-body hooks *before* the request phase.
+Nothing has been skipped at that point, so every filter
+declaring request-body access runs.
 
 ### Common Patterns
 
@@ -482,7 +489,7 @@ Use `path` for exact matching (e.g., health checks on `/`):
   body: "ok"
 ```
 
-Skipped on request = skipped on response.
+Skipped on request = skipped on response and on body hooks.
 
 ### Response Conditions
 

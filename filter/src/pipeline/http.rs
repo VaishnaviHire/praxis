@@ -168,10 +168,18 @@ impl FilterPipeline {
     ) -> Result<FilterAction, FilterError> {
         ensure_body_done_indices(ctx, self.filters.len());
         accumulate_body_bytes(&mut ctx.request_body_bytes, body);
+        let request_phase_tracked = request_phase_tracked(ctx, self.filters.len());
         let mut released = false;
         for (idx, pf) in self.filters.iter().enumerate() {
             if ctx.body_done_indices.get(idx) == Some(&true) {
                 trace!(filter = pf.filter.name(), "skipped body (body_done)");
+                continue;
+            }
+            if skipped_in_request_phase(ctx, request_phase_tracked, idx) {
+                trace!(
+                    filter = pf.filter.name(),
+                    "skipped request body (not executed in request phase)"
+                );
                 continue;
             }
             let Some(http_filter) = as_request_body_filter(&pf.filter, &pf.conditions, ctx.request) else {
@@ -230,6 +238,7 @@ impl FilterPipeline {
     ///
     /// Returns [`FilterError`] if any body filter fails.
     #[expect(clippy::indexing_slicing, reason = "idx bounded by filters.len()")]
+    #[expect(clippy::too_many_lines, reason = "body hook loop with per-filter skip checks")]
     pub fn execute_http_response_body_with_response_header(
         &self,
         ctx: &mut HttpFilterContext<'_>,
@@ -239,10 +248,18 @@ impl FilterPipeline {
     ) -> Result<FilterAction, FilterError> {
         ensure_body_done_indices(ctx, self.filters.len());
         accumulate_body_bytes(&mut ctx.response_body_bytes, body);
+        let request_phase_tracked = request_phase_tracked(ctx, self.filters.len());
         let mut released = false;
         for (idx, pf) in self.filters.iter().enumerate().rev() {
             if ctx.body_done_indices.get(idx) == Some(&true) {
                 trace!(filter = pf.filter.name(), "skipped body (body_done)");
+                continue;
+            }
+            if skipped_in_request_phase(ctx, request_phase_tracked, idx) {
+                trace!(
+                    filter = pf.filter.name(),
+                    "skipped response body (not executed in request phase)"
+                );
                 continue;
             }
             let Some(http_filter) = as_response_body_filter(&pf.filter, &pf.response_conditions, response_header)
@@ -279,4 +296,32 @@ fn ensure_body_done_indices(ctx: &mut HttpFilterContext<'_>, filter_count: usize
     if ctx.body_done_indices.len() != filter_count {
         ctx.body_done_indices.resize(filter_count, false);
     }
+}
+
+/// Whether the request phase has populated [`executed_filter_indices`].
+///
+/// [`execute_http_request`] clears and resizes the vector to the filter
+/// count, so a matching length means the request phase has run and the
+/// entries are meaningful. Any other length means it has not, which is
+/// the normal state during a `StreamBuffer` pre-read: that runs the
+/// request-body hooks *before* the request phase, so there is nothing to
+/// gate on and every eligible filter must run.
+///
+/// [`executed_filter_indices`]: HttpFilterContext::executed_filter_indices
+/// [`execute_http_request`]: FilterPipeline::execute_http_request
+fn request_phase_tracked(ctx: &HttpFilterContext<'_>, filter_count: usize) -> bool {
+    ctx.executed_filter_indices.len() == filter_count
+}
+
+/// Whether a filter was bypassed during the request phase and so must
+/// also be bypassed for body hooks.
+///
+/// Mirrors the rule [`execute_http_response`] applies to response
+/// headers: a filter that branch control flow skipped over — via
+/// `SkipTo` or a terminal branch — has not seen the request, so handing
+/// it the body would run half a filter's lifecycle.
+///
+/// [`execute_http_response`]: FilterPipeline::execute_http_response
+fn skipped_in_request_phase(ctx: &HttpFilterContext<'_>, tracked: bool, idx: usize) -> bool {
+    tracked && ctx.executed_filter_indices.get(idx) == Some(&false)
 }
