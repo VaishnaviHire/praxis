@@ -147,6 +147,9 @@ pub(in crate::http) async fn execute(
             headers_to_remove,
             headers_to_set,
         }) => {
+            // Mirror of `apply_pending_header_mutations`, which applied the
+            // same three lists to `ctx.request_snapshot` in the same
+            // remove -> set -> add order. Keep the two in step.
             let req_headers = session.req_header_mut();
             for name in &headers_to_remove {
                 let _remove = req_headers.remove_header(name);
@@ -250,11 +253,17 @@ async fn run_pipeline(
         )
     };
 
-    // Apply pipeline headers_to_remove to request_snapshot so that
-    // later phases (body, response) see stripped headers.
-    for name in &headers_to_remove {
-        request.headers.remove(name);
-    }
+    // Mirror every pending header mutation into request_snapshot so that
+    // later phases (body, response) read the same headers the upstream
+    // will receive. The same remove -> set -> add order is applied to the
+    // Pingora session by the caller; the two must not diverge, or a
+    // response-phase filter reads a request that was never sent.
+    apply_pending_header_mutations(
+        &mut request.headers,
+        &headers_to_remove,
+        &headers_to_set,
+        &extra_headers,
+    );
     ctx.request_snapshot = Some(request);
     ctx.extensions = extensions;
     ctx.filter_metadata = filter_metadata;
@@ -762,6 +771,55 @@ fn apply_pre_read_mutations(session: &mut Session, request: &mut Request, mutati
     apply_pre_read_mutations_to_request(request, mutations);
 }
 
+/// Apply the request pipeline's pending header mutations to a header map.
+///
+/// Applied in remove -> set -> add order, matching both the order the
+/// caller applies them to the Pingora session and the order documented
+/// on [`HttpFilterContext::pending_header_value`]: a remove clears any
+/// prior value, a set establishes a new one, and adds follow.
+///
+/// `extra` uses replace semantics here because that is what the session
+/// receives (`insert_header`). Note this differs from the pre-read body
+/// phase, where the same context field is drained into
+/// [`TrustedHeaderMutation::Add`] and appended. The two phases serve
+/// different filters — `request_id` re-emits a client-supplied ID as an
+/// extra header and would duplicate it under append semantics, while
+/// pre-read body filters accumulate — so the divergence is deliberate
+/// and must not be "unified" without auditing both sets of callers.
+///
+/// [`HttpFilterContext::pending_header_value`]: praxis_filter::HttpFilterContext::pending_header_value
+fn apply_pending_header_mutations(
+    headers: &mut http::HeaderMap,
+    to_remove: &[http::header::HeaderName],
+    to_set: &[(http::header::HeaderName, http::header::HeaderValue)],
+    extra: &[(Cow<'static, str>, String)],
+) {
+    for name in to_remove {
+        headers.remove(name);
+    }
+    for (name, value) in to_set {
+        let _replaced = headers.insert(name.clone(), value.clone());
+    }
+    for (name, value) in extra {
+        match (
+            http::header::HeaderName::from_bytes(name.as_bytes()),
+            http::header::HeaderValue::from_str(value),
+        ) {
+            (Ok(header_name), Ok(header_value)) => {
+                let _replaced = headers.insert(header_name, header_value);
+            },
+            (name_result, value_result) => {
+                warn!(
+                    header = %name,
+                    name_err = ?name_result.err(),
+                    value_err = ?value_result.err(),
+                    "skipping invalid promoted header in request snapshot"
+                );
+            },
+        }
+    }
+}
+
 /// Apply pre-read mutations to the Praxis [`Request`] struct.
 fn apply_pre_read_mutations_to_request(request: &mut Request, mutations: &[TrustedHeaderMutation]) {
     for mutation in mutations {
@@ -1248,6 +1306,85 @@ mod tests {
             Some(&serde_json::json!(0.95)),
             "score field should be preserved"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Pending Header Mutations
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn pending_mutations_apply_removes_sets_and_adds() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-drop", "gone".parse().unwrap());
+        headers.insert("x-keep", "kept".parse().unwrap());
+
+        apply_pending_header_mutations(
+            &mut headers,
+            &["x-drop".parse().unwrap()],
+            &[("x-set".parse().unwrap(), "set-value".parse().unwrap())],
+            &[(Cow::Borrowed("x-extra"), "extra-value".to_owned())],
+        );
+
+        assert!(headers.get("x-drop").is_none(), "removed header should be gone");
+        assert_eq!(headers.get("x-keep").unwrap(), "kept", "untouched header survives");
+        assert_eq!(headers.get("x-set").unwrap(), "set-value", "set header applied");
+        assert_eq!(headers.get("x-extra").unwrap(), "extra-value", "extra header applied");
+    }
+
+    #[test]
+    fn pending_mutations_apply_set_after_remove_for_the_same_name() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-both", "original".parse().unwrap());
+
+        apply_pending_header_mutations(
+            &mut headers,
+            &["x-both".parse().unwrap()],
+            &[("x-both".parse().unwrap(), "replacement".parse().unwrap())],
+            &[],
+        );
+
+        assert_eq!(
+            headers.get("x-both").unwrap(),
+            "replacement",
+            "set runs after remove, so the set value wins"
+        );
+    }
+
+    #[test]
+    fn pending_extra_headers_replace_rather_than_accumulate() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-request-id", "client-supplied".parse().unwrap());
+
+        apply_pending_header_mutations(
+            &mut headers,
+            &[],
+            &[],
+            &[(Cow::Borrowed("x-request-id"), "client-supplied".to_owned())],
+        );
+
+        assert_eq!(
+            headers.get_all("x-request-id").iter().count(),
+            1,
+            "re-emitting a client-supplied header must not duplicate it"
+        );
+    }
+
+    #[test]
+    fn pending_mutations_skip_invalid_promoted_headers() {
+        let mut headers = HeaderMap::new();
+
+        apply_pending_header_mutations(
+            &mut headers,
+            &[],
+            &[],
+            &[
+                (Cow::Borrowed("bad header name"), "v".to_owned()),
+                (Cow::Borrowed("x-good"), "v".to_owned()),
+            ],
+        );
+
+        assert_eq!(headers.len(), 1, "invalid name is skipped, valid one still applied");
+        assert_eq!(headers.get("x-good").unwrap(), "v");
     }
 
     // -------------------------------------------------------------------------
