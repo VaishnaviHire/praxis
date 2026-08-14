@@ -1504,7 +1504,7 @@ fn no_warning_when_unconditional_router_exists() {
 }
 
 #[tokio::test]
-async fn response_header_swap_same_count_detected() {
+async fn response_header_swap_same_count_is_applied_to_the_map() {
     let pipeline = make_pipeline(vec![Box::new(SwapHeaderFilter)]);
     let req = crate::test_utils::make_request(Method::GET, "/");
     let mut resp = crate::context::Response {
@@ -1517,8 +1517,10 @@ async fn response_header_swap_same_count_detected() {
     let _result = pipeline.execute_http_response(&mut ctx).await.unwrap();
     assert!(
         !ctx.response_headers_modified,
-        "count-based detection does not catch same-count header swaps"
+        "the pipeline no longer infers modification; the flag is an explicit filter hint only"
     );
+    assert!(resp.headers.get("x-old").is_none(), "swapped-out header should be gone");
+    assert!(resp.headers.get("x-new").is_some(), "swapped-in header should be present");
 }
 
 #[test]

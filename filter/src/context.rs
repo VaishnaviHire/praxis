@@ -291,8 +291,13 @@ pub struct HttpFilterContext<'a> {
     /// `None` during the request phase.
     pub response_header: Option<&'a mut Response>,
 
-    /// Whether any filter modified the response headers during
-    /// `on_response`. Used to skip unnecessary work.
+    /// Optional hint that a filter modified the response headers during
+    /// `on_response`, used by the protocol layer to skip unnecessary work.
+    ///
+    /// Setting this is never required for correctness: the protocol layer
+    /// independently compares the response header name sequence before and
+    /// after the pipeline and rebuilds when it changed. Leaving it unset
+    /// only forgoes an optimisation, never an edit.
     pub response_headers_modified: bool,
 
     /// Index of the selected endpoint in the cluster's

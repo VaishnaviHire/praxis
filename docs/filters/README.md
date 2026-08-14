@@ -64,10 +64,12 @@ influence downstream processing:
   of `HttpFilter::name()`). See
   [Pipeline Concepts: Filter Results](../architecture/pipeline-concepts.md#filter-results)
   for the full lifecycle.
-- `ctx.response_header`: mutate response headers directly
-  in `on_response`.
-- `ctx.response_headers_modified`: flag that response
-  headers were changed.
+- `ctx.response_header`: mutate response headers and status
+  directly in `on_response`.
+- `ctx.response_headers_modified`: optional hint that response
+  headers were changed. Setting it is not required for
+  correctness — the protocol layer detects header changes on
+  its own — it only lets the write-back skip a rebuild.
 
 ### Lifecycle Hooks
 

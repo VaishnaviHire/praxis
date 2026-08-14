@@ -299,10 +299,20 @@ pub(super) fn run_response_body_filter(
     dispatch_body_result(body_result, http_filter.name(), "response body", failure_mode)
 }
 
-/// Run a single response header filter and track header modification.
+/// Run a single response header filter.
 ///
 /// When `failure_mode` is [`FailureMode::Open`], errors are logged as
 /// warnings and the filter is treated as if it returned `Continue`.
+///
+/// This hook does **not** infer header modification. Comparing the header
+/// count before and after the filter misses same-count edits (a removal
+/// paired with an addition), and the protocol layer relies on that signal
+/// to pick a write-back strategy. Detection therefore lives at the
+/// write-back site, which compares the actual header name sequence.
+/// [`response_headers_modified`] remains available for filters to set as
+/// an explicit hint.
+///
+/// [`response_headers_modified`]: HttpFilterContext::response_headers_modified
 #[expect(clippy::too_many_lines, reason = "metrics instrumentation adds branches per hook")]
 pub(super) async fn run_response_filter(
     http_filter: &dyn crate::filter::HttpFilter,
@@ -311,7 +321,6 @@ pub(super) async fn run_response_filter(
     metrics_enabled: bool,
 ) -> Result<HeaderFilterOutcome, FilterError> {
     trace!(filter = http_filter.name(), "on_response");
-    let pre_len = ctx.response_header.as_ref().map_or(0, |r| r.headers.len());
     let response_result = if metrics_enabled {
         let start = std::time::Instant::now();
         let result = http_filter.on_response(ctx).await;
@@ -332,15 +341,7 @@ pub(super) async fn run_response_filter(
             | FilterAction::BodyDone
             | FilterAction::TerminalResponse(_)
             | FilterAction::StreamingTerminalResponse(_),
-        ) => {
-            if !ctx.response_headers_modified {
-                let post_len = ctx.response_header.as_ref().map_or(0, |r| r.headers.len());
-                if pre_len != post_len {
-                    ctx.response_headers_modified = true;
-                }
-            }
-            Ok(HeaderFilterOutcome::Continue)
-        },
+        ) => Ok(HeaderFilterOutcome::Continue),
         Ok(FilterAction::Reject(rejection)) => {
             warn!(
                 filter = http_filter.name(),
