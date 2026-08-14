@@ -223,8 +223,8 @@ async fn run_event_loop(rx: &mut mpsc::Receiver<()>, params: &WatcherParams) {
             &params.subrequest_client,
         );
         update_reload_backoff(ok, &mut consecutive_failures, &mut last_failure);
-        // A failed attempt stays pending so the timer arm retries it once
-        // the (now longer) backoff window elapses.
+        // Cleared on success; a failed attempt stays pending so the timer
+        // arm retries it once the (now longer) backoff window elapses.
         reload_pending = !ok;
     }
 }

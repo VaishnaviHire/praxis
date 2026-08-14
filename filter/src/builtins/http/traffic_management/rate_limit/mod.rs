@@ -95,7 +95,7 @@ enum RateLimitState {
 
 /// Per-IP buckets plus the bookkeeping that keeps eviction off the
 /// per-request path.
-pub(self) struct PerIpState {
+struct PerIpState {
     /// One token bucket per source address.
     buckets: DashMap<IpAddr, TokenBucket>,
 

@@ -1817,4 +1817,3 @@ fn json_alias_route(prefix: &str, cluster: &str, aliases: Vec<(&str, &str, Optio
         ),
     )
 }
-

@@ -248,7 +248,7 @@ fn header_name_fingerprint(headers: &http::HeaderMap) -> u64 {
     let mut hasher = DefaultHasher::new();
     for (name, _value) in headers {
         hasher.write(name.as_str().as_bytes());
-        hasher.write_u8(0xff);
+        hasher.write_u8(0xFF);
     }
     hasher.finish()
 }
@@ -664,4 +664,3 @@ mod tests {
         ctx
     }
 }
-

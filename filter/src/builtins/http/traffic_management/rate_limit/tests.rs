@@ -9,8 +9,7 @@ use dashmap::DashMap;
 use praxis_core::connectivity::normalize_mapped_ipv4;
 
 use super::{
-    EVICTION_INTERVAL_NANOS, HARD_CAP_PER_IP_ENTRIES, MAX_PER_IP_ENTRIES, PerIpState, RateLimitFilter,
-    RateLimitState,
+    EVICTION_INTERVAL_NANOS, HARD_CAP_PER_IP_ENTRIES, MAX_PER_IP_ENTRIES, PerIpState, RateLimitFilter, RateLimitState,
 };
 use crate::{FilterAction, builtins::http::traffic_management::token_bucket::TokenBucket, filter::HttpFilter as _};
 
@@ -316,11 +315,7 @@ fn per_ip_eviction_skips_when_below_threshold() {
     };
     filter.maybe_evict(&state, 999_999_999_999);
 
-    assert_eq!(
-        state.buckets.len(),
-        10,
-        "eviction should not run when below threshold"
-    );
+    assert_eq!(state.buckets.len(), 10, "eviction should not run when below threshold");
 }
 
 #[test]
@@ -328,7 +323,10 @@ fn eviction_pass_is_claimed_at_most_once_per_interval() {
     let state = PerIpState::new();
     let first = EVICTION_INTERVAL_NANOS;
 
-    assert!(state.claim_eviction_pass(first), "first eligible pass should be claimed");
+    assert!(
+        state.claim_eviction_pass(first),
+        "first eligible pass should be claimed"
+    );
     assert!(
         !state.claim_eviction_pass(first),
         "a second claim at the same instant must be refused"
