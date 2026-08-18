@@ -28,7 +28,10 @@ use super::{
     },
 };
 use crate::{
-    FilterError, actions::FilterAction, actions::Rejection, any_filter::AnyFilter, condition::should_execute,
+    FilterError,
+    actions::{FilterAction, Rejection},
+    any_filter::AnyFilter,
+    condition::should_execute,
     context::HttpFilterContext,
 };
 
@@ -46,6 +49,10 @@ impl FilterPipeline {
     /// Tracks which filter indices actually executed so the
     /// response phase can skip filters that were bypassed
     /// (e.g. by `SkipTo`).
+    ///
+    /// A `terminal`/`client` branch rejoin whose sub-chain produced no
+    /// response fails closed with a 500 rather than forwarding
+    /// upstream.
     ///
     /// # Errors
     ///

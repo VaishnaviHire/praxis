@@ -313,7 +313,8 @@ impl HttpFilter for GuardrailsFilter {
 /// header phase, or a request the header rule flagged would be recorded
 /// as passed and any branch chain keyed on the result would admit it.
 fn write_result(ctx: &mut HttpFilterContext<'_>, status: &'static str) {
-    if status == "passed" && ctx.filter_results.get("guardrails").and_then(|rs| rs.get("status")) == Some("blocked") {
+    let already_blocked = ctx.filter_results.get("guardrails").and_then(|rs| rs.get("status")) == Some("blocked");
+    if status == "passed" && already_blocked {
         tracing::debug!("guardrails already blocked; not downgrading to passed");
         return;
     }
