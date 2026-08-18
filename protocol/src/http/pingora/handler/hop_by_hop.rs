@@ -84,8 +84,23 @@ pub(crate) fn snapshot_connection_values(headers: &HeaderMap) -> Vec<http::Heade
     headers.get_all("connection").iter().cloned().collect()
 }
 
+/// Whether a header name is owned by Praxis and must never be removed
+/// on the say-so of a client `Connection` token.
+///
+/// Covers the `x-forwarded-*` family (injected by the forwarded-headers
+/// filter) and the reserved internal namespaces. Without this, a client
+/// sending `Connection: x-forwarded-for` would make Praxis delete its
+/// own trust header before forwarding upstream — erasing the client
+/// address any upstream relies on for rate limiting, audit logging, or
+/// IP allow-listing.
+fn is_proxy_owned(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("x-forwarded-") || praxis_core::reserved_headers::is_reserved(&lower)
+}
+
 /// Remove headers declared in `Connection` tokens that are not in
-/// the static hop-by-hop list (those are already removed by the caller).
+/// the static hop-by-hop list (those are already removed by the caller)
+/// and are not proxy-owned headers (see [`is_proxy_owned`]).
 ///
 /// [RFC 9110 Section 7.6.1]: https://datatracker.ietf.org/doc/html/rfc9110#section-7.6.1
 pub(crate) fn strip_connection_tokens<R: RemoveHeader>(
@@ -97,9 +112,14 @@ pub(crate) fn strip_connection_tokens<R: RemoveHeader>(
         let Ok(s) = val.to_str() else { continue };
         for token in s.split(',') {
             let trimmed = token.trim();
-            if !trimmed.is_empty() && !static_list.iter().any(|h| trimmed.eq_ignore_ascii_case(h)) {
-                msg.remove_header_by_name(trimmed);
+            if trimmed.is_empty() || static_list.iter().any(|h| trimmed.eq_ignore_ascii_case(h)) {
+                continue;
             }
+            if is_proxy_owned(trimmed) {
+                debug!(header = trimmed, "refusing to strip proxy-owned header named in Connection token");
+                continue;
+            }
+            msg.remove_header_by_name(trimmed);
         }
     }
 }
@@ -252,6 +272,53 @@ mod tests {
         assert!(
             !is_websocket_upgrade("SMTP"),
             "arbitrary protocol should not be recognized"
+        );
+    }
+
+    #[test]
+    fn proxy_owned_headers_are_recognized() {
+        assert!(is_proxy_owned("x-forwarded-for"));
+        assert!(is_proxy_owned("X-Forwarded-Proto"));
+        assert!(is_proxy_owned("x-praxis-route"));
+        assert!(!is_proxy_owned("x-request-id"));
+        assert!(!is_proxy_owned("cache-control"));
+    }
+
+    /// Minimal [`RemoveHeader`] double recording removals.
+    struct Recorder {
+        removed: Vec<String>,
+        headers: HeaderMap,
+    }
+
+    impl RemoveHeader for Recorder {
+        const DIRECTION: &'static str = "request";
+
+        fn headers(&self) -> &HeaderMap {
+            &self.headers
+        }
+
+        fn remove_header_by_name(&mut self, name: &str) {
+            self.removed.push(name.to_ascii_lowercase());
+        }
+    }
+
+    #[test]
+    fn strip_removes_custom_but_keeps_proxy_owned() {
+        let mut rec = Recorder {
+            removed: vec![],
+            headers: HeaderMap::new(),
+        };
+        // A client asks to strip its own X-App-State and Praxis's X-Forwarded-For.
+        let values = vec![http::HeaderValue::from_static("x-app-state, x-forwarded-for, x-praxis-route")];
+        strip_connection_tokens(&mut rec, &values, REQUEST_HOP_BY_HOP);
+        assert!(rec.removed.contains(&"x-app-state".to_owned()), "custom header should be stripped");
+        assert!(
+            !rec.removed.iter().any(|h| h == "x-forwarded-for"),
+            "x-forwarded-for must not be strippable via a Connection token"
+        );
+        assert!(
+            !rec.removed.iter().any(|h| h == "x-praxis-route"),
+            "reserved x-praxis-* must not be strippable via a Connection token"
         );
     }
 }
