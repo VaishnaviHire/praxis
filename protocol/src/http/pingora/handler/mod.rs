@@ -56,7 +56,7 @@ mod via;
 /// HTTP handler with body filter hooks.
 mod with_body;
 
-pub use upstream_peer::{arm_upstream_retry_gate, lock_upstream_retry_gate_tests};
+pub use upstream_peer::{UpstreamRetryGateRelease, arm_upstream_retry_gate, lock_upstream_retry_gate_tests};
 pub use with_body::PingoraHttpHandler;
 
 // -----------------------------------------------------------------------------
@@ -647,8 +647,6 @@ impl BodyFilterOutput {
     reason = "tests"
 )]
 mod tests {
-    use std::sync::Arc;
-
     use praxis_core::connectivity::ConnectionOptions;
 
     use super::*;
@@ -1292,8 +1290,6 @@ mod tests {
         passive_unhealthy: Option<u32>,
         passive_healthy: Option<u32>,
     ) -> (FilterPipeline, PingoraRequestCtx) {
-        use std::collections::HashMap;
-
         use praxis_core::health::{ClusterHealthEntry, EndpointHealth};
 
         let entry = ClusterHealthEntry::new(

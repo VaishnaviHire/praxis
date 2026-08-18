@@ -177,8 +177,6 @@ fn weight_index<'a>(endpoints: &[&'a WeightedEndpoint], slot: usize, total_weigh
     reason = "tests"
 )]
 mod tests {
-    use std::sync::{Arc, atomic::Ordering};
-
     use praxis_core::health::{ClusterHealthEntry, EndpointHealth};
 
     use super::*;

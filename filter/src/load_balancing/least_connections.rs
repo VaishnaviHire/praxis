@@ -116,10 +116,7 @@ impl LeastConnections {
     reason = "tests"
 )]
 mod tests {
-    use std::{
-        sync::{Arc, atomic::Ordering},
-        thread,
-    };
+    use std::thread;
 
     use praxis_core::health::{ClusterHealthEntry, EndpointHealth};
 

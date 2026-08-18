@@ -142,11 +142,9 @@ pub(super) fn execute(
     reason = "tests"
 )]
 mod tests {
-    use bytes::Bytes;
-    use praxis_filter::{FilterPipeline, FilterRegistry};
+    use praxis_filter::FilterRegistry;
 
     use super::*;
-    use crate::http::pingora::context::PingoraRequestCtx;
 
     #[test]
     fn no_body_capabilities_returns_none() {

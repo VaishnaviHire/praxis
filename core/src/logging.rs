@@ -497,7 +497,6 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::config::Config;
 
     #[test]
     fn empty_log_overrides_produces_valid_filter() {

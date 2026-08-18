@@ -958,10 +958,9 @@ mod tests {
 
     use http::{HeaderMap, Method, Uri};
     use praxis_core::config::FailureMode;
-    use praxis_filter::{BodyMode, FilterAction, FilterPipeline, FilterRegistry, Request};
+    use praxis_filter::FilterRegistry;
 
     use super::*;
-    use crate::http::pingora::context::PingoraRequestCtx;
 
     #[tokio::test]
     async fn empty_pipeline_continues() {

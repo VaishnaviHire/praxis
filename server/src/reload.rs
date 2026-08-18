@@ -186,17 +186,9 @@ fn respawn_health_checks(
     reason = "tests"
 )]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex},
-    };
+    use std::collections::HashMap;
 
-    use praxis_core::{
-        config::{Config, InsecureOptions, SkipPipelineChecks},
-        health::HealthRegistry,
-    };
-    use praxis_filter::FilterRegistry;
-    use tokio_util::sync::CancellationToken;
+    use praxis_core::config::{InsecureOptions, SkipPipelineChecks};
 
     use super::*;
 

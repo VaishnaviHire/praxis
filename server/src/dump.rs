@@ -253,8 +253,6 @@ pub(crate) fn write_dump(
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
 mod tests {
-    use praxis_core::config::{Config, FailureMode};
-
     use super::*;
 
     const ORDERED_CHAINS_YAML: &str = r#"

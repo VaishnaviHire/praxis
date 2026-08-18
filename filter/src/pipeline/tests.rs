@@ -4012,8 +4012,6 @@ fn streaming_with_stream_buffer_is_ordering_error() {
 // -----------------------------------------------------------------------------
 
 mod filter_duration_metrics_tests {
-    use bytes::Bytes;
-
     use super::*;
 
     fn assert_filter_metric(metrics: &str, filter: &str, phase: &str, stream: &str) {

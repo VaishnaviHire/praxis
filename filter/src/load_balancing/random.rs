@@ -114,8 +114,6 @@ fn pick<E: Borrow<WeightedEndpoint>>(endpoints: &[E], random: u64, total_weight:
     reason = "tests"
 )]
 mod tests {
-    use std::sync::Arc;
-
     use praxis_core::health::{ClusterHealthEntry, EndpointHealth};
 
     use super::*;

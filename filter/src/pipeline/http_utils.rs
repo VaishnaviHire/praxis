@@ -371,8 +371,6 @@ pub(super) async fn run_response_filter(
     reason = "tests"
 )]
 mod tests {
-    use bytes::Bytes;
-
     use super::*;
     use crate::HttpFilter;
 

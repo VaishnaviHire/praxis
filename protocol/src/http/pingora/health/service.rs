@@ -527,10 +527,7 @@ fn format_ready_body(status_str: &str, agg: &HealthAggregate) -> String {
 mod tests {
     use std::{
         collections::HashMap,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
+        sync::atomic::{AtomicUsize, Ordering},
     };
 
     use praxis_core::health::{ClusterHealthEntry, EndpointHealth};
