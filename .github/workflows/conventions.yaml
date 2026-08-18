@@ -231,6 +231,58 @@ jobs:
           fi
 
   # ----------------------------------------------------------------------------
+  # Commit Message Check
+  # ----------------------------------------------------------------------------
+
+  commit-message-check:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.PRAXIS_BOT_APP_ID }}
+          private-key: ${{ secrets.PRAXIS_BOT_APP_PRIVATE_KEY }}
+
+      - name: Check conventional commit format
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          labels=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json labels -q '.labels[].name')
+          if echo "$labels" | grep -q '^skip/pr-conventions$'; then
+            echo "skip/pr-conventions label present — skipping commit message check"
+            exit 0
+          fi
+
+          commits=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/commits" --paginate)
+
+          bad=$(echo "$commits" | jq -r '
+            [.[] | select(.parents | length == 1) |
+              .sha[:7] as $sha |
+              .commit.message | split("\n")[0] |
+              select(test("^(build|chore|ci|docs|feat|fix|perf|refactor|test)(\\(.+\\))?!?: .{1,72}$") | not) |
+              "- `\($sha)`: \(.)"] | join("\n")')
+
+          if [ -n "$bad" ]; then
+            marker="<!-- praxis:commit-message-check -->"
+            already=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              --jq "[.[] | select(.body | contains(\"${marker}\"))] | length")
+            if [ "$already" -eq 0 ]; then
+              gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" \
+                --body "${marker}
+          **Commit message format**: the following commits do not follow [conventional commits](https://www.conventionalcommits.org/):
+
+          ${bad}
+
+          Expected format: \`type(scope): summary\` (max 72 chars). Types: build, chore, ci, docs, feat, fix, perf, refactor, test."
+            fi
+            echo "::error::Non-conventional commit messages found"
+            exit 1
+          fi
+
+  # ----------------------------------------------------------------------------
   # Authorship Check
   # ----------------------------------------------------------------------------
 
