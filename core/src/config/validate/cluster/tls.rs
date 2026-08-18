@@ -33,7 +33,23 @@ pub(super) fn validate_tls_settings(cluster: &Cluster, insecure_options: &Insecu
 
     check_sni_verify_requirement(tls.sni.is_some(), tls.verify, &cluster.name, insecure_options)?;
     check_no_verify_requirement(tls.verify, &cluster.name, insecure_options)?;
+    check_no_upstream_crls(tls.ca.as_ref(), &cluster.name)?;
 
+    Ok(())
+}
+
+/// Reject `crl_paths` on a cluster CA.
+///
+/// CRL enforcement is implemented only for the listener-side client
+/// verifier; on a cluster the field would be accepted and silently
+/// ignored, giving a false sense of upstream revocation checking.
+fn check_no_upstream_crls(ca: Option<&praxis_tls::CaConfig>, cluster_name: &str) -> Result<(), ProxyError> {
+    if ca.is_some_and(|ca| !ca.crl_paths.is_empty()) {
+        return Err(ProxyError::Config(format!(
+            "cluster '{cluster_name}': tls.ca.crl_paths is not supported for upstream connections \
+             (CRL checking is only available for listener client authentication); remove it"
+        )));
+    }
     Ok(())
 }
 
@@ -101,10 +117,27 @@ fn check_no_verify_requirement(
     reason = "tests use unwrap/expect/indexing/raw strings for brevity"
 )]
 mod tests {
-    use praxis_tls::ClusterTls;
+    use praxis_tls::{CaConfig, ClusterTls};
 
     use super::super::validate_clusters;
     use crate::config::{Cluster, InsecureOptions};
+
+    #[test]
+    fn reject_cluster_crl_paths() {
+        let clusters = vec![Cluster {
+            tls: Some(ClusterTls {
+                sni: Some("api.example.com".into()),
+                ca: Some(CaConfig {
+                    ca_path: "/etc/ssl/ca.pem".into(),
+                    crl_paths: vec!["/etc/ssl/crl.pem".into()],
+                }),
+                ..ClusterTls::default()
+            }),
+            ..Cluster::with_defaults("web", vec!["10.0.0.1:443".into()])
+        }];
+        let err = validate_clusters(&clusters, &InsecureOptions::default()).unwrap_err();
+        assert!(err.to_string().contains("crl_paths"), "got: {err}");
+    }
 
     #[test]
     fn reject_empty_sni() {
