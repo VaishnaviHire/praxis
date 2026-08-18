@@ -156,6 +156,16 @@ impl HttpFilter for JsonRpcFilter {
         body: &mut Option<Bytes>,
         end_of_stream: bool,
     ) -> Result<FilterAction, FilterError> {
+        // StreamBuffer accumulates the whole body; inspect only the
+        // complete request at end-of-stream. Promoting on each chunk (and
+        // again on the final EOS pass) pushed duplicate X-Json-Rpc-*
+        // headers onto every request with a body, and acting on a partial
+        // prefix let a client desync the promoted metadata from the body
+        // the upstream receives.
+        if !end_of_stream {
+            return Ok(FilterAction::Continue);
+        }
+
         let Some(chunk) = body.as_ref() else {
             return Ok(FilterAction::Continue);
         };
@@ -163,10 +173,6 @@ impl HttpFilter for JsonRpcFilter {
         let envelope = match parse_json_rpc_envelope(chunk, &self.config) {
             Ok(Some(envelope)) => envelope,
             Ok(None) => return Ok(FilterAction::Continue),
-            Err(_) if !end_of_stream => {
-                trace!("JSON-RPC parse failed on partial body; waiting for EOS");
-                return Ok(FilterAction::Continue);
-            },
             Err(e) => return handle_parse_error(e, &self.config),
         };
 
