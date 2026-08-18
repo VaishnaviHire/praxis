@@ -92,6 +92,10 @@ fn check_yaml_size(raw: &str) -> Result<(), ProxyError> {
     Ok(())
 }
 
+// -----------------------------------------------------------------------------
+// Alias Scanning
+// -----------------------------------------------------------------------------
+
 /// Reject YAML alias nodes (`*anchor`) before parsing.
 ///
 /// Aliases drive "billion laughs" expansion, and the blowup happens
@@ -109,23 +113,14 @@ fn check_yaml_size(raw: &str) -> Result<(), ProxyError> {
 ///
 /// [`ProxyError::Config`]: crate::errors::ProxyError::Config
 fn reject_yaml_aliases(raw: &str) -> Result<(), ProxyError> {
-    if let Some(line) = first_line_with_alias(raw) {
-        return Err(ProxyError::Config(format!(
-            "YAML alias nodes (`*anchor`) are not supported (line {line}); \
-             they enable alias-expansion denial-of-service and are not used by any Praxis config"
-        )));
+    match raw.lines().position(line_contains_alias) {
+        Some(idx) => Err(ProxyError::Config(format!(
+            "YAML alias nodes (`*anchor`) are not supported (line {}); \
+             they enable alias-expansion denial-of-service and are not used by any Praxis config",
+            idx + 1
+        ))),
+        None => Ok(()),
     }
-    Ok(())
-}
-
-/// Return the 1-based line number of the first YAML alias node, if any.
-fn first_line_with_alias(raw: &str) -> Option<usize> {
-    for (idx, line) in raw.lines().enumerate() {
-        if line_contains_alias(line) {
-            return Some(idx + 1);
-        }
-    }
-    None
 }
 
 /// Whether a single line contains an alias node outside strings/comments.
@@ -140,7 +135,7 @@ fn line_contains_alias(line: &str) -> bool {
     for &c in line.as_bytes() {
         // An alias node is `*` at a node boundary followed by an
         // anchor-name character; check the char after a boundary `*`.
-        if prev_star && c.is_ascii_alphanumeric() {
+        if prev_star && (c.is_ascii_alphanumeric() || c == b'_') {
             return true;
         }
         prev_star = false;

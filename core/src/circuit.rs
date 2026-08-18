@@ -123,6 +123,14 @@ impl CircuitInner {
         })
     }
 
+    /// Release a token's in-flight slot. Every issued token records
+    /// exactly one outcome, so this runs regardless of generation —
+    /// the generation check in the callers only gates the stats
+    /// update, not the in-flight bookkeeping.
+    fn release_token(&mut self) {
+        self.in_flight = self.in_flight.saturating_sub(1);
+    }
+
     /// Bump the generation and transition to `HalfOpen`, issuing a
     /// probe token.
     fn transition_to_half_open(&mut self) -> CircuitCheck {
@@ -222,7 +230,8 @@ impl CircuitBreaker {
 
     /// Record a successful exchange for the given token.
     ///
-    /// Stale tokens (generation mismatch) are silently ignored.
+    /// Stale tokens (generation mismatch) do not update stats; their
+    /// in-flight slot is still released.
     ///
     /// # Panics
     ///
@@ -231,10 +240,7 @@ impl CircuitBreaker {
     #[expect(clippy::needless_pass_by_value, reason = "consumed to prevent double-recording")]
     pub fn record_success(&self, token: CircuitToken) {
         let mut inner = self.inner.lock().expect("circuit breaker lock poisoned");
-        // Every issued token records exactly one outcome, so decrement
-        // regardless of generation — the generation check below only
-        // gates the stats update, not the in-flight bookkeeping.
-        inner.in_flight = inner.in_flight.saturating_sub(1);
+        inner.release_token();
         if token.generation != inner.generation {
             return;
         }
@@ -255,7 +261,8 @@ impl CircuitBreaker {
 
     /// Record a failed exchange for the given token.
     ///
-    /// Stale tokens (generation mismatch) are silently ignored.
+    /// Stale tokens (generation mismatch) do not update stats; their
+    /// in-flight slot is still released.
     ///
     /// # Panics
     ///
@@ -264,8 +271,7 @@ impl CircuitBreaker {
     #[expect(clippy::needless_pass_by_value, reason = "consumed to prevent double-recording")]
     pub fn record_failure(&self, token: CircuitToken) {
         let mut inner = self.inner.lock().expect("circuit breaker lock poisoned");
-        // Decrement regardless of generation (see record_success).
-        inner.in_flight = inner.in_flight.saturating_sub(1);
+        inner.release_token();
         if token.generation != inner.generation {
             return;
         }
@@ -287,8 +293,8 @@ impl CircuitBreaker {
         }
     }
 
-    /// Whether the breaker is `Closed` with no failures and idle
-    /// for at least `idle_threshold`.
+    /// Whether the breaker is `Closed` with no failures, no request
+    /// in flight, and idle for at least `idle_threshold`.
     ///
     /// # Panics
     ///
@@ -782,10 +788,11 @@ mod tests {
         assert_eq!(evicted, 0, "an in-flight breaker must not be evicted");
         assert_eq!(registry.len(), 1);
 
-        // Once the outcome is recorded, it counts and the breaker is idle.
         record_registry_failure(&registry, &a, ta);
         assert_eq!(registry.evict_idle(Duration::ZERO), 0, "open breaker survives");
     }
+
+    // --- In-flight tracking ---
 
     #[test]
     fn in_flight_failure_counts_toward_threshold() {

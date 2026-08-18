@@ -184,8 +184,6 @@ impl CidrRange {
     /// assert!(all_v6.contains(&"203.0.113.7".parse().unwrap()));
     /// ```
     pub fn contains(&self, ip: &IpAddr) -> bool {
-        // A /0 means "everything"; treat it as family-agnostic so a
-        // whole-family wildcard cannot leave the other family uncovered.
         if self.prefix_len == 0 {
             return true;
         }

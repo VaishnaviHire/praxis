@@ -41,24 +41,6 @@ pub(super) fn validate_endpoints(cluster: &Cluster, insecure_options: &InsecureO
     validate_endpoint_ssrf(cluster, insecure_options)
 }
 
-/// Reject a zero or out-of-range endpoint weight.
-///
-/// Weighted balancers expand each endpoint into `weight` replicas at
-/// build time, so an unbounded weight is an out-of-memory vector.
-fn validate_endpoint_weight(weight: u32, addr: &str, cluster_name: &str) -> Result<(), ProxyError> {
-    if weight == 0 {
-        return Err(ProxyError::Config(format!(
-            "cluster '{cluster_name}': endpoint '{addr}' has weight 0 (must be >= 1)"
-        )));
-    }
-    if weight > MAX_ENDPOINT_WEIGHT {
-        return Err(ProxyError::Config(format!(
-            "cluster '{cluster_name}': endpoint '{addr}' has weight {weight} (max {MAX_ENDPOINT_WEIGHT})"
-        )));
-    }
-    Ok(())
-}
-
 /// Validate an endpoint address is well-formed `host:port`.
 ///
 /// Accepts `SocketAddr` (`1.2.3.4:80`), bracketed IPv6
@@ -76,6 +58,24 @@ fn validate_endpoint_address(addr: &str, cluster_name: &str) -> Result<(), Proxy
     if port_str.parse::<u16>().is_err() {
         return Err(ProxyError::Config(format!(
             "cluster '{cluster_name}': endpoint '{addr}' must be 'host:port' with a valid port"
+        )));
+    }
+    Ok(())
+}
+
+/// Reject a zero or out-of-range endpoint weight.
+///
+/// Weighted balancers expand each endpoint into `weight` replicas at
+/// build time, so an unbounded weight is an out-of-memory vector.
+fn validate_endpoint_weight(weight: u32, addr: &str, cluster_name: &str) -> Result<(), ProxyError> {
+    if weight == 0 {
+        return Err(ProxyError::Config(format!(
+            "cluster '{cluster_name}': endpoint '{addr}' has weight 0 (must be >= 1)"
+        )));
+    }
+    if weight > MAX_ENDPOINT_WEIGHT {
+        return Err(ProxyError::Config(format!(
+            "cluster '{cluster_name}': endpoint '{addr}' has weight {weight} (max {MAX_ENDPOINT_WEIGHT})"
         )));
     }
     Ok(())
@@ -130,7 +130,7 @@ fn reject_ssrf_host(host: &str, cluster_name: &str, addr_str: &str) -> Result<()
     reason = "tests use unwrap/expect/indexing/raw strings for brevity"
 )]
 mod tests {
-    use super::super::validate_clusters;
+    use super::super::{MAX_ENDPOINT_WEIGHT, validate_clusters};
     use crate::config::{Cluster, Config, InsecureOptions};
 
     #[test]
@@ -335,10 +335,13 @@ clusters:
   - name: "backend"
     endpoints:
       - address: "10.0.0.1:80"
-        weight: 4000000000
+        weight: 4000000000 # 4 billion replicas if expanded
 "#;
         let err = Config::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("max 1000"), "got: {err}");
+        assert!(
+            err.to_string().contains(&format!("max {MAX_ENDPOINT_WEIGHT}")),
+            "got: {err}"
+        );
     }
 
     #[test]
