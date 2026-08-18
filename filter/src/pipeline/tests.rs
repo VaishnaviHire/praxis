@@ -109,6 +109,66 @@ fn build_stops_on_first_error() {
 }
 
 #[tokio::test]
+async fn terminal_branch_without_response_fails_closed() {
+    use super::branch::{RejoinTarget, ResolvedBranch};
+
+    // A `terminal`/`client` rejoin whose sub-chain produces no response must
+    // stop the pipeline with a 500, not proxy upstream while skipping the
+    // filters after the branch point (the historical bypass).
+    let after_ran = Arc::new(AtomicUsize::new(0));
+    let mut branching = PipelineFilter::new(
+        0,
+        AnyFilter::Http(Box::new(CountingFilter {
+            counter: Arc::new(AtomicUsize::new(0)),
+        })),
+        vec![],
+        vec![],
+    );
+    branching.branches = vec![ResolvedBranch {
+        name: Arc::from("term"),
+        condition: None,
+        filters: vec![],
+        max_iterations: None,
+        rejoin: RejoinTarget::Terminal,
+    }];
+    let after = PipelineFilter::new(
+        1,
+        AnyFilter::Http(Box::new(CountingFilter {
+            counter: Arc::clone(&after_ran),
+        })),
+        vec![],
+        vec![],
+    );
+
+    let pipeline = FilterPipeline {
+        body_capabilities: BodyCapabilities::default(),
+        compression: None,
+        filters: vec![branching, after],
+        record_filter_duration_metrics: false,
+        health_registry: None,
+        id_generator: Arc::new(praxis_core::id::IdGenerator::with_seed(0)),
+        kv_stores: None,
+        subrequest_client: None,
+        may_select_streaming_subrequest_response: false,
+        pipeline_extensions: Vec::new(),
+        time_source: Arc::new(praxis_core::time::SystemTimeSource),
+    };
+
+    let req = crate::test_utils::make_request(Method::GET, "/");
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+    let action = pipeline.execute_http_request(&mut ctx).await.unwrap();
+    assert!(
+        matches!(action, FilterAction::Reject(r) if r.status == 500),
+        "terminal branch with no response should fail closed with 500"
+    );
+    assert_eq!(
+        after_ran.load(Ordering::SeqCst),
+        0,
+        "filters after a terminal branch point must not run"
+    );
+}
+
+#[tokio::test]
 async fn execute_request_stops_on_first_reject() {
     let counter = Arc::new(AtomicUsize::new(0));
     let pipeline = make_pipeline(vec![
