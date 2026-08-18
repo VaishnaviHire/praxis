@@ -766,14 +766,21 @@ filter_chains:
     #[test]
     fn audit_identical_configs_all_zeros() {
         let config = valid_config();
-        let (a, r, m) = diff_named_items(&config.listeners, &config.listeners, |l| &l.name);
-        assert_eq!((a, r, m), (0, 0, 0), "identical listeners should show no changes");
-
-        let (a, r, m) = diff_named_items(&config.clusters, &config.clusters, |c| &c.name);
-        assert_eq!((a, r, m), (0, 0, 0), "identical clusters should show no changes");
-
-        let (a, r, m) = diff_named_items(&config.filter_chains, &config.filter_chains, |c| &c.name);
-        assert_eq!((a, r, m), (0, 0, 0), "identical chains should show no changes");
+        assert_eq!(
+            diff_named_items(&config.listeners, &config.listeners, |l| &l.name),
+            (0, 0, 0),
+            "identical listeners should show no changes"
+        );
+        assert_eq!(
+            diff_named_items(&config.clusters, &config.clusters, |c| &c.name),
+            (0, 0, 0),
+            "identical clusters should show no changes"
+        );
+        assert_eq!(
+            diff_named_items(&config.filter_chains, &config.filter_chains, |c| &c.name),
+            (0, 0, 0),
+            "identical chains should show no changes"
+        );
     }
 
     #[test]

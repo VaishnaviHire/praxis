@@ -120,14 +120,15 @@ fn packages_by_id(packages: &[Package]) -> HashMap<&PackageId, &Package> {
 }
 
 /// Collect dependency edges of the server crate.
-fn collect_server_deps<'meta>(
-    packages: &'meta [Package],
-    resolve: &'meta Resolve,
-) -> Vec<&'meta NodeDep> {
+fn collect_server_deps<'meta>(packages: &'meta [Package], resolve: &'meta Resolve) -> Vec<&'meta NodeDep> {
     resolve
         .nodes
         .iter()
-        .find(|node| packages.iter().any(|pkg| pkg.id == node.id && pkg.name == "praxis-proxy"))
+        .find(|node| {
+            packages
+                .iter()
+                .any(|pkg| pkg.id == node.id && pkg.name == "praxis-proxy")
+        })
         .map(|node| node.deps.iter().collect())
         .unwrap_or_default()
 }

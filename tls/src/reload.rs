@@ -424,8 +424,8 @@ mod tests {
             resolver_clone.reload(&pair2).expect("reload should succeed");
         });
 
-        let observed: Vec<_> = (0..100)
-            .map(|_| resolver.current.load_full().cert[0].as_ref().to_vec())
+        let observed: Vec<_> = std::iter::repeat_with(|| resolver.current.load_full().cert[0].as_ref().to_vec())
+            .take(100)
             .collect();
         handle.join().expect("reload thread should not panic");
         let cert2_der = resolver.current.load_full().cert[0].as_ref().to_vec();

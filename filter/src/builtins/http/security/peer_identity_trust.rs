@@ -347,23 +347,21 @@ mod tests {
 
     #[test]
     fn valid_digest_only_config() {
-        assert!(parse(&format!("trusted_peers:\n  - cert_digest: {}", digest_hex(0xAB))).is_ok());
+        parse(&format!("trusted_peers:\n  - cert_digest: {}", digest_hex(0xAB))).unwrap();
     }
 
     #[test]
     fn valid_org_only_config() {
-        assert!(parse("trusted_peers:\n  - organization: test-org").is_ok());
+        parse("trusted_peers:\n  - organization: test-org").unwrap();
     }
 
     #[test]
     fn valid_combined_config() {
-        assert!(
-            parse(&format!(
-                "trusted_peers:\n  - cert_digest: {}\n    organization: test-org\n    serial_number: '42'",
-                digest_hex(0xAB)
-            ))
-            .is_ok()
-        );
+        parse(&format!(
+            "trusted_peers:\n  - cert_digest: {}\n    organization: test-org\n    serial_number: '42'",
+            digest_hex(0xAB)
+        ))
+        .unwrap();
     }
 
     // ---- Trust decisions ----
