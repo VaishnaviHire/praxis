@@ -312,12 +312,8 @@ impl ScenarioResults {
             environment: first.environment.clone(),
             latency: median_latency(&self.runs),
             throughput: median_throughput(&self.runs),
-            resource: None,
-            errors: ErrorMetrics {
-                non_2xx: None,
-                timeouts: 0,
-                connect_failures: 0,
-            },
+            resource: median_resource(&self.runs),
+            errors: median_errors(&self.runs),
             raw_report: None,
         });
     }
@@ -430,6 +426,39 @@ fn median_throughput(runs: &[BenchmarkResult]) -> ThroughputMetrics {
         requests_per_sec: f64_median(runs.iter().map(|r| r.throughput.requests_per_sec)),
         bytes_per_sec: f64_median(runs.iter().map(|r| r.throughput.bytes_per_sec)),
     }
+}
+
+/// Compute per-field median error counts across runs.
+///
+/// `non_2xx` is `Some` when any run reported it, taking the median of
+/// the reported values; `timeouts` and `connect_failures` are per-field
+/// medians. Zeroing these (as the previous placeholder did) made the
+/// headline median row report a clean run even when every request failed.
+fn median_errors(runs: &[BenchmarkResult]) -> ErrorMetrics {
+    let non_2xx_values: Vec<f64> = runs.iter().filter_map(|r| r.errors.non_2xx).map(|v| v as f64).collect();
+    ErrorMetrics {
+        non_2xx: (!non_2xx_values.is_empty()).then(|| f64_median(non_2xx_values.into_iter()) as u64),
+        timeouts: f64_median(runs.iter().map(|r| r.errors.timeouts as f64)) as u64,
+        connect_failures: f64_median(runs.iter().map(|r| r.errors.connect_failures as f64)) as u64,
+    }
+}
+
+/// Compute per-field median resource usage across runs.
+///
+/// Returns `None` only when no run captured resource metrics; otherwise
+/// each field is the median over the runs that reported it. The previous
+/// hardcoded `None` blanked the CPU and memory panels of every chart.
+fn median_resource(runs: &[BenchmarkResult]) -> Option<ResourceMetrics> {
+    let present: Vec<&ResourceMetrics> = runs.iter().filter_map(|r| r.resource.as_ref()).collect();
+    if present.is_empty() {
+        return None;
+    }
+    Some(ResourceMetrics {
+        cpu_percent_avg: f64_median(present.iter().map(|m| m.cpu_percent_avg)),
+        cpu_percent_peak: f64_median(present.iter().map(|m| m.cpu_percent_peak)),
+        memory_rss_bytes_avg: f64_median(present.iter().map(|m| m.memory_rss_bytes_avg as f64)) as u64,
+        memory_rss_bytes_peak: f64_median(present.iter().map(|m| m.memory_rss_bytes_peak as f64)) as u64,
+    })
 }
 
 /// Extract p99 and rps from a median result.
@@ -760,6 +789,62 @@ mod tests {
             (median.throughput.requests_per_sec - 7500.0).abs() < 1e-9,
             "median rps should be 7500.0"
         );
+    }
+
+    #[test]
+    fn compute_median_reflects_errors_and_resources() {
+        let mut r1 = sample_result(0.010, 10_000.0);
+        r1.errors = ErrorMetrics {
+            non_2xx: Some(10),
+            timeouts: 2,
+            connect_failures: 1,
+        };
+        r1.resource = Some(ResourceMetrics {
+            cpu_percent_avg: 40.0,
+            cpu_percent_peak: 80.0,
+            memory_rss_bytes_avg: 100,
+            memory_rss_bytes_peak: 200,
+        });
+        let mut r2 = sample_result(0.015, 7500.0);
+        r2.errors = ErrorMetrics {
+            non_2xx: Some(20),
+            timeouts: 4,
+            connect_failures: 3,
+        };
+        r2.resource = Some(ResourceMetrics {
+            cpu_percent_avg: 60.0,
+            cpu_percent_peak: 90.0,
+            memory_rss_bytes_avg: 300,
+            memory_rss_bytes_peak: 400,
+        });
+        let mut r3 = sample_result(0.012, 8000.0);
+        r3.errors = ErrorMetrics {
+            non_2xx: Some(30),
+            timeouts: 6,
+            connect_failures: 5,
+        };
+        r3.resource = Some(ResourceMetrics {
+            cpu_percent_avg: 50.0,
+            cpu_percent_peak: 85.0,
+            memory_rss_bytes_avg: 200,
+            memory_rss_bytes_peak: 300,
+        });
+
+        let mut results = ScenarioResults {
+            scenario: "test".into(),
+            proxy: "praxis".into(),
+            runs: vec![r1, r2, r3],
+            median: None,
+        };
+        results.compute_median();
+        let median = results.median.as_ref().unwrap();
+
+        assert_eq!(median.errors.non_2xx, Some(20), "non_2xx median should be reported, not None");
+        assert_eq!(median.errors.timeouts, 4, "timeouts median should be reported, not zero");
+        assert_eq!(median.errors.connect_failures, 3, "connect_failures median should be reported");
+        let resource = median.resource.as_ref().expect("resource median should not be dropped");
+        assert!((resource.cpu_percent_avg - 50.0).abs() < 1e-9, "cpu avg median");
+        assert_eq!(resource.memory_rss_bytes_avg, 200, "memory avg median");
     }
 
     #[test]
