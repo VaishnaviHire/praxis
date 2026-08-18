@@ -406,6 +406,10 @@ impl ScenarioResults {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Median Helpers
+// -----------------------------------------------------------------------------
+
 /// Compute per-metric median latency across runs.
 fn median_latency(runs: &[BenchmarkResult]) -> LatencyMetrics {
     LatencyMetrics {
@@ -450,28 +454,12 @@ fn median_errors(runs: &[BenchmarkResult]) -> ErrorMetrics {
 /// hardcoded `None` blanked the CPU and memory panels of every chart.
 fn median_resource(runs: &[BenchmarkResult]) -> Option<ResourceMetrics> {
     let present: Vec<&ResourceMetrics> = runs.iter().filter_map(|r| r.resource.as_ref()).collect();
-    if present.is_empty() {
-        return None;
-    }
-    Some(ResourceMetrics {
+    (!present.is_empty()).then(|| ResourceMetrics {
         cpu_percent_avg: f64_median(present.iter().map(|m| m.cpu_percent_avg)),
         cpu_percent_peak: f64_median(present.iter().map(|m| m.cpu_percent_peak)),
         memory_rss_bytes_avg: u64_median(present.iter().map(|m| m.memory_rss_bytes_avg)),
         memory_rss_bytes_peak: u64_median(present.iter().map(|m| m.memory_rss_bytes_peak)),
     })
-}
-
-/// Compute the median of an iterator of `u64` values without floats.
-///
-/// Returns 0 for an empty iterator. Uses the lower-middle element so no
-/// averaging (and no `u64`/`f64` casts) is needed.
-fn u64_median(values: impl Iterator<Item = u64>) -> u64 {
-    let mut v: Vec<u64> = values.collect();
-    if v.is_empty() {
-        return 0;
-    }
-    v.sort_unstable();
-    v.get(v.len() / 2).copied().unwrap_or(0)
 }
 
 /// Extract p99 and rps from a median result.
@@ -502,11 +490,25 @@ fn relative_change(current: f64, baseline: f64) -> f64 {
 /// ```
 pub fn f64_median(values: impl Iterator<Item = f64>) -> f64 {
     let mut v: Vec<f64> = values.collect();
-    if v.is_empty() {
-        return 0.0;
-    }
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v.get(v.len() / 2).copied().unwrap_or(0.0)
+}
+
+/// Compute the median of an iterator of `u64` values without floats.
+///
+/// Uses the lower-middle element so no averaging (and no `u64`/`f64`
+/// casts) is needed.
+///
+/// ```
+/// use benchmarks::result::u64_median;
+///
+/// assert_eq!(u64_median([3, 1, 2].into_iter()), 2);
+/// assert_eq!(u64_median(std::iter::empty()), 0);
+/// ```
+pub fn u64_median(values: impl Iterator<Item = u64>) -> u64 {
+    let mut v: Vec<u64> = values.collect();
+    v.sort_unstable();
+    v.get(v.len() / 2).copied().unwrap_or(0)
 }
 
 /// Coefficient of variation (stddev / mean) for a slice of values.
@@ -852,9 +854,19 @@ mod tests {
         results.compute_median();
         let median = results.median.as_ref().unwrap();
 
-        assert_eq!(median.errors.non_2xx, Some(20), "non_2xx median should be reported, not None");
-        assert_eq!(median.errors.timeouts, 4, "timeouts median should be reported, not zero");
-        assert_eq!(median.errors.connect_failures, 3, "connect_failures median should be reported");
+        assert_eq!(
+            median.errors.non_2xx,
+            Some(20),
+            "non_2xx median should be reported, not None"
+        );
+        assert_eq!(
+            median.errors.timeouts, 4,
+            "timeouts median should be reported, not zero"
+        );
+        assert_eq!(
+            median.errors.connect_failures, 3,
+            "connect_failures median should be reported"
+        );
         let resource = median.resource.as_ref().expect("resource median should not be dropped");
         assert!((resource.cpu_percent_avg - 50.0).abs() < 1e-9, "cpu avg median");
         assert_eq!(resource.memory_rss_bytes_avg, 200, "memory avg median");
