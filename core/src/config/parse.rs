@@ -129,9 +129,9 @@ fn reject_yaml_aliases(raw: &str) -> Result<(), ProxyError> {
 /// false positive from a `*` inside a multi-line block scalar would only
 /// reject an unusual config, never admit a bomb.
 fn line_contains_alias(line: &str) -> bool {
-    let mut at_boundary = true;
+    let (mut at_boundary, mut prev_ws) = (true, true);
     let mut quote: Option<u8> = None;
-    let mut prev_star = false;
+    let (mut prev_star, mut escaped) = (false, false);
     for &c in line.as_bytes() {
         // An alias node is `*` at a node boundary followed by an
         // anchor-name character; check the char after a boundary `*`.
@@ -140,16 +140,23 @@ fn line_contains_alias(line: &str) -> bool {
         }
         prev_star = false;
         if let Some(q) = quote {
-            quote = (c != q).then_some(q);
+            let close = c == q && !escaped;
+            escaped = q == b'"' && c == b'\\' && !escaped;
+            quote = (!close).then_some(q);
             at_boundary = false;
-            continue;
+        } else {
+            match c {
+                // A comment only starts after whitespace (or line start);
+                // a mid-scalar `#` (e.g. `a#b`) is scalar content.
+                b'#' if prev_ws => return false,
+                // A quoted scalar only starts at a node boundary; a
+                // mid-scalar quote (e.g. `don't`) is scalar content.
+                b'\'' | b'"' if at_boundary => (quote, at_boundary) = (Some(c), false),
+                b'*' if at_boundary => prev_star = true,
+                _ => at_boundary = matches!(c, b' ' | b'\t' | b'[' | b'{' | b',' | b':' | b'-'),
+            }
         }
-        match c {
-            b'#' => return false, // rest of line is a comment
-            b'\'' | b'"' => (quote, at_boundary) = (Some(c), false),
-            b'*' if at_boundary => prev_star = true,
-            _ => at_boundary = matches!(c, b' ' | b'\t' | b'[' | b'{' | b',' | b':' | b'-'),
-        }
+        prev_ws = matches!(c, b' ' | b'\t');
     }
     false
 }
@@ -215,6 +222,28 @@ mod tests {
     fn accept_bare_asterisk_value() {
         // `*` not followed by an anchor-name char is not an alias node.
         reject_yaml_aliases("wildcard: /*\n").expect("glob-like value should pass");
+    }
+
+    #[test]
+    fn reject_alias_after_mid_scalar_apostrophe() {
+        // A plain-scalar apostrophe is not a quote opener; the alias
+        // after it must still be caught.
+        let err = reject_yaml_aliases("a: &a x\nb: [don't, *a]\n");
+        assert!(err.is_err(), "alias after mid-scalar apostrophe should be rejected");
+    }
+
+    #[test]
+    fn reject_alias_after_mid_scalar_hash() {
+        // `#` without preceding whitespace is scalar content, not a
+        // comment; the alias after it must still be caught.
+        let err = reject_yaml_aliases("a: &a x\nb: [a#b, *a]\n");
+        assert!(err.is_err(), "alias after mid-scalar hash should be rejected");
+    }
+
+    #[test]
+    fn accept_escaped_quote_in_double_quoted_scalar() {
+        // `\"` does not close the string, so the `*` stays inside it.
+        reject_yaml_aliases("k: \"a\\\" *not-an-alias b\"\n").expect("escaped quote should not end the string");
     }
 
     #[test]
