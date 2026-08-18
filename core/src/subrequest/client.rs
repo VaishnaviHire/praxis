@@ -322,15 +322,20 @@ impl SubRequestClient {
     ) -> Result<StreamingSubResponse, SubRequestError> {
         let mut exchange = self.open_exchange(peer, request, timeout, framework_headers).await?;
 
-        // Finalize circuit guard as success — valid headers received.
-        if let Some(guard) = exchange.circuit_guard.take() {
-            guard.finalize_success();
-        }
+        // Hold the circuit guard until the header-time outcome is known.
+        // Finalizing success here (before the completion check below) would
+        // record a header-incomplete or H2-error termination as a circuit
+        // success, masking a real upstream failure. On the failure paths the
+        // guard is dropped, which records a failure via its Drop impl.
+        let circuit_guard = exchange.circuit_guard.take();
 
         // Check for header-time completion (HEAD, 204, 304, zero-length).
         if exchange.session.response_done() {
             let termination = match check_clean_completion(&mut exchange.session) {
                 Ok(true) => {
+                    if let Some(guard) = circuit_guard {
+                        guard.finalize_success();
+                    }
                     exchange
                         .connector
                         .connector()
@@ -339,6 +344,7 @@ impl SubRequestClient {
                     "header_only"
                 },
                 Ok(false) => {
+                    drop(circuit_guard); // records a circuit failure
                     dispose_session_abnormal(
                         exchange.session,
                         Some(&exchange.peer),
@@ -351,6 +357,7 @@ impl SubRequestClient {
                     ));
                 },
                 Err(e) => {
+                    drop(circuit_guard); // records a circuit failure
                     dispose_session_abnormal(
                         exchange.session,
                         Some(&exchange.peer),
@@ -367,6 +374,14 @@ impl SubRequestClient {
                 headers: exchange.headers,
                 body: SubResponseBody::new_done(),
             });
+        }
+
+        // Valid headers received and the response is streaming: the header
+        // exchange succeeded, so finalize the circuit guard as success. The
+        // body may still fail later, but the guard is scoped to the header
+        // exchange.
+        if let Some(guard) = circuit_guard {
+            guard.finalize_success();
         }
 
         // Capture the operator-configured read timeout before clearing
