@@ -435,11 +435,11 @@ fn median_throughput(runs: &[BenchmarkResult]) -> ThroughputMetrics {
 /// medians. Zeroing these (as the previous placeholder did) made the
 /// headline median row report a clean run even when every request failed.
 fn median_errors(runs: &[BenchmarkResult]) -> ErrorMetrics {
-    let non_2xx_values: Vec<f64> = runs.iter().filter_map(|r| r.errors.non_2xx).map(|v| v as f64).collect();
+    let non_2xx_values: Vec<u64> = runs.iter().filter_map(|r| r.errors.non_2xx).collect();
     ErrorMetrics {
-        non_2xx: (!non_2xx_values.is_empty()).then(|| f64_median(non_2xx_values.into_iter()) as u64),
-        timeouts: f64_median(runs.iter().map(|r| r.errors.timeouts as f64)) as u64,
-        connect_failures: f64_median(runs.iter().map(|r| r.errors.connect_failures as f64)) as u64,
+        non_2xx: (!non_2xx_values.is_empty()).then(|| u64_median(non_2xx_values.into_iter())),
+        timeouts: u64_median(runs.iter().map(|r| r.errors.timeouts)),
+        connect_failures: u64_median(runs.iter().map(|r| r.errors.connect_failures)),
     }
 }
 
@@ -456,9 +456,22 @@ fn median_resource(runs: &[BenchmarkResult]) -> Option<ResourceMetrics> {
     Some(ResourceMetrics {
         cpu_percent_avg: f64_median(present.iter().map(|m| m.cpu_percent_avg)),
         cpu_percent_peak: f64_median(present.iter().map(|m| m.cpu_percent_peak)),
-        memory_rss_bytes_avg: f64_median(present.iter().map(|m| m.memory_rss_bytes_avg as f64)) as u64,
-        memory_rss_bytes_peak: f64_median(present.iter().map(|m| m.memory_rss_bytes_peak as f64)) as u64,
+        memory_rss_bytes_avg: u64_median(present.iter().map(|m| m.memory_rss_bytes_avg)),
+        memory_rss_bytes_peak: u64_median(present.iter().map(|m| m.memory_rss_bytes_peak)),
     })
+}
+
+/// Compute the median of an iterator of `u64` values without floats.
+///
+/// Returns 0 for an empty iterator. Uses the lower-middle element so no
+/// averaging (and no `u64`/`f64` casts) is needed.
+fn u64_median(values: impl Iterator<Item = u64>) -> u64 {
+    let mut v: Vec<u64> = values.collect();
+    if v.is_empty() {
+        return 0;
+    }
+    v.sort_unstable();
+    v.get(v.len() / 2).copied().unwrap_or(0)
 }
 
 /// Extract p99 and rps from a median result.

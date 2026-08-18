@@ -130,41 +130,31 @@ fn first_line_with_alias(raw: &str) -> Option<usize> {
 
 /// Whether a single line contains an alias node outside strings/comments.
 ///
-/// Single-line scan only: YAML block scalars can span lines, but an
-/// alias node itself is always single-line, and a false positive from a
-/// `*` inside a multi-line block scalar would only reject an unusual
-/// config, never admit a bomb.
+/// Single-line scan only: an alias node is always single-line, and a
+/// false positive from a `*` inside a multi-line block scalar would only
+/// reject an unusual config, never admit a bomb.
 fn line_contains_alias(line: &str) -> bool {
-    let bytes = line.as_bytes();
-    let mut i = 0;
     let mut at_boundary = true;
     let mut quote: Option<u8> = None;
-    while i < bytes.len() {
-        let c = bytes[i];
-        match quote {
-            Some(q) => {
-                if c == q {
-                    quote = None;
-                }
-                at_boundary = false;
-            },
-            None => match c {
-                b'#' => return false, // rest of line is a comment
-                b'\'' | b'"' => {
-                    quote = Some(c);
-                    at_boundary = false;
-                },
-                b'*' if at_boundary => {
-                    // Alias node when followed by an anchor-name char.
-                    if bytes.get(i + 1).is_some_and(u8::is_ascii_alphanumeric) {
-                        return true;
-                    }
-                    at_boundary = false;
-                },
-                _ => at_boundary = matches!(c, b' ' | b'\t' | b'[' | b'{' | b',' | b':' | b'-'),
-            },
+    let mut prev_star = false;
+    for &c in line.as_bytes() {
+        // An alias node is `*` at a node boundary followed by an
+        // anchor-name character; check the char after a boundary `*`.
+        if prev_star && c.is_ascii_alphanumeric() {
+            return true;
         }
-        i += 1;
+        prev_star = false;
+        if let Some(q) = quote {
+            quote = (c != q).then_some(q);
+            at_boundary = false;
+            continue;
+        }
+        match c {
+            b'#' => return false, // rest of line is a comment
+            b'\'' | b'"' => (quote, at_boundary) = (Some(c), false),
+            b'*' if at_boundary => prev_star = true,
+            _ => at_boundary = matches!(c, b' ' | b'\t' | b'[' | b'{' | b',' | b':' | b'-'),
+        }
     }
     false
 }
