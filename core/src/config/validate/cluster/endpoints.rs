@@ -6,7 +6,7 @@
 use std::net::IpAddr;
 
 use super::{
-    MAX_ENDPOINTS,
+    MAX_ENDPOINT_WEIGHT, MAX_ENDPOINTS,
     health_check::{extract_host, is_ssrf_sensitive, is_ssrf_sensitive_hostname},
 };
 use crate::{
@@ -36,15 +36,27 @@ pub(super) fn validate_endpoints(cluster: &Cluster, insecure_options: &InsecureO
     }
     for ep in &cluster.endpoints {
         validate_endpoint_address(ep.address(), &cluster.name)?;
-        if ep.weight() == 0 {
-            return Err(ProxyError::Config(format!(
-                "cluster '{}': endpoint '{}' has weight 0 (must be >= 1)",
-                cluster.name,
-                ep.address()
-            )));
-        }
+        validate_endpoint_weight(ep.weight(), ep.address(), &cluster.name)?;
     }
     validate_endpoint_ssrf(cluster, insecure_options)
+}
+
+/// Reject a zero or out-of-range endpoint weight.
+///
+/// Weighted balancers expand each endpoint into `weight` replicas at
+/// build time, so an unbounded weight is an out-of-memory vector.
+fn validate_endpoint_weight(weight: u32, addr: &str, cluster_name: &str) -> Result<(), ProxyError> {
+    if weight == 0 {
+        return Err(ProxyError::Config(format!(
+            "cluster '{cluster_name}': endpoint '{addr}' has weight 0 (must be >= 1)"
+        )));
+    }
+    if weight > MAX_ENDPOINT_WEIGHT {
+        return Err(ProxyError::Config(format!(
+            "cluster '{cluster_name}': endpoint '{addr}' has weight {weight} (max {MAX_ENDPOINT_WEIGHT})"
+        )));
+    }
+    Ok(())
 }
 
 /// Validate an endpoint address is well-formed `host:port`.
@@ -305,6 +317,28 @@ clusters:
 "#;
         let err = Config::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("weight 0"), "got: {err}");
+    }
+
+    #[test]
+    fn reject_overweight_endpoint() {
+        let yaml = r#"
+listeners:
+  - name: web
+    address: "0.0.0.0:80"
+    filter_chains: [main]
+filter_chains:
+  - name: main
+    filters:
+      - filter: static_response
+        status: 200
+clusters:
+  - name: "backend"
+    endpoints:
+      - address: "10.0.0.1:80"
+        weight: 4000000000
+"#;
+        let err = Config::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("max 1000"), "got: {err}");
     }
 
     #[test]
