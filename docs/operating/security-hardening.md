@@ -55,7 +55,7 @@ ambiguous configuration:
 
 - Set certificate and key file permissions to `0600`,
   owned by the Praxis process user.
-- Use `min_version: "1.3"` in TLS configuration.
+- Use `min_version: tls13` in TLS configuration.
   TLS 1.2 can be used if required, but TLS 1.0 and 1.1
   are deprecated and Praxis will not negotiate them.
 - Rotate certificates before expiration. Single-cert
