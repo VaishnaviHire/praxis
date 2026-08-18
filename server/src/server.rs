@@ -182,18 +182,7 @@ fn build_server_state(config: &Config, registry: &FilterRegistry, health_registr
     spawn_health_check_tasks(config, Arc::clone(health_registry), &health_shutdown);
 
     if config.runtime.subrequest_circuit_breaker.is_some() {
-        let client = subrequest_client.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 min
-            interval.tick().await; // skip immediate first tick
-            loop {
-                interval.tick().await;
-                let evicted = client.evict_idle_circuits(Duration::from_secs(600)); // 10 min idle
-                if evicted > 0 {
-                    debug!(evicted, "circuit breaker: evicted idle entries");
-                }
-            }
-        });
+        spawn_circuit_eviction_task(subrequest_client.clone());
     }
 
     ServerState {
@@ -344,6 +333,35 @@ fn spawn_health_check_tasks(
         rt.block_on(async {
             praxis_protocol::http::pingora::health::runner::spawn_health_checks(&clusters, &registry, &shutdown);
             shutdown.cancelled().await;
+        });
+    });
+}
+
+/// Spawn the sub-request circuit breaker idle-eviction loop.
+///
+/// Runs on a dedicated thread with its own current-thread runtime,
+/// mirroring [`spawn_health_check_tasks`]. [`build_server_state`] is
+/// called before [`PingoraServerRuntime::new`], so no reactor is
+/// registered on the calling thread and a bare `tokio::spawn` here
+/// would panic for every config that sets
+/// `runtime.subrequest_circuit_breaker`.
+#[expect(clippy::expect_used, reason = "fatal")]
+fn spawn_circuit_eviction_task(client: praxis_core::subrequest::SubRequestClient) {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("circuit breaker eviction runtime");
+        rt.block_on(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 min
+            interval.tick().await; // skip immediate first tick
+            loop {
+                interval.tick().await;
+                let evicted = client.evict_idle_circuits(Duration::from_secs(600)); // 10 min idle
+                if evicted > 0 {
+                    debug!(evicted, "circuit breaker: evicted idle entries");
+                }
+            }
         });
     });
 }
