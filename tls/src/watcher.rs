@@ -304,10 +304,8 @@ fn reload_client_verifier(reload: &Option<ClientVerifierReload>) -> bool {
 
     match crate::client_auth::build_client_verifier(&cfg.ca_path, cfg.mode, &cfg.crl_paths) {
         Ok(verifier) => {
-            cfg.swap_handle.store(Arc::new(crate::reload::VerifierState {
-                verifier,
-                mandatory: cfg.mode == ClientCertMode::Require,
-            }));
+            cfg.swap_handle
+                .store(Arc::new(crate::reload::VerifierState::new(verifier, cfg.mode)));
             tracing::info!(
                 ca_path = %cfg.ca_path,
                 crl_count = cfg.crl_paths.len(),
