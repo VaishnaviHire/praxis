@@ -37,17 +37,13 @@ pub(crate) fn compile_user_regex(pattern: &str, filter_name: &str) -> Result<Reg
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests"
-)]
+#[allow(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
 mod tests {
     use super::compile_user_regex;
 
     #[test]
     fn compiles_valid_pattern() {
-        let re = compile_user_regex(r"^/api/.*", "path_rewrite").expect("valid regex");
+        let re = compile_user_regex("^/api/.*", "path_rewrite").expect("valid regex");
         assert!(re.is_match("/api/v1"), "compiled regex should match /api/v1");
     }
 
@@ -64,7 +60,7 @@ mod tests {
     #[test]
     fn rejects_pattern_exceeding_size_limit() {
         // Repeated non-capturing groups that exceed the 1 MiB compiled-automaton cap.
-        let huge = (0..200_000).map(|_| "(?:x)").collect::<Vec<_>>().join("");
+        let huge = std::iter::repeat_n("(?:x)", 200_000).collect::<Vec<_>>().join("");
         let err = compile_user_regex(&huge, "test").expect_err("should exceed size limit");
         let msg = err.to_string();
         assert!(
