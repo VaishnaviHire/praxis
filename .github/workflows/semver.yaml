@@ -5,10 +5,12 @@ name: SemVer
 # ------------------------------------------------------------------------------
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+# NOTE: manual only until v1.x.x
+#
+#  push:
+#    branches: [main]
+#  pull_request:
+#    branches: [main]
   workflow_dispatch:
 
 concurrency:
