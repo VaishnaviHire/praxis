@@ -11,7 +11,6 @@
     clippy::mod_module_files,
     clippy::partial_pub_fields,
     clippy::pub_underscore_fields,
-    clippy::ref_option,
     clippy::shadow_unrelated,
     clippy::single_char_lifetime_names,
     clippy::wildcard_enum_match_arm,

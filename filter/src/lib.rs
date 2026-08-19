@@ -10,7 +10,6 @@
     clippy::min_ident_chars,
     clippy::mod_module_files,
     clippy::partial_pub_fields,
-    clippy::ref_option,
     clippy::shadow_unrelated,
     clippy::single_char_lifetime_names,
     clippy::struct_field_names,

@@ -8,7 +8,6 @@
     clippy::impl_trait_in_params,
     clippy::min_ident_chars,
     clippy::mod_module_files,
-    clippy::ref_option,
     reason = "TODO(conventions-sync): fix violations and remove"
 )]
 

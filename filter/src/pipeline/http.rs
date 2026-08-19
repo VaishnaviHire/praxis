@@ -188,7 +188,7 @@ impl FilterPipeline {
         end_of_stream: bool,
     ) -> Result<FilterAction, FilterError> {
         ensure_body_done_indices(ctx, self.filters.len());
-        accumulate_body_bytes(&mut ctx.request_body_bytes, body);
+        accumulate_body_bytes(&mut ctx.request_body_bytes, body.as_ref());
         let request_phase_tracked = request_phase_tracked(ctx, self.filters.len());
         let mut released = false;
         for (idx, pf) in self.filters.iter().enumerate() {
@@ -268,7 +268,7 @@ impl FilterPipeline {
         response_header: Option<&crate::context::Response>,
     ) -> Result<FilterAction, FilterError> {
         ensure_body_done_indices(ctx, self.filters.len());
-        accumulate_body_bytes(&mut ctx.response_body_bytes, body);
+        accumulate_body_bytes(&mut ctx.response_body_bytes, body.as_ref());
         let request_phase_tracked = request_phase_tracked(ctx, self.filters.len());
         let mut released = false;
         for (idx, pf) in self.filters.iter().enumerate().rev() {

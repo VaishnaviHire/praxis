@@ -49,7 +49,7 @@ pub(super) fn execute(
 
     match ctx.response_body_mode {
         BodyMode::SizeLimit { max_bytes } => {
-            if check_body_size_limit(body, &mut ctx.response_body_bytes, max_bytes) {
+            if check_body_size_limit(body.as_ref(), &mut ctx.response_body_bytes, max_bytes) {
                 return Err(pingora_core::Error::explain(
                     pingora_core::ErrorType::InternalError,
                     "response body exceeds maximum size",

@@ -12,7 +12,6 @@
     clippy::mod_module_files,
     clippy::print_stdout,
     clippy::print_stderr,
-    clippy::ref_option,
     clippy::shadow_unrelated,
     clippy::single_char_lifetime_names,
     clippy::struct_field_names,

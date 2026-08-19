@@ -350,8 +350,8 @@ impl ScenarioResults {
             return self.skipped_result();
         }
 
-        let (cur_p99, cur_rps) = extract_metrics(&self.median);
-        let (base_p99, base_rps) = extract_metrics(&baseline.median);
+        let (cur_p99, cur_rps) = extract_metrics(self.median.as_ref());
+        let (base_p99, base_rps) = extract_metrics(baseline.median.as_ref());
         let p99_change = relative_change(cur_p99, base_p99);
         let throughput_change = relative_change(cur_rps, base_rps);
 
@@ -463,10 +463,8 @@ fn median_resource(runs: &[BenchmarkResult]) -> Option<ResourceMetrics> {
 }
 
 /// Extract p99 and rps from a median result.
-fn extract_metrics(median: &Option<BenchmarkResult>) -> (f64, f64) {
-    median
-        .as_ref()
-        .map_or((0.0, 0.0), |m| (m.latency.p99, m.throughput.requests_per_sec))
+fn extract_metrics(median: Option<&BenchmarkResult>) -> (f64, f64) {
+    median.map_or((0.0, 0.0), |m| (m.latency.p99, m.throughput.requests_per_sec))
 }
 
 /// Compute relative change between current and baseline values.
@@ -934,7 +932,7 @@ mod tests {
 
     #[test]
     fn extract_metrics_with_none() {
-        let (p99, rps) = extract_metrics(&None);
+        let (p99, rps) = extract_metrics(None);
         assert!((p99 - 0.0).abs() < 1e-9, "p99 should be 0.0 for None median");
         assert!((rps - 0.0).abs() < 1e-9, "rps should be 0.0 for None median");
     }
@@ -942,7 +940,7 @@ mod tests {
     #[test]
     fn extract_metrics_with_valid_result() {
         let result = sample_result(0.025, 5000.0);
-        let (p99, rps) = extract_metrics(&Some(result));
+        let (p99, rps) = extract_metrics(Some(&result));
         assert!((p99 - 0.025).abs() < 1e-9, "p99 should match result, got {p99}");
         assert!((rps - 5000.0).abs() < 1e-9, "rps should match result, got {rps}");
     }
