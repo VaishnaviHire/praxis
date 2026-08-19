@@ -631,15 +631,14 @@ type(scope): summary
 ### Pull Request Conventions
 
 Reviewability is enforced by CI
-(`.github/workflows/pr-conventions.yaml`). A PR that is
+(`.github/workflows/conventions.yaml`). A PR that is
 hard to review is a defect regardless of the quality of
 its code. The gates:
 
-- **Size**: at most 750 added lines of production code.
+- **Size**: at most 500 added lines of production code.
   `Cargo.toml`/`Cargo.lock`, tests, docs, examples, and
   benchmarks do not count toward the limit. Split larger
-  changes into a stack of reviewable PRs. Override
-  label: `skip/pr-conventions` (maintainers only).
+  changes into a stack of reviewable PRs.
 - **Description**: every PR must explain what it does
   and why.
 - **Commit format**: subjects follow the conventional
@@ -647,8 +646,7 @@ its code. The gates:
 - **DCO**: every commit carries a `Signed-off-by`
   trailer.
 - **Signed commits**: every commit must be
-  cryptographically signed (GPG or SSH). Override
-  label: `skip/commit-signing`.
+  cryptographically signed (GPG or SSH).
 - **Human authorship**: commits claiming they were
   authored, co-authored, or signed-off by AI tools are
   rejected, per the policy above. Humans are
