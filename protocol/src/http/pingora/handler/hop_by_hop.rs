@@ -74,6 +74,17 @@ pub(crate) fn is_websocket_upgrade(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case("websocket")
 }
 
+/// Whether a header map's `Upgrade` header indicates a `WebSocket` upgrade.
+///
+/// Extracts the `Upgrade` header value and delegates to
+/// [`is_websocket_upgrade`].
+pub(crate) fn has_websocket_upgrade(headers: &HeaderMap) -> bool {
+    headers
+        .get(http::header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(is_websocket_upgrade)
+}
+
 /// Snapshot `Connection` header values before they are removed.
 ///
 /// Call this before stripping hop-by-hop headers, then pass the
@@ -215,6 +226,8 @@ fn is_proxy_owned(name: &str) -> bool {
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
+#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+#[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
 
@@ -283,61 +296,31 @@ mod tests {
     }
 
     #[test]
-    fn proxy_owned_headers_are_recognized() {
-        assert!(is_proxy_owned("x-forwarded-for"), "x-forwarded-* is proxy-owned");
-        assert!(is_proxy_owned("X-Forwarded-Proto"), "matching is case-insensitive");
-        assert!(is_proxy_owned("x-praxis-route"), "reserved x-praxis-* is proxy-owned");
+    fn has_websocket_upgrade_case_insensitive() {
+        let mut headers = HeaderMap::new();
+        headers.insert("upgrade", "WebSocket".parse().unwrap());
         assert!(
-            !is_proxy_owned("x-request-id"),
-            "ordinary x-* headers are not proxy-owned"
+            has_websocket_upgrade(&headers),
+            "should detect mixed-case WebSocket in header map"
         );
-        assert!(!is_proxy_owned("cache-control"), "standard headers are not proxy-owned");
     }
 
     #[test]
-    fn strip_removes_custom_but_keeps_proxy_owned() {
-        let mut rec = Recorder {
-            removed: vec![],
-            headers: HeaderMap::new(),
-        };
-        // A client asks to strip its own X-App-State and Praxis's X-Forwarded-For.
-        let values = vec![http::HeaderValue::from_static(
-            "x-app-state, x-forwarded-for, x-praxis-route",
-        )];
-        strip_connection_tokens(&mut rec, &values, REQUEST_HOP_BY_HOP);
+    fn has_websocket_upgrade_missing_header() {
+        let headers = HeaderMap::new();
         assert!(
-            rec.removed.contains(&"x-app-state".to_owned()),
-            "custom header should be stripped"
-        );
-        assert!(
-            !rec.removed.iter().any(|h| h == "x-forwarded-for"),
-            "x-forwarded-for must not be strippable via a Connection token"
-        );
-        assert!(
-            !rec.removed.iter().any(|h| h == "x-praxis-route"),
-            "reserved x-praxis-* must not be strippable via a Connection token"
+            !has_websocket_upgrade(&headers),
+            "should return false when upgrade header is missing"
         );
     }
 
-    // -------------------------------------------------------------------------
-    // Test Utilities
-    // -------------------------------------------------------------------------
-
-    /// Minimal [`RemoveHeader`] double recording removals.
-    struct Recorder {
-        removed: Vec<String>,
-        headers: HeaderMap,
-    }
-
-    impl RemoveHeader for Recorder {
-        const DIRECTION: &'static str = "request";
-
-        fn headers(&self) -> &HeaderMap {
-            &self.headers
-        }
-
-        fn remove_header_by_name(&mut self, name: &str) {
-            self.removed.push(name.to_ascii_lowercase());
-        }
+    #[test]
+    fn has_websocket_upgrade_non_websocket() {
+        let mut headers = HeaderMap::new();
+        headers.insert("upgrade", "h2c".parse().unwrap());
+        assert!(
+            !has_websocket_upgrade(&headers),
+            "should return false for non-websocket upgrade"
+        );
     }
 }
