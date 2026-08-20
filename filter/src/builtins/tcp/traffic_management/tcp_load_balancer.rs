@@ -49,6 +49,10 @@ struct TcpLoadBalancerConfig {
 /// If all endpoints are unhealthy, the filter enters panic mode and
 /// routes to all endpoints.
 ///
+/// **Note:** `retry_policy` is an HTTP-only feature and is ignored for TCP
+/// listeners. The field appears in the cluster schema because the same
+/// `Cluster` type is shared across protocols.
+///
 /// # YAML configuration
 ///
 /// ```yaml
@@ -148,9 +152,11 @@ impl TcpFilter for TcpLoadBalancerFilter {
         }
 
         let client_ip = ctx.remote_addr.rsplit_once(':').map_or(ctx.remote_addr, |(ip, _)| ip);
-        let addr = strategy.select(Some(client_ip), health).ok_or_else(|| -> FilterError {
-            format!("tcp_load_balancer: cluster '{cluster_name}' has no available endpoints").into()
-        })?;
+        let addr = strategy
+            .select(Some(client_ip), health, &[])
+            .ok_or_else(|| -> FilterError {
+                format!("tcp_load_balancer: cluster '{cluster_name}' has no available endpoints").into()
+            })?;
         debug!(cluster = %cluster_name, upstream = %addr, "TCP upstream selected");
 
         ctx.upstream_addr = Some(Cow::Owned(addr.to_string()));

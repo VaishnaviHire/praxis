@@ -218,6 +218,12 @@ async fn run_pipeline(
         response_body_mode,
         selected_endpoint_index,
         metrics_route,
+        attempted_endpoints,
+        retry_policy,
+        route_retry_policy,
+        cluster_retry_state,
+        cluster_retry_state_released,
+        endpoint_reselector,
         extensions,
         filter_metadata,
         filter_state,
@@ -243,6 +249,12 @@ async fn run_pipeline(
             filter_ctx.response_body_mode,
             filter_ctx.selected_endpoint_index,
             filter_ctx.metrics_route,
+            filter_ctx.attempted_endpoints,
+            filter_ctx.retry_policy,
+            filter_ctx.route_retry_policy,
+            filter_ctx.cluster_retry_state,
+            filter_ctx.cluster_retry_state_released,
+            filter_ctx.endpoint_reselector,
             filter_ctx.extensions,
             filter_ctx.filter_metadata,
             filter_ctx.filter_state,
@@ -287,6 +299,12 @@ async fn run_pipeline(
             ctx.rewritten_path = rewritten_path;
             ctx.request_body_mode = super::clamp_body_mode_to_ceiling(request_body_mode, baseline_request_body_mode);
             ctx.selected_endpoint_index = selected_endpoint_index;
+            ctx.attempted_endpoints = attempted_endpoints;
+            ctx.retry_policy = retry_policy;
+            ctx.route_retry_policy = route_retry_policy;
+            ctx.cluster_retry_state = cluster_retry_state;
+            ctx.cluster_retry_state_released = cluster_retry_state_released;
+            ctx.endpoint_reselector = endpoint_reselector;
             Ok(PipelineResult {
                 action: FilterAction::Continue,
                 extra_headers,

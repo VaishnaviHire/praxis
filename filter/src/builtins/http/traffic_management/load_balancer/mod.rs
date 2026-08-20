@@ -4,6 +4,7 @@
 //! Load-balancer filter: select an upstream endpoint from the routed cluster.
 
 mod entry;
+mod reselector;
 mod strategy;
 
 #[cfg(test)]
@@ -29,6 +30,7 @@ use praxis_core::{
 use tracing::{debug, warn};
 
 use self::entry::{ClusterEntry, build_cluster_entry};
+pub use self::reselector::EndpointReselector;
 use crate::{
     FilterError,
     actions::FilterAction,
@@ -121,6 +123,7 @@ impl LoadBalancerFilter {
 }
 
 #[async_trait]
+#[expect(clippy::too_many_lines, reason = "on_request orchestrates sequential setup")]
 impl HttpFilter for LoadBalancerFilter {
     fn name(&self) -> &'static str {
         "load_balancer"
@@ -151,7 +154,7 @@ impl HttpFilter for LoadBalancerFilter {
             crate::metrics::record_lb_panic_mode(SharedString::from(Arc::clone(cluster)));
         }
 
-        let addr = entry.strategy.select(ctx, health).ok_or_else(|| -> FilterError {
+        let addr = entry.strategy.select(ctx, health, &[]).ok_or_else(|| -> FilterError {
             format!("load_balancer filter: cluster '{cluster_name}' has no available endpoints").into()
         })?;
         debug!(cluster = %cluster_name, upstream = %addr, "upstream selected");
@@ -160,6 +163,19 @@ impl HttpFilter for LoadBalancerFilter {
             ctx.selected_endpoint_index = h.endpoint_index(&addr);
         }
 
+        // Track active request for retry budget.
+        entry.retry_state.enter();
+        ctx.cluster_retry_state = Some(Arc::clone(&entry.retry_state));
+
+        let policy = match &ctx.route_retry_policy {
+            Some(route_override) => Arc::new(entry.retry_policy.merge_override(route_override)),
+            None => Arc::clone(&entry.retry_policy),
+        };
+        ctx.retry_policy = Some(Arc::clone(&policy));
+
+        let hash_key = entry.strategy.capture_hash_key(ctx);
+        ctx.endpoint_reselector = Some(Arc::new(entry.reselector_with_policy(hash_key, policy)));
+        ctx.attempted_endpoints.push(Arc::clone(&addr));
         ctx.upstream = Some(entry.build_upstream(addr, ctx));
 
         Ok(FilterAction::Continue)
@@ -171,6 +187,10 @@ impl HttpFilter for LoadBalancerFilter {
             && let Some(entry) = self.clusters.get(cluster_name)
         {
             entry.strategy.release(&upstream.address);
+        }
+        if let Some(state) = &ctx.cluster_retry_state {
+            state.leave();
+            ctx.cluster_retry_state_released = true;
         }
 
         Ok(FilterAction::Continue)

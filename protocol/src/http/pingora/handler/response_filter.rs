@@ -55,8 +55,15 @@ pub(super) async fn execute(
     let mut resp = response_header_from_pingora(upstream_response);
     let name_fingerprint_before = header_name_fingerprint(&resp.headers);
     ctx.connection_upgraded = is_upgrade_response;
-    ctx.response_phase_done = true;
     ctx.upstream_response_status = Some(upstream_response.status.as_u16());
+
+    // Evaluate HTTP-status retry before running response filters / committing
+    // the response phase, so a retriable 5xx does not leak to the client.
+    if let Some(err) = super::maybe_retry_response(ctx, upstream_response.status.as_u16()) {
+        return Err(err);
+    }
+
+    ctx.response_phase_done = true;
 
     let (result, filter_flagged_modification) = run_response_pipeline(pipeline, ctx, &mut resp).await?;
     // A filter may rearrange the header name sequence without changing the
@@ -96,6 +103,7 @@ async fn run_response_pipeline(
         headers_modified,
         response_body_mode,
         cluster,
+        cluster_retry_state_released,
         extensions,
         filter_metadata,
         filter_state,
@@ -114,6 +122,7 @@ async fn run_response_pipeline(
             fctx.response_headers_modified,
             fctx.response_body_mode,
             fctx.cluster,
+            fctx.cluster_retry_state_released,
             fctx.extensions,
             fctx.filter_metadata,
             fctx.filter_state,
@@ -122,6 +131,7 @@ async fn run_response_pipeline(
         )
     };
     ctx.cluster = cluster;
+    ctx.cluster_retry_state_released = cluster_retry_state_released;
     ctx.response_body_mode = super::clamp_body_mode_to_ceiling(response_body_mode, baseline_response_body_mode);
     ctx.extensions = extensions;
     ctx.filter_metadata = filter_metadata;

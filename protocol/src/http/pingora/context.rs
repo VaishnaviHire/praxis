@@ -259,6 +259,30 @@ pub struct PingoraRequestCtx {
     /// for passive health recording in the logging hook.
     pub selected_endpoint_index: Option<usize>,
 
+    /// Endpoints already attempted (for alternate-host retry).
+    pub attempted_endpoints: Vec<Arc<str>>,
+
+    /// Snapshot of the resolved retry policy for this request.
+    pub retry_policy: Option<Arc<praxis_core::config::RetryPolicy>>,
+
+    /// Optional route-level retry policy override (merged by the load balancer).
+    pub route_retry_policy: Option<Arc<praxis_core::config::RetryPolicy>>,
+
+    /// Shared cluster retry state (budget + active requests).
+    pub cluster_retry_state: Option<Arc<praxis_core::retry::ClusterRetryState>>,
+
+    /// Whether `cluster_retry_state.leave()` has already been called.
+    pub cluster_retry_state_released: bool,
+
+    /// Reselector for alternate-host selection on retry.
+    pub endpoint_reselector: Option<Arc<praxis_filter::EndpointReselector>>,
+
+    /// Pending backoff delay to apply before the next `upstream_peer` call.
+    pub pending_backoff: Option<std::time::Duration>,
+
+    /// Whether the next upstream attempt should re-select (alternate host).
+    pub reselect_on_retry: bool,
+
     /// Rewritten URI path for the upstream request.
     ///
     /// Set by the `path_rewrite` filter via [`HttpFilterContext`] and
@@ -324,6 +348,12 @@ macro_rules! filter_context {
             response_headers_modified: false,
             rewritten_path: $ctx.rewritten_path.take(),
             selected_endpoint_index: $ctx.selected_endpoint_index,
+            attempted_endpoints: std::mem::take(&mut $ctx.attempted_endpoints),
+            retry_policy: $ctx.retry_policy.clone(),
+            route_retry_policy: $ctx.route_retry_policy.clone(),
+            cluster_retry_state: $ctx.cluster_retry_state.clone(),
+            cluster_retry_state_released: $ctx.cluster_retry_state_released,
+            endpoint_reselector: $ctx.endpoint_reselector.clone(),
             time_source: $pipeline.time_source(),
             upstream: $ctx.upstream.take(),
         }
@@ -503,6 +533,14 @@ impl Default for PingoraRequestCtx {
             retries: 0,
             rewritten_path: None,
             selected_endpoint_index: None,
+            attempted_endpoints: Vec::new(),
+            retry_policy: None,
+            route_retry_policy: None,
+            cluster_retry_state: None,
+            cluster_retry_state_released: false,
+            endpoint_reselector: None,
+            pending_backoff: None,
+            reselect_on_retry: false,
             upstream: None,
             upstream_for_retry: None,
         }

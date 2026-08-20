@@ -13,6 +13,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
+use super::RetryPolicy;
+
 // -----------------------------------------------------------------------------
 // PathMatch
 // -----------------------------------------------------------------------------
@@ -174,6 +176,13 @@ pub struct Route {
     /// Host to match. If set, the route only applies to this host.
     #[serde(default)]
     pub host: Option<String>,
+
+    /// Optional per-route retry policy override.
+    ///
+    /// Merged onto the cluster `retry_policy`: route fields replace
+    /// cluster fields where present. List fields replace entirely.
+    #[serde(default)]
+    pub retry_policy: Option<RetryPolicy>,
 }
 
 // -----------------------------------------------------------------------------

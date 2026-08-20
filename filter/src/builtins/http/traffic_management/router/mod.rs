@@ -25,7 +25,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use http::{HeaderMap, header::HeaderName};
 use praxis_core::config::{PathMatch, Route};
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use self::{
     config::{
@@ -127,6 +127,7 @@ impl RouterFilter {
     ///         host: None,
     ///         headers: None,
     ///         cluster: "default".into(),
+    ///         retry_policy: None,
     ///     },
     ///     Route {
     ///         path_match: PathMatch::Prefix {
@@ -135,6 +136,7 @@ impl RouterFilter {
     ///         host: None,
     ///         headers: None,
     ///         cluster: "api".into(),
+    ///         retry_policy: None,
     ///     },
     /// ])
     /// .unwrap();
@@ -169,6 +171,15 @@ impl RouterFilter {
         let _json_alias_header = parse_json_alias_header(json_alias_header)?;
         validate_alias_options(&routes, json_alias_max_body_bytes)?;
         reject_unimplemented_json_aliases(&routes)?;
+
+        for r in &routes {
+            if r.route.retry_policy.is_some() {
+                info!(
+                    cluster = %r.route.cluster,
+                    "route-level retry_policy overrides cluster-level policy"
+                );
+            }
+        }
 
         let resolved = resolve_routes(routes);
         debug!(routes = resolved.len(), "router initialized");
@@ -422,6 +433,9 @@ impl HttpFilter for RouterFilter {
             );
             ctx.metrics_route = Some(resolved.metrics_label.clone());
             ctx.cluster = Some(Arc::clone(&resolved.route.cluster));
+            if let Some(policy) = &resolved.route.retry_policy {
+                ctx.route_retry_policy = Some(Arc::new(policy.clone()));
+            }
             Ok(FilterAction::Continue)
         } else {
             debug!(path = %path, "no route matched");

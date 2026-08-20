@@ -3307,6 +3307,7 @@ dependencies = [
  "quixotic-plecostomus-core",
  "quixotic-plecostomus-http",
  "quixotic-plecostomus-proxy",
+ "rand 0.10.2",
  "rcgen",
  "serde",
  "serde_json",

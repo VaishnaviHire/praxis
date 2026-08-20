@@ -6,12 +6,16 @@
 use std::sync::Arc;
 
 use praxis_core::{
-    config::{CachedClusterTls, Cluster},
+    config::{CachedClusterTls, Cluster, RetryPolicy},
     connectivity::{ConnectionOptions, Upstream},
+    retry::ClusterRetryState,
 };
 use tracing::{debug, error};
 
-use super::strategy::{Strategy, build_strategy};
+use super::{
+    reselector::EndpointReselector,
+    strategy::{Strategy, build_strategy},
+};
 use crate::{filter::HttpFilterContext, load_balancing::endpoint::build_weighted_endpoints};
 
 // -----------------------------------------------------------------------------
@@ -25,10 +29,16 @@ pub(super) struct ClusterEntry {
     pub(super) opts: Arc<ConnectionOptions>,
 
     /// The load-balancing strategy for this cluster.
-    pub(super) strategy: Strategy,
+    pub(super) strategy: Arc<Strategy>,
 
     /// Pre-cached TLS material. `None` means plain TCP.
     pub(super) tls: Option<CachedClusterTls>,
+
+    /// Resolved retry policy (legacy default when unset).
+    pub(super) retry_policy: Arc<RetryPolicy>,
+
+    /// Shared active-request counter and retry budget.
+    pub(super) retry_state: Arc<ClusterRetryState>,
 }
 
 impl ClusterEntry {
@@ -59,6 +69,22 @@ impl ClusterEntry {
             tls,
         }
     }
+
+    /// Capture a reselector with an already-merged retry policy.
+    pub(super) fn reselector_with_policy(
+        &self,
+        hash_key: Option<Arc<str>>,
+        retry_policy: Arc<RetryPolicy>,
+    ) -> EndpointReselector {
+        EndpointReselector::new(
+            Arc::clone(&self.strategy),
+            Arc::clone(&self.opts),
+            self.tls.clone(),
+            hash_key,
+            retry_policy,
+            Arc::clone(&self.retry_state),
+        )
+    }
 }
 
 /// Extract the hostname from a `Host` header value, stripping the port.
@@ -74,6 +100,10 @@ fn strip_host_port(host: &str) -> &str {
 }
 
 /// Build a [`ClusterEntry`] from a cluster definition.
+#[expect(
+    clippy::too_many_lines,
+    reason = "sequential setup steps, splitting harms readability"
+)]
 pub(super) fn build_cluster_entry(cluster: &Cluster) -> ClusterEntry {
     let endpoints = build_weighted_endpoints(cluster);
     let total_weight: u32 = endpoints.iter().map(|ep| ep.weight).sum();
@@ -99,11 +129,15 @@ pub(super) fn build_cluster_entry(cluster: &Cluster) -> ClusterEntry {
             },
         });
 
-    let strategy = build_strategy(&cluster.load_balancer_strategy, endpoints);
+    let strategy = Arc::new(build_strategy(&cluster.load_balancer_strategy, endpoints));
+    let retry_policy = Arc::new(cluster.retry_policy.clone().unwrap_or_else(RetryPolicy::legacy_default));
+    let retry_state = Arc::new(ClusterRetryState::new(retry_policy.retry_budget.as_ref()));
     ClusterEntry {
         opts: Arc::new(ConnectionOptions::from(cluster)),
         strategy,
         tls,
+        retry_policy,
+        retry_state,
     }
 }
 

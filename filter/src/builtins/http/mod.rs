@@ -22,9 +22,9 @@ pub use security::{
 #[cfg(feature = "policy-engine")]
 pub use security::{PolicyFilter, PolicyPluginFactoryFn, register_policy_plugin_factory};
 pub use traffic_management::{
-    CircuitBreakerFilter, EndpointSelectorFilter, GrpcDetectionFilter, IterativeRequestRouterFilter,
-    LoadBalancerFilter, RateLimitFilter, RateLimitMode, RedirectFilter, RedirectStatus, RouterFilter,
-    StaticResponseFilter, TimeoutFilter,
+    CircuitBreakerFilter, EndpointReselector, EndpointSelectorFilter, GrpcDetectionFilter,
+    IterativeRequestRouterFilter, LoadBalancerFilter, RateLimitFilter, RateLimitMode, RedirectFilter, RedirectStatus,
+    RouterFilter, StaticResponseFilter, TimeoutFilter,
 };
 pub use transformation::{
     HeaderFilter, PathRewriteFilter, UrlRewriteFilter, has_dot_dot_traversal, normalize_rewritten_path,

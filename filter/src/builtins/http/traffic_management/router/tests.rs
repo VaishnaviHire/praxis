@@ -50,6 +50,7 @@ fn host_filtering() {
             host: Some("api.example.com".to_owned()),
             headers: None,
             cluster: "api".into(),
+            retry_policy: None,
         },
         prefix_route("/", "default"),
     ]);
@@ -80,6 +81,7 @@ fn host_with_port() {
         host: Some("api.example.com".to_owned()),
         headers: None,
         cluster: "api".into(),
+        retry_policy: None,
     }]);
 
     let route = router
@@ -109,6 +111,7 @@ fn no_match_wrong_host() {
         host: Some("api.example.com".to_owned()),
         headers: None,
         cluster: "api".into(),
+        retry_policy: None,
     }]);
     assert!(
         router.match_route("/", Some("other.com"), &HeaderMap::new()).is_none(),
@@ -233,6 +236,7 @@ async fn on_request_combined_host_and_path() {
             host: Some("api.example.com".to_owned()),
             headers: None,
             cluster: "api".into(),
+            retry_policy: None,
         },
         prefix_route("/", "default"),
     ]);
@@ -266,6 +270,7 @@ fn route_matches_by_header() {
         host: None,
         headers: Some(HashMap::from([("x-model".to_owned(), "model-alpha-1".to_owned())])),
         cluster: "alpha_cluster".into(),
+        retry_policy: None,
     }]);
 
     let mut hdrs = HeaderMap::new();
@@ -286,6 +291,7 @@ fn route_skips_mismatched_header() {
         host: None,
         headers: Some(HashMap::from([("x-model".to_owned(), "model-alpha-1".to_owned())])),
         cluster: "alpha_cluster".into(),
+        retry_policy: None,
     }]);
 
     let mut hdrs = HeaderMap::new();
@@ -306,6 +312,7 @@ fn route_with_headers_wins_over_plain() {
             host: None,
             headers: Some(HashMap::from([("x-model".to_owned(), "model-alpha-1".to_owned())])),
             cluster: "alpha_cluster".into(),
+            retry_policy: None,
         },
         prefix_route("/", "default"),
     ]);
@@ -329,6 +336,7 @@ fn route_without_headers_used_as_fallback() {
             host: None,
             headers: Some(HashMap::from([("x-model".to_owned(), "model-alpha-1".to_owned())])),
             cluster: "alpha_cluster".into(),
+            retry_policy: None,
         },
         prefix_route("/", "default"),
     ]);
@@ -352,6 +360,7 @@ async fn host_falls_back_to_uri_authority() {
             host: Some("api.example.com".to_owned()),
             headers: None,
             cluster: "api".into(),
+            retry_policy: None,
         },
         prefix_route("/", "default"),
     ]);
@@ -379,6 +388,7 @@ fn multi_value_header_matches_any() {
         host: None,
         headers: Some(HashMap::from([("x-model".to_owned(), "model-alpha-1".to_owned())])),
         cluster: "alpha_cluster".into(),
+        retry_policy: None,
     }]);
 
     let mut hdrs = HeaderMap::new();
@@ -400,6 +410,7 @@ fn ipv6_host_with_port() {
         host: Some("[::1]".to_owned()),
         headers: None,
         cluster: "ipv6".into(),
+        retry_policy: None,
     }]);
 
     let route = router.match_route("/", Some("[::1]:8080"), &HeaderMap::new()).unwrap();
@@ -415,6 +426,7 @@ fn ipv6_host_without_port() {
         host: Some("[::1]".to_owned()),
         headers: None,
         cluster: "ipv6".into(),
+        retry_policy: None,
     }]);
 
     let route = router.match_route("/", Some("[::1]"), &HeaderMap::new()).unwrap();
@@ -443,6 +455,7 @@ fn route_with_host_and_headers() {
             host: Some("api.example.com".to_owned()),
             headers: Some(HashMap::from([("x-version".to_owned(), "v2".to_owned())])),
             cluster: "api-v2".into(),
+            retry_policy: None,
         },
         prefix_route("/", "default"),
     ]);
@@ -466,6 +479,7 @@ fn same_prefix_same_constraints_first_wins() {
             host: None,
             headers: Some(HashMap::from([("x-a".to_owned(), "1".to_owned())])),
             cluster: "first".into(),
+            retry_policy: None,
         },
         Route {
             path_match: PathMatch::Prefix {
@@ -474,6 +488,7 @@ fn same_prefix_same_constraints_first_wins() {
             host: None,
             headers: Some(HashMap::from([("x-b".to_owned(), "2".to_owned())])),
             cluster: "second".into(),
+            retry_policy: None,
         },
     ]);
 
@@ -496,6 +511,7 @@ fn empty_headers_map_matches_everything() {
         host: None,
         headers: Some(HashMap::new()),
         cluster: "vacuous".into(),
+        retry_policy: None,
     }]);
 
     let route = router.match_route("/test", None, &HeaderMap::new()).unwrap();
@@ -514,6 +530,7 @@ async fn on_request_strips_port_from_host_header() {
         host: Some("example.com".to_owned()),
         headers: None,
         cluster: "example".into(),
+        retry_policy: None,
     }]);
 
     let mut req = crate::test_utils::make_request(http::Method::GET, "/");
@@ -568,6 +585,7 @@ fn route_matches_request_host_hit() {
         host: Some("example.com".to_owned()),
         headers: None,
         cluster: "ex".into(),
+        retry_policy: None,
     };
     let resolved = ResolvedRoute {
         route,
@@ -589,6 +607,7 @@ fn route_matches_request_host_miss() {
         host: Some("example.com".to_owned()),
         headers: None,
         cluster: "ex".into(),
+        retry_policy: None,
     };
     let resolved = ResolvedRoute {
         route,
@@ -610,6 +629,7 @@ fn route_matches_request_host_miss_when_no_host() {
         host: Some("example.com".to_owned()),
         headers: None,
         cluster: "ex".into(),
+        retry_policy: None,
     };
     let resolved = ResolvedRoute {
         route,
@@ -631,6 +651,7 @@ fn route_matches_request_header_hit() {
         host: None,
         headers: Some(HashMap::from([("x-key".to_owned(), "val".to_owned())])),
         cluster: "h".into(),
+        retry_policy: None,
     };
     let resolved = ResolvedRoute {
         route,
@@ -654,6 +675,7 @@ fn route_matches_request_header_miss() {
         host: None,
         headers: Some(HashMap::from([("x-key".to_owned(), "val".to_owned())])),
         cluster: "h".into(),
+        retry_policy: None,
     };
     let resolved = ResolvedRoute {
         route,
@@ -677,6 +699,7 @@ fn route_matches_request_compound() {
         host: Some("example.com".to_owned()),
         headers: Some(HashMap::from([("x-ver".to_owned(), "2".to_owned())])),
         cluster: "c".into(),
+        retry_policy: None,
     };
     let resolved = ResolvedRoute {
         route,
@@ -709,6 +732,7 @@ fn update_best_match_prefers_more_constraints_at_same_prefix() {
         host: Some("example.com".to_owned()),
         headers: None,
         cluster: "b".into(),
+        retry_policy: None,
     };
     let best = update_best_match(None, &route_a);
     let best = update_best_match(best, &route_b);
@@ -737,6 +761,7 @@ fn update_best_match_keeps_current_when_dominated() {
         host: Some("example.com".to_owned()),
         headers: None,
         cluster: "first".into(),
+        retry_policy: None,
     };
     let second = prefix_route("/", "second");
     let best = update_best_match(None, &first);
@@ -801,6 +826,7 @@ fn route_matches_request_empty_headers_constraint() {
         host: None,
         headers: Some(HashMap::new()),
         cluster: "vacuous".into(),
+        retry_policy: None,
     };
     let resolved = ResolvedRoute {
         route,
@@ -899,6 +925,7 @@ fn wildcard_host_matches_subdomain() {
         host: Some("*.example.com".to_owned()),
         headers: None,
         cluster: "wildcard".into(),
+        retry_policy: None,
     }]);
 
     let route = router
@@ -919,6 +946,7 @@ fn wildcard_host_does_not_match_bare_domain() {
         host: Some("*.example.com".to_owned()),
         headers: None,
         cluster: "wildcard".into(),
+        retry_policy: None,
     }]);
 
     assert!(
@@ -938,6 +966,7 @@ fn wildcard_host_rejects_multi_level_subdomain_by_default() {
         host: Some("*.example.com".to_owned()),
         headers: None,
         cluster: "wildcard".into(),
+        retry_policy: None,
     }]);
 
     assert!(
@@ -957,6 +986,7 @@ fn wildcard_host_matches_multi_level_with_flag() {
         host: Some("*.example.com".to_owned()),
         headers: None,
         cluster: "wildcard".into(),
+        retry_policy: None,
     }])
     .with_multi_level_subdomain_matching(true);
 
@@ -977,6 +1007,7 @@ fn wildcard_host_with_port() {
         host: Some("*.example.com".to_owned()),
         headers: None,
         cluster: "wildcard".into(),
+        retry_policy: None,
     }]);
 
     let route = router
@@ -997,6 +1028,7 @@ fn wildcard_host_case_insensitive() {
         host: Some("*.Example.COM".to_owned()),
         headers: None,
         cluster: "wildcard".into(),
+        retry_policy: None,
     }]);
 
     let route = router
@@ -1018,6 +1050,7 @@ fn wildcard_host_with_fallback() {
             host: Some("*.example.com".to_owned()),
             headers: None,
             cluster: "wildcard".into(),
+            retry_policy: None,
         },
         prefix_route("/", "default"),
     ]);
@@ -1047,6 +1080,7 @@ fn exact_host_wins_over_wildcard_same_constraints() {
             host: Some("api.example.com".to_owned()),
             headers: None,
             cluster: "exact".into(),
+            retry_policy: None,
         },
         Route {
             path_match: PathMatch::Prefix {
@@ -1055,6 +1089,7 @@ fn exact_host_wins_over_wildcard_same_constraints() {
             host: Some("*.example.com".to_owned()),
             headers: None,
             cluster: "wildcard".into(),
+            retry_policy: None,
         },
     ]);
 
@@ -1076,6 +1111,7 @@ fn wildcard_host_does_not_match_empty_subdomain() {
         host: Some("*.example.com".to_owned()),
         headers: None,
         cluster: "wildcard".into(),
+        retry_policy: None,
     }]);
 
     assert!(
@@ -1096,6 +1132,7 @@ async fn on_request_wildcard_host_via_host_header() {
             host: Some("*.example.com".to_owned()),
             headers: None,
             cluster: "wildcard".into(),
+            retry_policy: None,
         },
         prefix_route("/", "default"),
     ]);
@@ -1258,6 +1295,7 @@ fn exact_path_with_host_constraint() {
             host: Some("api.example.com".to_owned()),
             headers: None,
             cluster: "api-health".into(),
+            retry_policy: None,
         },
         exact_route("/health", "any-health"),
     ]);
@@ -1302,6 +1340,7 @@ fn exact_path_with_headers() {
             host: None,
             headers: Some(headers_constraint),
             cluster: "v2".into(),
+            retry_policy: None,
         },
         exact_route("/api", "default"),
     ]);
@@ -1782,6 +1821,7 @@ fn prefix_route(prefix: &str, cluster: &str) -> Route {
         host: None,
         headers: None,
         cluster: cluster.into(),
+        retry_policy: None,
     }
 }
 
@@ -1791,6 +1831,7 @@ fn exact_route(path: &str, cluster: &str) -> Route {
         host: None,
         headers: None,
         cluster: cluster.into(),
+        retry_policy: None,
     }
 }
 
