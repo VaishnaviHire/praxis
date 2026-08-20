@@ -234,7 +234,7 @@ source on every request.
   metadata such as selected site, selected capability, and snapshot
   generation so that cross-gateway behavior can be debugged without
   logging prompts, credentials, or secrets.
-- As a Praxis maintainer, I want gateway-to-gateway routing to reuse
+- As a Praxis reviewer, I want gateway-to-gateway routing to reuse
   existing clusters, TLS, load balancing, filters, and examples so
   that the feature extends the current architecture instead of
   adding a separate proxy path.

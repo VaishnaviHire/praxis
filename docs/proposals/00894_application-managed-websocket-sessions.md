@@ -252,6 +252,6 @@ References:
   transparent forwarding unless I explicitly enable an application
   handler so that adopting this capability does not change unrelated
   traffic.
-- As a Praxis maintainer, I want provider protocols to remain outside
+- As a Praxis reviewer, I want provider protocols to remain outside
   core so that the WebSocket lifecycle can evolve independently from
   OpenAI, vLLM, or other downstream extensions.

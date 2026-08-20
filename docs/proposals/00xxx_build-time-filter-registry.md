@@ -113,7 +113,7 @@ mechanism.
 - As a filter author, I want a single macro call
   to register my filter so that I don't need to
   understand Praxis's internal registry wiring.
-- As a Praxis maintainer, I want optional built-in
+- As a Praxis reviewer, I want optional built-in
   filters (`ext_proc`, AI inference filters) to
   self-register when their feature flag is enabled
   so that the registry code doesn't accumulate
