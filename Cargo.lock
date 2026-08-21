@@ -3399,6 +3399,7 @@ dependencies = [
  "h2",
  "http",
  "jsonwebtoken 11.0.0",
+ "opentelemetry-proto",
  "praxis-proxy",
  "praxis-proxy-core",
  "praxis-proxy-filter",

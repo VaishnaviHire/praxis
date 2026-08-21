@@ -37,6 +37,9 @@ pub struct TracingGuard {
     provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
     /// Optional non-blocking appender worker guard.
     worker_guard: Option<WorkerGuard>,
+    /// Tokio runtime kept alive for the tonic gRPC exporter.
+    #[cfg(feature = "otel")]
+    _otel_runtime: Option<::tokio::runtime::Runtime>,
 }
 
 impl Drop for TracingGuard {
@@ -326,7 +329,7 @@ fn init_with_otel(
 ) -> Result<TracingGuard, ProxyError> {
     use opentelemetry::trace::TracerProvider as _;
 
-    let provider = build_otel_provider(telemetry)?;
+    let (provider, otel_runtime) = build_otel_provider(telemetry)?;
     let writer = writer_bundle.writer;
     let worker_guard = writer_bundle.worker_guard;
 
@@ -360,6 +363,8 @@ fn init_with_otel(
         #[cfg(feature = "otel")]
         provider,
         worker_guard,
+        #[cfg(feature = "otel")]
+        _otel_runtime: otel_runtime,
     })
 }
 
@@ -404,9 +409,15 @@ fn init_fmt_only(
 #[cfg(feature = "otel")]
 fn build_otel_provider(
     config: &crate::config::TelemetryConfig,
-) -> Result<Option<opentelemetry_sdk::trace::SdkTracerProvider>, ProxyError> {
+) -> Result<
+    (
+        Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+        Option<::tokio::runtime::Runtime>,
+    ),
+    ProxyError,
+> {
     let Some(endpoint) = config.otlp_endpoint.as_deref() else {
-        return Ok(None);
+        return Ok((None, None));
     };
 
     if let Ok(protocol) = std::env::var(crate::config::OTLP_PROTOCOL_ENV_VAR)
@@ -418,7 +429,14 @@ fn build_otel_provider(
         )));
     }
 
-    let exporter = build_span_exporter(endpoint, config.otlp_headers.as_ref())?;
+    let runtime = build_exporter_runtime()?;
+
+    // `build_span_exporter` is synchronous but tonic's channel setup must run
+    // inside a Tokio runtime context; entering is enough — nothing is awaited.
+    let exporter = {
+        let _guard = runtime.enter();
+        build_span_exporter(endpoint, config.otlp_headers.as_ref())?
+    };
     let batch_processor = build_batch_processor(exporter, config);
     let resource = build_otel_resource(config);
 
@@ -439,7 +457,20 @@ fn build_otel_provider(
 
     opentelemetry::global::set_tracer_provider(provider.clone());
 
-    Ok(Some(provider))
+    Ok((Some(provider), Some(runtime)))
+}
+
+/// Build the single-worker Tokio runtime that owns the OTLP exporter's I/O.
+///
+/// Kept alive inside [`TracingGuard`] so the batch exporter keeps a reactor
+/// for the process lifetime regardless of the caller's runtime.
+#[cfg(feature = "otel")]
+fn build_exporter_runtime() -> Result<::tokio::runtime::Runtime, ProxyError> {
+    ::tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .map_err(|e| ProxyError::Config(format!("failed to create OTel runtime: {e}")))
 }
 
 // -----------------------------------------------------------------------------
@@ -1037,10 +1068,14 @@ filter_chains:
     #[test]
     fn otel_provider_none_when_no_endpoint() {
         let config = crate::config::TelemetryConfig::default();
-        let provider = build_otel_provider(&config).expect("should succeed with no endpoint");
+        let (provider, runtime) = build_otel_provider(&config).expect("should succeed with no endpoint");
         assert!(
             provider.is_none(),
             "provider should be None when no endpoint configured"
+        );
+        assert!(
+            runtime.is_none(),
+            "no exporter runtime should be created without an endpoint"
         );
     }
 
