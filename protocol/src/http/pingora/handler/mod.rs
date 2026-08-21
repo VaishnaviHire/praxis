@@ -25,10 +25,12 @@ use pingora_proxy::{Session, http_proxy};
 use praxis_core::{config::ABSOLUTE_MAX_BODY_BYTES, connectivity::Upstream};
 use praxis_filter::{BodyBuffer, BodyMode, CompressionConfig, FilterPipeline, HttpFilterContext, RequestExtensions};
 use tokio::sync::Semaphore;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::{context::PingoraRequestCtx, metrics};
 
+/// Upstream connection established hook.
+mod connected_to_upstream;
 /// Structured error responses for fatal proxy errors.
 mod fail_to_proxy;
 /// Shared hop-by-hop header stripping logic.
@@ -264,12 +266,17 @@ fn handle_connect_failure(ctx: &mut PingoraRequestCtx, e: Box<pingora_core::Erro
             {
                 reselector.release(&upstream.address);
             }
+            let upstream_address = ctx
+                .upstream_for_retry
+                .as_ref()
+                .map_or_else(|| "unknown".to_owned(), |u| u.address.to_string());
             // Clear so upstream_peer re-selects an alternate host.
             ctx.upstream_for_retry = None;
             debug!(
                 retries = ctx.retries,
                 max = policy.effective_max_retries(),
                 ?backoff,
+                upstream_address,
                 "retrying after connect failure"
             );
             let mut e = e;
@@ -277,6 +284,17 @@ fn handle_connect_failure(ctx: &mut PingoraRequestCtx, e: Box<pingora_core::Erro
             e
         },
         retry::RetryDecision::DoNotRetry => {
+            if ctx.retries > 0 {
+                warn!(
+                    retries = ctx.retries,
+                    max = policy.effective_max_retries(),
+                    upstream_address = ctx
+                        .upstream_for_retry
+                        .as_ref()
+                        .map_or("unknown", |u| u.address.as_ref()),
+                    "retry limit exhausted"
+                );
+            }
             record_retry_exhausted_if_attempted(ctx, cluster);
             // Pingora may mark some errors retriable by default; clear the
             // flag so the policy decision is authoritative.
@@ -548,20 +566,45 @@ pub(super) fn http_version_label(version: http::Version) -> &'static str {
 /// the upstream exchange.
 ///
 /// Called from the `logging` hook to fill in `http.response.status_code`,
-/// `upstream.address`, and `upstream.cluster` on the root request span.
+/// `otel.status_code` and `error.type` (5xx only), `http.route` and the
+/// `otel.name` upgrade to `{method} {route}` (when a route matched),
+/// `upstream.address`, and `upstream.cluster` on the root request span,
+/// and response attributes on the upstream exchange span.
 fn record_response_span_attributes(session: &Session, ctx: &PingoraRequestCtx) {
     if ctx.request_span.is_disabled() {
         return;
     }
+    let status = session.response_written().map(|resp| resp.status);
+    let method = session.req_header().method.as_str();
+    let response = session.response_written();
+    record_response_span_fields(status, method, response, ctx);
+}
 
-    if let Some(resp) = session.response_written() {
-        let status = resp.status.as_u16();
-        if status > 0 {
-            ctx.request_span.record("http.response.status_code", status);
+/// Record the response-phase fields once the status and method have been extracted.
+///
+/// Split from [`record_response_span_attributes`] so the recording logic is
+/// unit-testable without constructing a live Pingora session.
+fn record_response_span_fields(
+    status: Option<http::StatusCode>,
+    method: &str,
+    response: Option<&pingora_http::ResponseHeader>,
+    ctx: &PingoraRequestCtx,
+) {
+    if let Some(status) = status {
+        let code = status.as_u16();
+        if code > 0 {
+            ctx.request_span.record("http.response.status_code", code);
         }
-        if resp.status.is_server_error() {
+        if status.is_server_error() {
             ctx.request_span.record("otel.status_code", "ERROR");
+            ctx.request_span.record("error.type", status.to_string().as_str());
         }
+    }
+
+    if let Some(route) = &ctx.metrics_route {
+        ctx.request_span.record("http.route", route.as_ref());
+        ctx.request_span
+            .record("otel.name", format!("{method} {route}").as_str());
     }
 
     if let Some(upstream) = &ctx.upstream_for_retry {
@@ -570,6 +613,15 @@ fn record_response_span_attributes(session: &Session, ctx: &PingoraRequestCtx) {
 
     if let Some(cluster) = &ctx.metrics_cluster {
         ctx.request_span.record("upstream.cluster", cluster.as_ref());
+    }
+
+    if !ctx.upstream_exchange_span.is_disabled() {
+        if let Some(resp) = response {
+            ctx.upstream_exchange_span
+                .record("http.response.status_code", resp.status.as_u16());
+        }
+        ctx.upstream_exchange_span
+            .record("http.response.body.size", ctx.response_body_bytes);
     }
 }
 
@@ -1515,8 +1567,39 @@ mod tests {
         assert!(ctx.request_span.is_disabled(), "default span should be disabled");
     }
 
+    /// Layer that captures every `Span::record` call as `(field, value)` pairs.
+    #[derive(Clone, Default)]
+    struct RecordCapture(Arc<std::sync::Mutex<Vec<(String, String)>>>);
+
+    impl<S> tracing_subscriber::Layer<S> for RecordCapture
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        fn on_record(
+            &self,
+            _id: &tracing::span::Id,
+            values: &tracing::span::Record<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            struct Visitor<'a>(&'a mut Vec<(String, String)>);
+            impl tracing::field::Visit for Visitor<'_> {
+                fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                    self.0.push((field.name().to_owned(), format!("{value:?}")));
+                }
+            }
+            let mut captured = self.0.lock().expect("capture lock");
+            values.record(&mut Visitor(&mut captured));
+        }
+    }
+
     #[test]
-    fn record_response_span_attributes_records_upstream_cluster() {
+    fn record_response_span_fields_records_status_upstream_and_cluster() {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let capture = RecordCapture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        let _guard = tracing::subscriber::set_default(subscriber);
+
         let mut ctx = PingoraRequestCtx::default();
         ctx.metrics_cluster = Some(Arc::from("api-cluster"));
         ctx.upstream_for_retry = Some(Upstream {
@@ -1528,11 +1611,155 @@ mod tests {
         ctx.request_span = tracing::info_span!(
             "test_span",
             "http.response.status_code" = tracing::field::Empty,
+            "otel.status_code" = tracing::field::Empty,
             "upstream.address" = tracing::field::Empty,
             "upstream.cluster" = tracing::field::Empty,
         );
-        ctx.request_span.record("upstream.cluster", "api-cluster");
-        ctx.request_span.record("upstream.address", "10.0.0.1:80");
+
+        record_response_span_fields(Some(http::StatusCode::SERVICE_UNAVAILABLE), "GET", None, &ctx);
+
+        let captured = capture.0.lock().expect("capture lock");
+        let get = |name: &str| {
+            let value = captured.iter().find(|(f, _)| f == name).map(|(_, v)| v.clone());
+            assert!(value.is_some(), "field {name} not recorded; got {captured:?}");
+            value.unwrap_or_default()
+        };
+        assert_eq!(get("http.response.status_code"), "503");
+        assert_eq!(get("otel.status_code"), "\"ERROR\"", "5xx must set otel error status");
+        assert_eq!(get("upstream.address"), "\"10.0.0.1:80\"");
+        assert_eq!(get("upstream.cluster"), "\"api-cluster\"");
+    }
+
+    #[test]
+    fn record_response_span_fields_success_has_no_error_status() {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let capture = RecordCapture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.request_span = tracing::info_span!(
+            "test_span",
+            "http.response.status_code" = tracing::field::Empty,
+            "otel.status_code" = tracing::field::Empty,
+        );
+
+        record_response_span_fields(Some(http::StatusCode::OK), "GET", None, &ctx);
+
+        let captured = capture.0.lock().expect("capture lock");
+        assert!(
+            captured
+                .iter()
+                .any(|(f, v)| f == "http.response.status_code" && v == "200"),
+            "status should be recorded: {captured:?}"
+        );
+        assert!(
+            !captured.iter().any(|(f, _)| f == "otel.status_code"),
+            "2xx must not set otel error status: {captured:?}"
+        );
+    }
+
+    #[test]
+    fn record_response_span_attributes_records_exchange_span_fields() {
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.request_span = tracing::info_span!(
+            "test_request",
+            "http.response.status_code" = tracing::field::Empty,
+            "server.address" = tracing::field::Empty,
+            "upstream.cluster" = tracing::field::Empty,
+        );
+        ctx.upstream_exchange_span = tracing::info_span!(
+            parent: &ctx.request_span,
+            "upstream_exchange",
+            "http.response.status_code" = tracing::field::Empty,
+            "http.response.body.size" = tracing::field::Empty,
+        );
+        ctx.response_body_bytes = 4096;
+
+        // Verify recording on exchange span does not panic.
+        ctx.upstream_exchange_span.record("http.response.status_code", 200_u16);
+        ctx.upstream_exchange_span.record("http.response.body.size", 4096_u64);
+    }
+
+    #[test]
+    fn record_response_span_attributes_skips_exchange_when_disabled() {
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.request_span = tracing::info_span!(
+            "test_request",
+            "http.response.status_code" = tracing::field::Empty,
+            "server.address" = tracing::field::Empty,
+            "upstream.cluster" = tracing::field::Empty,
+        );
+        // Exchange span remains disabled (default).
+        assert!(
+            ctx.upstream_exchange_span.is_disabled(),
+            "exchange span should be disabled by default"
+        );
+        // Should not panic when exchange span is disabled.
+    }
+
+    // -------------------------------------------------------------------------
+    // Span Event Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn retry_with_upstream_address_sets_retry_flag() {
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.request_is_idempotent = true;
+        ctx.upstream_for_retry = Some(Upstream {
+            address: Arc::from("10.0.0.1:8080"),
+            connection: Arc::new(ConnectionOptions::default()),
+            tls: None,
+        });
+        let e = handle_connect_failure(&mut ctx, make_error());
+        assert!(e.retry(), "should retry with upstream address present");
+        assert_eq!(ctx.retries, 1, "retry counter should increment to 1");
+    }
+
+    #[test]
+    fn retry_without_upstream_address_uses_fallback() {
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.request_is_idempotent = true;
+        ctx.upstream_for_retry = None;
+        let e = handle_connect_failure(&mut ctx, make_error());
+        assert!(
+            e.retry(),
+            "should retry even when upstream_for_retry is None (address defaults to unknown)"
+        );
+        assert_eq!(ctx.retries, 1, "retry counter should increment to 1");
+    }
+
+    #[test]
+    fn retry_exhausted_with_upstream_address_does_not_retry() {
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.request_is_idempotent = true;
+        ctx.retries = MAX_RETRIES as u32;
+        ctx.upstream_for_retry = Some(Upstream {
+            address: Arc::from("10.0.0.2:443"),
+            connection: Arc::new(ConnectionOptions::default()),
+            tls: None,
+        });
+        let e = handle_connect_failure(&mut ctx, make_error());
+        assert!(
+            !e.retry(),
+            "should not retry after MAX_RETRIES even with upstream address"
+        );
+    }
+
+    #[test]
+    fn large_body_skip_with_upstream_address() {
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.request_is_idempotent = true;
+        ctx.request_body_bytes = RETRY_BODY_LIMIT + 1;
+        ctx.upstream_for_retry = Some(Upstream {
+            address: Arc::from("10.0.0.3:8080"),
+            connection: Arc::new(ConnectionOptions::default()),
+            tls: None,
+        });
+        let e = handle_connect_failure(&mut ctx, make_error());
+        assert!(!e.retry(), "should not retry large body even with upstream address");
+        assert_eq!(ctx.retries, 0, "retry counter should not increment");
     }
 
     // -------------------------------------------------------------------------

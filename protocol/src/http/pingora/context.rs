@@ -213,9 +213,18 @@ pub struct PingoraRequestCtx {
     ///
     /// Created during `request_filter` with OpenTelemetry HTTP semantic
     /// convention attributes. Response-phase attributes
-    /// (`http.response.status_code`, `upstream.address`, `upstream.cluster`)
-    /// are recorded in the `logging` hook before the span is dropped.
+    /// (`http.response.status_code`, `http.route`, `error.type`,
+    /// `upstream.address`, `upstream.cluster`) are recorded in the
+    /// `logging` hook before the span is dropped.
     pub request_span: Span,
+
+    /// Child span covering upstream request/response exchange.
+    ///
+    /// Created in `connected_to_upstream` after the connection is
+    /// established (or reused). Response-phase attributes
+    /// (`http.response.status_code`, `http.response.body.size`) are
+    /// recorded in the `logging` hook before the span is dropped.
+    pub upstream_exchange_span: Span,
 
     /// When this request was received.
     pub request_start: Instant,
@@ -540,6 +549,7 @@ impl Default for PingoraRequestCtx {
             request_snapshot: None,
             request_span: Span::none(),
             request_start: Instant::now(),
+            upstream_exchange_span: Span::none(),
             response_body_buffer: None,
             response_body_bytes: 0,
             response_body_mode: BodyMode::Stream,
@@ -644,6 +654,15 @@ mod tests {
         assert!(
             ctx.request_span.is_disabled(),
             "default request_span should be a disabled (none) span"
+        );
+    }
+
+    #[test]
+    fn default_state_upstream_exchange_span_is_disabled() {
+        let ctx = default_ctx();
+        assert!(
+            ctx.upstream_exchange_span.is_disabled(),
+            "default upstream_exchange_span should be a disabled (none) span"
         );
     }
 

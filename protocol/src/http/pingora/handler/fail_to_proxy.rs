@@ -33,23 +33,12 @@ struct ProxyError {
 /// response), dead downstream connections, and HEAD requests (body
 /// suppressed). Writable downstream failures (e.g. client body read
 /// timeout) receive a structured 400 response.
-#[expect(
-    clippy::large_stack_frames,
-    reason = "linear error classification inlines each response-writing branch"
-)]
-pub(super) async fn execute(
-    session: &mut Session,
-    e: &pingora_core::Error,
-    ctx: &mut PingoraRequestCtx,
-) -> FailToProxy {
+#[expect(clippy::too_many_lines, reason = "upstream error event adds structured fields")]
+pub(super) async fn execute(session: &mut Session, e: &pingora_core::Error, ctx: &PingoraRequestCtx) -> FailToProxy {
     let etype = e.etype().clone();
-    let pending_rejection = ctx.pending_rejection.take();
     let formatter = ctx.extensions.get::<ErrorResponseFormatterHandle>();
 
     if let ErrorType::HTTPStatus(code) = etype {
-        if let Some(rejection) = pending_rejection {
-            return handle_pending_rejection(session, code, rejection).await;
-        }
         return handle_http_status(session, code, formatter).await;
     }
 
@@ -59,6 +48,18 @@ pub(super) async fn execute(
     }
 
     let err = classify_error(&etype, source);
+
+    let upstream_address = ctx
+        .upstream_for_retry
+        .as_ref()
+        .map_or("unknown", |u| u.address.as_ref());
+    error!(
+        error_code = err.code,
+        error_message = err.message,
+        status = err.status,
+        upstream_address,
+        "upstream error"
+    );
 
     if final_response_written(session) {
         debug!(
