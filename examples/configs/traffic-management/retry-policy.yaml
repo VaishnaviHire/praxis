@@ -37,3 +37,6 @@ filter_chains:
                 base_interval_ms: 25
                 max_interval_ms: 250
               retry_body_limit_bytes: 65536
+
+insecure_options:
+  allow_private_endpoints: true # example proxies to local backends

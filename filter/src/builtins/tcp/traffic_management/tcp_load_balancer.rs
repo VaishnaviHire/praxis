@@ -113,6 +113,9 @@ impl TcpLoadBalancerFilter {
     /// [`FilterError`]: crate::FilterError
     pub fn from_config(config: &serde_yaml::Value) -> Result<Box<dyn TcpFilter>, FilterError> {
         let cfg: TcpLoadBalancerConfig = crate::factory::parse_filter_config("tcp_load_balancer", config)?;
+        if cfg.clusters.is_empty() {
+            return Err("tcp_load_balancer: 'clusters' is empty; every connection would fail".into());
+        }
         Ok(Box::new(Self::new(&cfg.clusters)))
     }
 
@@ -447,13 +450,14 @@ clusters:
     }
 
     #[test]
-    fn from_config_empty_clusters() {
+    fn from_config_empty_clusters_rejected() {
         let yaml = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
-        let filter = TcpLoadBalancerFilter::from_config(&yaml).unwrap();
-        assert_eq!(
-            filter.name(),
-            "tcp_load_balancer",
-            "empty clusters should still create filter"
+        let Err(err) = TcpLoadBalancerFilter::from_config(&yaml) else {
+            panic!("empty clusters must be rejected");
+        };
+        assert!(
+            err.to_string().contains("empty"),
+            "an empty cluster table can serve nothing and must be rejected, got: {err}"
         );
     }
 

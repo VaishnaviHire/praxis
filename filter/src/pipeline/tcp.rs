@@ -342,7 +342,7 @@ mod tests {
         let mut entries = vec![crate::FilterEntry {
             branch_chains: None,
             filter_type: "router".into(),
-            config: serde_yaml::from_str("routes: []").unwrap(),
+            config: serde_yaml::from_str("routes:\n  - path_prefix: \"/\"\n    cluster: web").unwrap(),
             conditions: vec![],
             name: None,
             response_conditions: vec![],

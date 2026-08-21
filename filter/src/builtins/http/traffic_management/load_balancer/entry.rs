@@ -10,7 +10,7 @@ use praxis_core::{
     connectivity::{ConnectionOptions, Upstream},
     retry::ClusterRetryState,
 };
-use tracing::{debug, error};
+use tracing::debug;
 
 use super::{
     reselector::EndpointReselector,
@@ -100,11 +100,18 @@ fn strip_host_port(host: &str) -> &str {
 }
 
 /// Build a [`ClusterEntry`] from a cluster definition.
+///
+/// # Errors
+///
+/// Returns an error when the cluster's TLS material cannot be loaded.
+/// Failing closed here is deliberate: mapping the failure to "TLS
+/// disabled" would silently downgrade the cluster to plaintext upstream
+/// connections, discarding the configured `verify`/`sni`/mTLS settings.
 #[expect(
     clippy::too_many_lines,
     reason = "sequential setup steps, splitting harms readability"
 )]
-pub(super) fn build_cluster_entry(cluster: &Cluster) -> ClusterEntry {
+pub(super) fn build_cluster_entry(cluster: &Cluster) -> Result<ClusterEntry, crate::FilterError> {
     let endpoints = build_weighted_endpoints(cluster);
     let total_weight: u32 = endpoints.iter().map(|ep| ep.weight).sum();
     debug!(
@@ -117,28 +124,27 @@ pub(super) fn build_cluster_entry(cluster: &Cluster) -> ClusterEntry {
     let tls = cluster
         .tls
         .as_ref()
-        .and_then(|t| match CachedClusterTls::try_from_config(t) {
-            Ok(cached) => Some(cached),
-            Err(e) => {
-                error!(
-                    cluster = %cluster.name,
-                    error = %e,
-                    "failed to cache TLS certificates; TLS disabled for this cluster"
-                );
-                None
-            },
-        });
+        .map(|t| {
+            CachedClusterTls::try_from_config(t).map_err(|e| -> crate::FilterError {
+                format!(
+                    "cluster '{}': failed to load TLS material: {e}; refusing to fall back to plaintext",
+                    cluster.name
+                )
+                .into()
+            })
+        })
+        .transpose()?;
 
     let strategy = Arc::new(build_strategy(&cluster.load_balancer_strategy, endpoints));
     let retry_policy = Arc::new(cluster.retry_policy.clone().unwrap_or_else(RetryPolicy::legacy_default));
     let retry_state = Arc::new(ClusterRetryState::new(retry_policy.retry_budget.as_ref()));
-    ClusterEntry {
+    Ok(ClusterEntry {
         opts: Arc::new(ConnectionOptions::from(cluster)),
         strategy,
         tls,
         retry_policy,
         retry_state,
-    }
+    })
 }
 
 // -----------------------------------------------------------------------------

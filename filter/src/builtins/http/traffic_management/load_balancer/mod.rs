@@ -95,12 +95,17 @@ struct LoadBalancerConfig {
 
 impl LoadBalancerFilter {
     /// Create a load balancer from a list of cluster definitions.
-    pub fn new(clusters: &[Cluster]) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FilterError`] when a cluster's TLS material cannot be
+    /// loaded (missing or unparsable CA / client-cert files).
+    pub fn new(clusters: &[Cluster]) -> Result<Self, FilterError> {
         let map = clusters
             .iter()
-            .map(|c| (Arc::clone(&c.name), build_cluster_entry(c)))
-            .collect();
-        Self { clusters: map }
+            .map(|c| Ok((Arc::clone(&c.name), build_cluster_entry(c)?)))
+            .collect::<Result<_, FilterError>>()?;
+        Ok(Self { clusters: map })
     }
 
     /// Create a load balancer from parsed YAML config.
@@ -112,7 +117,10 @@ impl LoadBalancerFilter {
     /// [`FilterError`]: crate::FilterError
     pub fn from_config(config: &serde_yaml::Value) -> Result<Box<dyn HttpFilter>, FilterError> {
         let cfg: LoadBalancerConfig = crate::parse_filter_config("load_balancer", config)?;
-        Ok(Box::new(Self::new(&cfg.clusters)))
+        if cfg.clusters.is_empty() {
+            return Err("load_balancer: 'clusters' is empty; every request would fail with 502".into());
+        }
+        Ok(Box::new(Self::new(&cfg.clusters)?))
     }
 
     /// Look up health state for `cluster_name` from the context's

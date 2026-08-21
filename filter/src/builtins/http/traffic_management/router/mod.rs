@@ -209,6 +209,9 @@ impl RouterFilter {
     /// [`FilterError`]: crate::FilterError
     pub fn from_config(config: &serde_yaml::Value) -> Result<Box<dyn HttpFilter>, FilterError> {
         let cfg: RouterConfig = crate::parse_filter_config("router", config)?;
+        if cfg.routes.is_empty() {
+            return Err("router: 'routes' is empty; every request would fail with 404".into());
+        }
         let router = Self::with_alias_options(cfg.routes, &cfg.json_alias_header, cfg.json_alias_max_body_bytes)?
             .with_multi_level_subdomain_matching(cfg.multi_level_subdomain_matching);
         Ok(Box::new(router))

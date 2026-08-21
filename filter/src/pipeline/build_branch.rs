@@ -227,7 +227,7 @@ fn resolve_single_branch(
     depth: usize,
 ) -> Result<ResolvedBranch, FilterError> {
     let condition = config.on_result.as_ref().map(resolve_condition);
-    check_on_result_filter(config, &bctx.pipeline_filter_type_names)?;
+    check_on_result_filter(config, &bctx.pipeline_filter_type_names, current_idx)?;
     let branch_filters = resolve_chain_refs(&config.chains, bctx, depth + 1)?;
     let rejoin = resolve_rejoin(&config.rejoin, name_index, current_idx)?;
     if matches!(rejoin, RejoinTarget::ReEnter(_)) && config.max_iterations.is_none() {
@@ -251,26 +251,30 @@ fn resolve_single_branch(
 // Condition Resolution
 // -----------------------------------------------------------------------------
 
-/// Reject configs where `on_result.filter` does not match any filter
-/// TYPE name in the pipeline.
-fn check_on_result_filter(config: &BranchChainConfig, pipeline_filter_type_names: &[&str]) -> Result<(), FilterError> {
-    if let Some(cond) = &config.on_result
-        && !on_result_filter_type_in_pipeline(&cond.filter, pipeline_filter_type_names)
-    {
-        return Err(FilterError::from(format!(
-            "branch '{}': on_result.filter '{}' does not match any filter type in this pipeline",
-            config.name, cond.filter,
-        )));
+/// Reject configs where `on_result.filter` does not name the filter the
+/// branch is attached to.
+///
+/// `ctx.filter_results` is cleared after every filter's branch evaluation,
+/// so when a branch is evaluated the result map can only contain entries
+/// written by its host filter. A condition naming any other filter would
+/// build cleanly yet never fire at runtime.
+fn check_on_result_filter(
+    config: &BranchChainConfig,
+    pipeline_filter_type_names: &[&str],
+    current_idx: usize,
+) -> Result<(), FilterError> {
+    if let Some(cond) = &config.on_result {
+        let host = pipeline_filter_type_names.get(current_idx).copied().unwrap_or("");
+        if cond.filter != host {
+            return Err(FilterError::from(format!(
+                "branch '{}': on_result.filter '{}' must name the filter the branch is \
+                 attached to ('{host}'); other filters' results are cleared before this \
+                 branch is evaluated, so the condition could never match",
+                config.name, cond.filter,
+            )));
+        }
     }
     Ok(())
-}
-
-/// Check if the `on_result.filter` value matches any filter TYPE name
-/// (from [`HttpFilter::name()`]) in the pipeline.
-///
-/// [`HttpFilter::name()`]: crate::HttpFilter::name
-fn on_result_filter_type_in_pipeline(filter_name: &str, pipeline_filter_type_names: &[&str]) -> bool {
-    pipeline_filter_type_names.contains(&filter_name)
 }
 
 /// Convert a [`BranchCondition`] to a runtime [`ResolvedBranchCondition`].
@@ -763,26 +767,31 @@ mod tests {
     }
 
     #[test]
-    fn on_result_filter_found_in_pipeline() {
+    fn on_result_filter_matching_host_accepted() {
+        let config = make_branch_config("br", Some(("router", "k", "v")));
         assert!(
-            on_result_filter_type_in_pipeline("router", &["headers", "router", "static_response"]),
-            "filter present in pipeline should match"
+            check_on_result_filter(&config, &["headers", "router", "static_response"], 1).is_ok(),
+            "on_result naming the host filter should be accepted"
         );
     }
 
     #[test]
-    fn on_result_filter_not_found_in_pipeline() {
+    fn on_result_filter_naming_other_filter_rejected() {
+        let config = make_branch_config("br", Some(("headers", "k", "v")));
+        let err = check_on_result_filter(&config, &["headers", "router", "static_response"], 1).unwrap_err();
         assert!(
-            !on_result_filter_type_in_pipeline("nonexistent", &["headers", "router", "static_response"]),
-            "filter absent from pipeline should not match"
+            err.to_string()
+                .contains("must name the filter the branch is attached to"),
+            "a condition on another filter's results can never match, got: {err}"
         );
     }
 
     #[test]
-    fn on_result_filter_empty_pipeline() {
+    fn on_result_filter_absent_condition_accepted() {
+        let config = make_branch_config("br", None);
         assert!(
-            !on_result_filter_type_in_pipeline("router", &[]),
-            "empty pipeline should not match any filter"
+            check_on_result_filter(&config, &["router"], 0).is_ok(),
+            "unconditional branches need no on_result check"
         );
     }
 
@@ -809,7 +818,8 @@ mod tests {
         }];
         let err = resolve_chain_filters(&mut entries, &registry, &chains, 0).unwrap_err();
         assert!(
-            err.to_string().contains("does not match any filter type"),
+            err.to_string()
+                .contains("must name the filter the branch is attached to"),
             "should report unmatched on_result.filter: {err}"
         );
     }
@@ -957,6 +967,20 @@ mod tests {
     // -------------------------------------------------------------------------
 
     /// Create a minimal [`FilterEntry`] for testing.
+    fn make_branch_config(name: &str, on_result: Option<(&str, &str, &str)>) -> BranchChainConfig {
+        BranchChainConfig {
+            chains: vec![],
+            max_iterations: None,
+            name: name.to_owned(),
+            on_result: on_result.map(|(filter, key, value)| BranchCondition {
+                filter: filter.to_owned(),
+                key: key.to_owned(),
+                value: value.to_owned(),
+            }),
+            rejoin: "next".to_owned(),
+        }
+    }
+
     fn make_entry(filter_type: &str, name: Option<&str>) -> FilterEntry {
         FilterEntry {
             branch_chains: None,

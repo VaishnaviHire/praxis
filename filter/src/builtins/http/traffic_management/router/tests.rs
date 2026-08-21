@@ -162,12 +162,17 @@ fn empty_route_table_still_declares_cluster_selection() {
 }
 
 #[test]
-fn from_config_empty_routes_key_missing() {
+fn from_config_empty_routes_rejected() {
     let yaml = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
 
-    let filter = RouterFilter::from_config(&yaml).unwrap();
+    let Err(err) = RouterFilter::from_config(&yaml) else {
+        panic!("empty routes must be rejected");
+    };
 
-    assert_eq!(filter.name(), "router", "missing routes key should still create router");
+    assert!(
+        err.to_string().contains("empty"),
+        "an empty route table can match nothing and must be rejected, got: {err}"
+    );
 }
 
 #[tokio::test]

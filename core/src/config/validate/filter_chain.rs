@@ -3,7 +3,7 @@
 
 //! Filter chain validation: cardinality, name uniqueness, and listener references.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     config::{ChainRef, Condition, FilterChainConfig, FilterEntry, Listener, ResponseCondition},
@@ -85,6 +85,14 @@ fn validate_request_conditions(chain_name: &str, entry: &FilterEntry) -> Result<
                 filter = entry.filter_type,
             )));
         }
+        // An empty container is as pathological as an all-absent predicate:
+        // `methods: []` can never match and `headers: {}` always matches.
+        if matcher.methods.as_ref().is_some_and(Vec::is_empty) {
+            return Err(empty_predicate_error(chain_name, &entry.filter_type, idx, "methods"));
+        }
+        if matcher.headers.as_ref().is_some_and(HashMap::is_empty) {
+            return Err(empty_predicate_error(chain_name, &entry.filter_type, idx, "headers"));
+        }
     }
     Ok(())
 }
@@ -102,8 +110,32 @@ fn validate_response_conditions(chain_name: &str, entry: &FilterEntry) -> Result
                 filter = entry.filter_type,
             )));
         }
+        if matcher.status.as_ref().is_some_and(Vec::is_empty) {
+            return Err(empty_predicate_error(
+                chain_name,
+                &entry.filter_type,
+                idx,
+                "response status",
+            ));
+        }
+        if matcher.headers.as_ref().is_some_and(HashMap::is_empty) {
+            return Err(empty_predicate_error(
+                chain_name,
+                &entry.filter_type,
+                idx,
+                "response headers",
+            ));
+        }
     }
     Ok(())
+}
+
+/// Error for a condition predicate given as an empty container.
+fn empty_predicate_error(chain_name: &str, filter: &str, idx: usize, field: &str) -> ProxyError {
+    ProxyError::Config(format!(
+        "filter '{filter}' in chain '{chain_name}': condition {idx} has an \
+         empty {field} list; remove the field or list at least one value"
+    ))
 }
 
 /// Filter types that must be the last filter in their chain and in
@@ -261,6 +293,77 @@ filter_chains:
         assert!(
             err.to_string().contains("is empty"),
             "an empty when predicate should be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_empty_methods_list_condition() {
+        let yaml = r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+filter_chains:
+  - name: main
+    filters:
+      - filter: static_response
+        status: 200
+        conditions:
+          - when:
+              methods: []
+"#;
+        let err = Config::from_yaml(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("empty methods list"),
+            "an empty methods list can never match and must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_empty_headers_map_condition() {
+        let yaml = r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+filter_chains:
+  - name: main
+    filters:
+      - filter: static_response
+        status: 200
+        conditions:
+          - unless:
+              headers: {}
+"#;
+        let err = Config::from_yaml(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("empty headers list"),
+            "an empty headers map matches vacuously and must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_empty_status_list_response_condition() {
+        let yaml = r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+filter_chains:
+  - name: main
+    filters:
+      - filter: headers
+        response_add:
+          - name: X-A
+            value: b
+        response_conditions:
+          - when:
+              status: []
+"#;
+        let err = Config::from_yaml(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("empty response status list"),
+            "an empty status list can never match and must be rejected: {err}"
         );
     }
 

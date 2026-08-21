@@ -384,6 +384,7 @@ cluster: "backend"
             cluster: Arc::from("backend"),
             headers: None,
             host: None,
+            retry_policy: None,
         };
         let yaml = serde_yaml::to_string(&route).unwrap();
         assert!(
