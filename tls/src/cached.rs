@@ -362,27 +362,31 @@ fn load_and_validate_certs(path: &str, context: &str) -> Result<Vec<Vec<u8>>, Tl
 
 /// Read a PEM certificate file and return DER-encoded certificate bytes.
 fn parse_cert_pem(cert_path: &str) -> Result<Vec<Vec<u8>>, TlsError> {
+    use rustls::pki_types::{CertificateDer, pem::PemObject as _};
+
     let pem = read_pem_file(cert_path)?;
-    rustls_pemfile::certs(&mut &pem[..])
+    CertificateDer::pem_slice_iter(&pem)
+        .map(|item| item.map(|cert| cert.to_vec()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| TlsError::FileLoadError {
             path: cert_path.to_owned(),
             detail: e.to_string(),
         })
-        .map(|certs| certs.into_iter().map(|c| c.to_vec()).collect())
 }
 
 /// Read a PEM private key file and return the DER-encoded key bytes.
 fn parse_key_pem(key_path: &str) -> Result<Zeroizing<Vec<u8>>, TlsError> {
+    use rustls::pki_types::{PrivateKeyDer, pem::PemObject as _};
+
     let pem = read_pem_file(key_path)?;
-    rustls_pemfile::private_key(&mut &pem[..])
+    PrivateKeyDer::from_pem_slice(&pem)
         .map_err(|e| TlsError::FileLoadError {
             path: key_path.to_owned(),
-            detail: e.to_string(),
-        })?
-        .ok_or_else(|| TlsError::FileLoadError {
-            path: key_path.to_owned(),
-            detail: "no private key found".to_owned(),
+            detail: if matches!(e, rustls::pki_types::pem::Error::NoItemsFound) {
+                "no private key found".to_owned()
+            } else {
+                e.to_string()
+            },
         })
         .map(|k| Zeroizing::new(k.secret_der().to_vec()))
 }

@@ -2561,12 +2561,7 @@ fn build_cross_ca_client_config(
     let cert_pem = std::fs::read(&wrong_client_cert.cert_path).expect("read wrong client cert PEM");
     let key_pem = std::fs::read(&wrong_client_cert.key_path).expect("read wrong client key PEM");
 
-    let certs: Vec<_> = rustls_pemfile::certs(&mut &*cert_pem)
-        .collect::<Result<Vec<_>, _>>()
-        .expect("parse wrong client cert PEM");
-    let key = rustls_pemfile::private_key(&mut &*key_pem)
-        .expect("parse wrong client key PEM")
-        .expect("no wrong client private key found");
+    let (certs, key) = praxis_test_utils::parse_cert_chain_and_key(&cert_pem, &key_pem);
 
     let mut config = rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
@@ -2594,12 +2589,7 @@ fn build_sni_mtls_client_config(
     let cert_pem = std::fs::read(&client_cert.cert_path).expect("read client cert PEM");
     let key_pem = std::fs::read(&client_cert.key_path).expect("read client key PEM");
 
-    let certs: Vec<_> = rustls_pemfile::certs(&mut &*cert_pem)
-        .collect::<Result<Vec<_>, _>>()
-        .expect("parse client cert PEM");
-    let key = rustls_pemfile::private_key(&mut &*key_pem)
-        .expect("parse client key PEM")
-        .expect("no client private key found");
+    let (certs, key) = praxis_test_utils::parse_cert_chain_and_key(&cert_pem, &key_pem);
 
     let mut config = rustls::ClientConfig::builder()
         .with_root_certificates(root_store)

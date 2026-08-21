@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use rustls::{
     RootCertStore,
-    pki_types::CertificateRevocationListDer,
+    pki_types::{CertificateDer, CertificateRevocationListDer, pem::PemObject as _},
     server::{WebPkiClientVerifier, danger::ClientCertVerifier},
 };
 
@@ -93,7 +93,7 @@ fn load_crls(paths: &[String]) -> Result<Vec<CertificateRevocationListDer<'stati
             detail: e.to_string(),
         })?);
 
-        let parsed: Vec<_> = rustls_pemfile::crls(&mut &pem[..])
+        let parsed: Vec<_> = CertificateRevocationListDer::pem_slice_iter(&pem)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| TlsError::FileLoadError {
                 path: path.clone(),
@@ -119,7 +119,7 @@ fn load_ca_root_store(ca_path: &str) -> Result<RootCertStore, TlsError> {
         detail: e.to_string(),
     })?);
 
-    let certs: Vec<_> = rustls_pemfile::certs(&mut &ca_pem[..])
+    let certs: Vec<_> = CertificateDer::pem_slice_iter(&ca_pem)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| TlsError::FileLoadError {
             path: ca_path.to_owned(),
