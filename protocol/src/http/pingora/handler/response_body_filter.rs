@@ -84,9 +84,28 @@ pub(super) fn execute(
                     "response body exceeds stream_buffer size limit",
                 ));
             }
+            if end_of_stream {
+                // The mid-stream chunks were already counted incrementally,
+                // and `body` now holds the frozen full buffer the pipeline
+                // will count again below. Reset so the final total is the
+                // buffer size, not double it.
+                ctx.response_body_bytes = 0;
+            }
         },
 
-        BodyMode::StreamBuffer { .. } => {},
+        // After Release the body streams unbuffered; the global ceiling
+        // still applies (StreamBuffer's own cap no longer runs).
+        BodyMode::StreamBuffer { .. } => {
+            let chunk_len = body.as_ref().map_or(0, Bytes::len) as u64;
+            if let Some(max) = pipeline.response_body_ceiling()
+                && ctx.response_body_bytes.saturating_add(chunk_len) > max as u64
+            {
+                return Err(pingora_core::Error::explain(
+                    pingora_core::ErrorType::InternalError,
+                    "released response body exceeds global body limit",
+                ));
+            }
+        },
         _ => tracing::error!("unhandled BodyMode variant in response body filter"),
     }
 

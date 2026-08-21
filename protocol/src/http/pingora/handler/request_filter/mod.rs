@@ -390,7 +390,12 @@ async fn run_terminal_response(
         .request_snapshot
         .as_ref()
         .is_some_and(|request| praxis_filter::bodyless_response(resp.status, &request.method));
-    if !is_bodyless && let Err(rejection) = run_parent_terminal_body_filters(pipeline, ctx, &resp, &mut body, true) {
+    if is_bodyless {
+        // The body phase (which would set the completion flag) is skipped,
+        // so mark delivery complete here or the logging-phase fallback would
+        // emit a duplicate record for a response access_log already logged.
+        ctx.response_delivery_complete = true;
+    } else if let Err(rejection) = run_parent_terminal_body_filters(pipeline, ctx, &resp, &mut body, true) {
         send_rejection(session, rejection).await;
         return;
     }
@@ -590,7 +595,7 @@ async fn run_streaming_terminal_response(
         http::StatusCode::NO_CONTENT | http::StatusCode::NOT_MODIFIED
     );
     if is_head || body_prohibited {
-        suppress_streaming_terminal_response(pipeline, session, ctx, &mut resp, streaming_body.as_mut(), is_head).await;
+        suppress_streaming_terminal_response(session, ctx, &mut resp, streaming_body.as_mut(), is_head).await;
         return;
     }
 
@@ -613,7 +618,7 @@ async fn run_streaming_terminal_response(
             Ok(Some(chunk)) => {
                 let mut body = Some(chunk);
                 if run_parent_terminal_body_filters(pipeline, ctx, &resp, &mut body, false).is_err()
-                    || streaming_size_limit_exceeded(ctx)
+                    || streaming_size_limit_exceeded(ctx, pipeline)
                 {
                     streaming_body.cancel().await;
                     session.as_downstream_mut().shutdown().await;
@@ -649,13 +654,12 @@ async fn run_streaming_terminal_response(
     }
 }
 
-/// Suppress a streaming body while still running clean completion hooks once.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "streaming suppress needs pipeline, session, ctx, resp, body, and flags"
-)]
+/// Suppress a bodyless streaming terminal response (HEAD, 204, 304).
+///
+/// The body phase is skipped entirely: the `access_log` filter's response
+/// hook already logged the bodyless completion, so running the body-EOS
+/// hook would emit a duplicate record.
 async fn suppress_streaming_terminal_response(
-    pipeline: &FilterPipeline,
     session: &mut Session,
     ctx: &mut PingoraRequestCtx,
     resp: &mut praxis_filter::Response,
@@ -668,12 +672,12 @@ async fn suppress_streaming_terminal_response(
         send_rejection(session, Rejection::status(500)).await;
         return;
     }
-    let mut completion_body = None;
-    if let Err(rejection) = run_parent_terminal_body_filters(pipeline, ctx, resp, &mut completion_body, true) {
-        streaming_body.cancel().await;
-        send_rejection(session, rejection).await;
-        return;
-    }
+    // This path handles HEAD and 204/304 — bodyless responses with no body
+    // phase. Running the body-EOS hook would make access_log emit a second
+    // record after its on_response already logged the bodyless completion
+    // (mirrors the buffered terminal path). Mark delivery complete so the
+    // logging-phase fallback does not fire a third.
+    ctx.response_delivery_complete = true;
 
     let is_not_modified = resp.status == http::StatusCode::NOT_MODIFIED;
     prepare_streaming_headers(resp, is_head, is_not_modified, http::Version::HTTP_10);
@@ -737,8 +741,16 @@ fn build_streaming_terminal_header(resp: &praxis_filter::Response) -> Option<pin
 }
 
 /// Enforce an incremental response size limit after raw bytes are counted.
-fn streaming_size_limit_exceeded(ctx: &PingoraRequestCtx) -> bool {
-    let BodyMode::SizeLimit { max_bytes } = ctx.response_body_mode else {
+fn streaming_size_limit_exceeded(ctx: &PingoraRequestCtx, pipeline: &FilterPipeline) -> bool {
+    // SizeLimit carries the effective limit directly; Stream mode delivers
+    // chunks without buffering but the global body_limits ceiling still
+    // applies, enforced here by the running byte count.
+    let max_bytes = match ctx.response_body_mode {
+        BodyMode::SizeLimit { max_bytes } => Some(max_bytes),
+        BodyMode::Stream => pipeline.response_body_ceiling(),
+        _ => None,
+    };
+    let Some(max_bytes) = max_bytes else {
         return false;
     };
     if ctx.response_body_bytes <= max_bytes as u64 {
@@ -1637,7 +1649,7 @@ mod tests {
         ctx.response_body_mode = BodyMode::SizeLimit { max_bytes: 1024 };
         ctx.response_body_bytes = 512;
 
-        assert!(!streaming_size_limit_exceeded(&ctx));
+        assert!(!streaming_size_limit_exceeded(&ctx, &empty_pipeline()));
     }
 
     #[test]
@@ -1646,7 +1658,7 @@ mod tests {
         ctx.response_body_mode = BodyMode::SizeLimit { max_bytes: 100 };
         ctx.response_body_bytes = 101;
 
-        assert!(streaming_size_limit_exceeded(&ctx));
+        assert!(streaming_size_limit_exceeded(&ctx, &empty_pipeline()));
     }
 
     #[test]
@@ -1655,7 +1667,7 @@ mod tests {
         ctx.response_body_mode = BodyMode::Stream;
         ctx.response_body_bytes = 999_999;
 
-        assert!(!streaming_size_limit_exceeded(&ctx));
+        assert!(!streaming_size_limit_exceeded(&ctx, &empty_pipeline()));
     }
 
     #[test]
@@ -1664,6 +1676,6 @@ mod tests {
         ctx.response_body_mode = BodyMode::SizeLimit { max_bytes: 100 };
         ctx.response_body_bytes = 100;
 
-        assert!(!streaming_size_limit_exceeded(&ctx));
+        assert!(!streaming_size_limit_exceeded(&ctx, &empty_pipeline()));
     }
 }

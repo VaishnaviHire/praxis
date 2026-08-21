@@ -80,6 +80,12 @@ pub(super) async fn execute(
                     "request body exceeds stream_buffer size limit",
                 ));
             }
+            if end_of_stream {
+                // Mid-stream chunks were counted incrementally; `body` now
+                // holds the frozen full buffer the pipeline counts again.
+                // Reset so the final total is the buffer size, not double it.
+                ctx.request_body_bytes = 0;
+            }
         },
 
         BodyMode::Stream => {

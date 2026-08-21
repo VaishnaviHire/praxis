@@ -365,6 +365,12 @@ fn maybe_emit_fallback_access_log(pipeline: &FilterPipeline, status: u16, ctx: &
         return;
     }
     if let Some(filter_ctx) = ctx.filter_context_for(pipeline, None) {
+        // The access_log filter already logged this request (e.g. a bodyless
+        // response whose on_response emitted before a later filter rejected):
+        // no fallback record, or it would duplicate.
+        if praxis_filter::access_record_already_emitted(&filter_ctx) {
+            return;
+        }
         // Honor the entry's request conditions: a scoped access_log (e.g.
         // only /api paths) must not gain fallback records for requests the
         // operator excluded. Sampling is still deliberately bypassed.

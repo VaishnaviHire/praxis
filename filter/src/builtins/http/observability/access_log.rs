@@ -109,9 +109,11 @@ impl AccessLogFilter {
             .is_multiple_of(self.sample_every)
     }
 
-    /// Emit a structured access log entry for the current request.
-    fn emit_access_log(ctx: &HttpFilterContext<'_>, status: u16) {
+    /// Emit a structured access log entry for the current request and mark
+    /// it so the protocol-layer fallback does not duplicate it.
+    fn emit_access_log(ctx: &mut HttpFilterContext<'_>, status: u16) {
         emit_access_record(ctx, status);
+        mark_access_record_emitted(ctx);
     }
 }
 
@@ -125,6 +127,26 @@ pub fn bodyless_response(status: http::StatusCode, req_method: &http::Method) ->
         || status == http::StatusCode::NO_CONTENT
         || status == http::StatusCode::NOT_MODIFIED
         || req_method == http::Method::HEAD
+}
+
+/// Marker inserted into request extensions once an access record has been
+/// emitted for this request.
+///
+/// The protocol-layer fallback checks for it via
+/// [`access_record_already_emitted`] so a request the filter already logged
+/// (e.g. a bodyless response whose `on_response` emitted before a later
+/// response filter rejected) does not gain a duplicate fallback record.
+struct AccessRecordEmitted;
+
+/// Whether an access record has already been emitted for this request.
+#[must_use]
+pub fn access_record_already_emitted(ctx: &HttpFilterContext<'_>) -> bool {
+    ctx.extensions.get::<AccessRecordEmitted>().is_some()
+}
+
+/// Record that an access record has been emitted for this request.
+pub fn mark_access_record_emitted(ctx: &mut HttpFilterContext<'_>) {
+    ctx.extensions.insert(AccessRecordEmitted);
 }
 
 /// Emit a structured access log record for the current request.
