@@ -160,6 +160,57 @@ async fn terminal_branch_without_response_fails_closed() {
 }
 
 #[tokio::test]
+async fn terminal_branch_with_cluster_selection_forwards_upstream() {
+    use super::branch::{RejoinTarget, ResolvedBranch};
+
+    let after_ran = Arc::new(AtomicUsize::new(0));
+    let mut branching = PipelineFilter::new(
+        0,
+        AnyFilter::Http(Box::new(CountingFilter {
+            counter: Arc::new(AtomicUsize::new(0)),
+        })),
+        vec![],
+        vec![],
+    );
+    branching.branches = vec![ResolvedBranch {
+        name: Arc::from("routing_branch"),
+        condition: None,
+        filters: vec![PipelineFilter::new(
+            10,
+            AnyFilter::Http(Box::new(ClusterSelectFilter("backend"))),
+            vec![],
+            vec![],
+        )],
+        max_iterations: None,
+        rejoin: RejoinTarget::Terminal,
+    }];
+    let after = PipelineFilter::new(
+        1,
+        AnyFilter::Http(Box::new(CountingFilter {
+            counter: Arc::clone(&after_ran),
+        })),
+        vec![],
+        vec![],
+    );
+
+    let pipeline = test_pipeline(BodyCapabilities::default(), vec![branching, after]);
+
+    let req = crate::test_utils::make_request(Method::GET, "/");
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+    let action = pipeline.execute_http_request(&mut ctx).await.unwrap();
+    assert!(
+        matches!(action, FilterAction::Continue),
+        "terminal branch that selected a cluster should continue to upstream forwarding"
+    );
+    assert!(ctx.cluster.is_some(), "cluster should be set by the branch filter");
+    assert_eq!(
+        after_ran.load(Ordering::SeqCst),
+        0,
+        "filters after a terminal branch point must not run"
+    );
+}
+
+#[tokio::test]
 async fn execute_request_stops_on_first_reject() {
     let counter = Arc::new(AtomicUsize::new(0));
     let pipeline = make_pipeline(vec![
@@ -2777,6 +2828,21 @@ impl HttpFilter for RejectFilter {
 
     async fn on_request(&self, _ctx: &mut crate::HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
         Ok(FilterAction::Reject(crate::Rejection::status(403)))
+    }
+}
+
+/// A filter that sets `ctx.cluster` to a fixed name.
+struct ClusterSelectFilter(&'static str);
+
+#[async_trait]
+impl HttpFilter for ClusterSelectFilter {
+    fn name(&self) -> &'static str {
+        "cluster_select"
+    }
+
+    async fn on_request(&self, ctx: &mut crate::HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
+        ctx.cluster = Some(Arc::from(self.0));
+        Ok(FilterAction::Continue)
     }
 }
 

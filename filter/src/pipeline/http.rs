@@ -99,16 +99,20 @@ impl FilterPipeline {
             match super::evaluate::evaluate_branches(&pf.branches, ctx).await? {
                 BranchOutcome::Continue => idx += 1,
                 BranchOutcome::Terminal => {
+                    if ctx.cluster.is_some() {
+                        // The branch set a cluster via `router` + `load_balancer`,
+                        // so upstream forwarding is intended. Stop the pipeline
+                        // and let the proxy forward to the selected cluster.
+                        return Ok(FilterAction::Continue);
+                    }
                     // A `terminal`/`client` rejoin whose sub-chain produced no
-                    // response (a filter that responds returns via the
-                    // TerminalResponse arm above). The documented behaviour is
-                    // "stop the pipeline; respond to client", so fail closed
-                    // with a 500 rather than proxying upstream with the
-                    // remaining filters (cors, csrf, auth, ...) skipped.
+                    // response and selected no cluster. Fail closed with a 500
+                    // rather than proxying upstream with the remaining filters
+                    // (cors, csrf, auth, ...) skipped.
                     warn!(
                         filter = http_filter.name(),
-                        "terminal branch produced no response; stopping the pipeline with 500 \
-                         instead of forwarding upstream"
+                        "terminal branch produced no response and selected no cluster; \
+                         stopping the pipeline with 500 instead of forwarding upstream"
                     );
                     return Ok(FilterAction::Reject(Rejection::status(500)));
                 },
