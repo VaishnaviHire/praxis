@@ -327,7 +327,11 @@ See `examples/configs/branching/cross-chain-flat.yaml`.
 **Body hooks** (`on_request_body`, `on_response_body`)
 do **not** run for filters inside branch chains.
 Body-transforming filters must be in the main
-pipeline path.
+pipeline path. This is enforced at build time: a
+filter that declares body access inside a branch
+chain is rejected as a pipeline ordering error, and
+body access declared by branch filters never enables
+pipeline-wide body buffering.
 
 **Nested control flow**: `SkipTo` and `ReEnter` from
 nested branches (branches within branches) are
