@@ -59,7 +59,7 @@ impl ClusterEntry {
                     .get(http::header::HOST)
                     .and_then(|v| v.to_str().ok())
             {
-                t.set_sni(strip_host_port(host).to_owned());
+                t.set_sni(strip_host_port(host));
             }
             t
         });

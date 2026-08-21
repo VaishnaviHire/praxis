@@ -612,6 +612,11 @@ async fn connect_upstream(upstream_addr: &str, allow_private: bool) -> Option<Tc
 }
 
 /// Resolve, SSRF-check, and connect to an upstream address.
+///
+/// Resolution is deliberately uncached and per-connection: the SSRF /
+/// DNS-rebinding check below must see fresh addresses, so reusing the HTTP
+/// path's positive DNS cache (which pins a resolution for its TTL) would
+/// weaken rebinding protection. See `docs/architecture/tcp-proxy.md`.
 async fn resolve_and_connect(upstream_addr: &str, allow_private: bool) -> Option<TcpStream> {
     let addrs: Vec<SocketAddr> = match tokio::net::lookup_host(upstream_addr).await {
         Ok(iter) => iter.collect(),

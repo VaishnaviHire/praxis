@@ -101,10 +101,16 @@ a filter entry:
               status: 403
 ```
 
-**`on_result.filter`** must match a filter **type
-name** — the return value of `HttpFilter::name()`
-(e.g., `"guardrails"`), not the user-assigned
-`name:` on the filter entry. See
+**`on_result.filter`** must name the **host filter**
+the branch is attached to — its filter **type name**
+(the return value of `HttpFilter::name()`, e.g.
+`"guardrails"`), not the user-assigned `name:` on the
+entry, and not some other filter in the chain. A
+branch only ever sees its own host filter's results:
+the pipeline clears `filter_results` after each
+filter's branch evaluation, so a condition naming a
+different filter could never match and is rejected at
+startup. See
 [Pipeline Concepts: Two Meanings of "Name"][names].
 
 [names]: ../architecture/pipeline-concepts.md#the-two-meanings-of-name
