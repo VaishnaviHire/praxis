@@ -5,7 +5,8 @@
 
 use praxis_core::config::Config;
 use praxis_test_utils::{
-    Backend, free_port, http_get, http_send, parse_status, simple_proxy_yaml, start_backend_with_shutdown, start_proxy,
+    Backend, free_port, http_get, http_send, parse_status, simple_proxy_yaml, start_backend_with_shutdown,
+    start_proxy, start_reused_connection_kill_backend,
 };
 
 // -----------------------------------------------------------------------------
@@ -305,6 +306,66 @@ fn status_5xx_without_policy_is_forwarded() {
 
     let (status, _) = http_get(proxy.addr(), "/", None);
     assert_eq!(status, 503, "without Status5xx, upstream 503 is forwarded");
+}
+
+#[test]
+fn reused_connection_failure_does_not_replay_post() {
+    let (backend, log) = start_reused_connection_kill_backend();
+    let proxy_port = free_port();
+    let yaml = simple_proxy_yaml(proxy_port, backend.port());
+    let config = Config::from_yaml(&yaml).unwrap();
+    let proxy = start_proxy(&config);
+
+    let (status, _body) = http_get(proxy.addr(), "/warmup", None);
+    assert_eq!(status, 200, "warmup request should succeed and pool the connection");
+
+    let raw = http_send(
+        proxy.addr(),
+        "POST /probe HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntest",
+    );
+    let status = parse_status(&raw);
+
+    let entries = log.lock().unwrap().clone();
+    assert!(
+        entries.iter().any(|(_, request_num, ..)| *request_num > 0),
+        "probe request must arrive on the pooled connection, got: {entries:?}"
+    );
+    let post_count = entries.iter().filter(|(_, _, method, _)| method == "POST").count();
+    assert_eq!(
+        post_count, 1,
+        "POST bytes already written upstream must not be replayed, got: {entries:?}"
+    );
+    assert_eq!(status, 502, "unreplayable POST should surface the upstream failure");
+}
+
+#[test]
+fn reused_connection_failure_retries_idempotent_get() {
+    let (backend, log) = start_reused_connection_kill_backend();
+    let proxy_port = free_port();
+    let yaml = simple_proxy_yaml(proxy_port, backend.port());
+    let config = Config::from_yaml(&yaml).unwrap();
+    let proxy = start_proxy(&config);
+
+    let (status, _body) = http_get(proxy.addr(), "/warmup", None);
+    assert_eq!(status, 200, "warmup request should succeed and pool the connection");
+
+    let (status, body) = http_get(proxy.addr(), "/probe", None);
+
+    let entries = log.lock().unwrap().clone();
+    assert!(
+        entries.iter().any(|(_, request_num, ..)| *request_num > 0),
+        "probe request must arrive on the pooled connection, got: {entries:?}"
+    );
+    let probe_count = entries
+        .iter()
+        .filter(|(_, _, method, path)| method == "GET" && path == "/probe")
+        .count();
+    assert_eq!(
+        probe_count, 2,
+        "idempotent GET should be replayed once on a fresh connection, got: {entries:?}"
+    );
+    assert_eq!(status, 200, "retried GET should succeed on the fresh connection");
+    assert_eq!(body, "pooled-ok");
 }
 
 #[test]

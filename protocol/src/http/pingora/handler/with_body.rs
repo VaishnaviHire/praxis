@@ -220,21 +220,35 @@ impl ProxyHttp for PingoraHttpHandler {
     fn error_while_proxy(
         &self,
         peer: &HttpPeer,
-        _session: &mut Session,
+        session: &mut Session,
         e: Box<pingora_core::Error>,
         ctx: &mut Self::CTX,
-        _client_reused: bool,
+        client_reused: bool,
     ) -> Box<pingora_core::Error> {
         // Preserve an explicit retry decision from the response-status path
         // (already validated by the policy engine).
         if matches!(e.retry, pingora_core::RetryType::Decided(true)) {
             return e;
         }
-        // Stale-connection errors (ReusedOnly) are safe to retry without
-        // policy approval — resolve to a concrete decision.
+        // Stale-connection errors (ReusedOnly) skip the retry budget — a
+        // pooled connection closed while idle is not a real attempt — but
+        // they still occur after request bytes were written upstream, so
+        // replay must respect the retry-safety invariant: idempotent method
+        // (or an explicit opt-in) and an intact buffered body.
+        // See docs/architecture/http-correctness.md.
         if matches!(e.retry, pingora_core::RetryType::ReusedOnly) {
+            let policy = ctx
+                .retry_policy
+                .clone()
+                .unwrap_or_else(|| Arc::new(praxis_core::config::RetryPolicy::legacy_default()));
+            let replay_safe = client_reused
+                && !session.as_ref().retry_buffer_truncated()
+                && (ctx.request_is_idempotent || policy.allow_non_idempotent());
+            if !replay_safe {
+                debug!("clearing reused-connection retry: replay is not safe for this request");
+            }
             let mut e = e;
-            e.set_retry(true);
+            e.set_retry(replay_safe);
             return e;
         }
         let e = e.more_context(format!("Peer: {peer}"));
