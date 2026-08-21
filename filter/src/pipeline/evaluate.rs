@@ -74,8 +74,14 @@ async fn evaluate_branches_inner(
     branches: &[ResolvedBranch],
     ctx: &mut HttpFilterContext<'_>,
 ) -> Result<BranchOutcome, FilterError> {
+    // Branch conditions read the host filter's results. Snapshot them:
+    // executing a branch chain clears `ctx.filter_results` after each branch
+    // filter's own branch evaluation, and without the snapshot a fired branch
+    // would wipe the results mid-loop, silently disabling every later
+    // sibling branch's condition.
+    let host_results = ctx.filter_results.clone();
     for branch in branches {
-        if !should_branch_fire(branch, ctx) {
+        if !should_branch_fire(branch, &host_results) {
             trace!(branch = %branch.name, "branch condition not met");
             continue;
         }
@@ -136,12 +142,16 @@ fn retain_filter_results(ctx: &mut HttpFilterContext<'_>) {
     }
 }
 
-/// Check whether a branch's condition is met.
-fn should_branch_fire(branch: &ResolvedBranch, ctx: &HttpFilterContext<'_>) -> bool {
+/// Check whether a branch's condition is met against the host filter's
+/// results (snapshotted before any sibling branch chain executes).
+fn should_branch_fire(
+    branch: &ResolvedBranch,
+    host_results: &std::collections::HashMap<&'static str, crate::FilterResultSet>,
+) -> bool {
     match &branch.condition {
         None => true,
         Some(cond) => crate::matches_filter_result(
-            &ctx.filter_results,
+            host_results,
             cond.filter_name.as_ref(),
             cond.key.as_ref(),
             cond.value.as_ref(),
@@ -590,6 +600,48 @@ mod tests {
         );
         assert_eq!(counter_a.load(Ordering::SeqCst), 1, "first branch should execute");
         assert_eq!(counter_b.load(Ordering::SeqCst), 0, "second branch should not execute");
+    }
+
+    #[tokio::test]
+    async fn sibling_branch_condition_survives_earlier_branch_execution() {
+        let counter_a = Arc::new(AtomicUsize::new(0));
+        let counter_b = Arc::new(AtomicUsize::new(0));
+        // Two conditional branches on the same host result, both rejoining
+        // at `next`. Executing the first branch's chain clears
+        // ctx.filter_results after its filter runs; the second branch's
+        // condition must still see the host filter's snapshot.
+        let branches = vec![
+            make_branch(
+                "first",
+                Some(("cache", "status", "hit")),
+                RejoinTarget::Next,
+                None,
+                vec![counting_pf(Arc::clone(&counter_a))],
+            ),
+            make_branch(
+                "second",
+                Some(("cache", "status", "hit")),
+                RejoinTarget::Next,
+                None,
+                vec![counting_pf(Arc::clone(&counter_b))],
+            ),
+        ];
+        let req = crate::test_utils::make_request(Method::GET, "/");
+        let mut ctx = crate::test_utils::make_filter_context(&req);
+        let mut rs = FilterResultSet::new();
+        rs.set("status", "hit").unwrap();
+        ctx.filter_results.insert("cache", rs);
+        let outcome = evaluate_branches(&branches, &mut ctx).await.unwrap();
+        assert!(
+            matches!(outcome, BranchOutcome::Continue),
+            "next-rejoining branches should continue"
+        );
+        assert_eq!(counter_a.load(Ordering::SeqCst), 1, "first branch should execute");
+        assert_eq!(
+            counter_b.load(Ordering::SeqCst),
+            1,
+            "second branch's condition must not be wiped by the first branch's execution"
+        );
     }
 
     #[tokio::test]
