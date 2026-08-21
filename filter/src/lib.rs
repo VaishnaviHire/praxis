@@ -45,9 +45,9 @@ pub use builtins::BasicAuthFilter;
 pub use builtins::{
     CircuitBreakerFilter, ContainsValue, CredentialInjectionFilter, DisallowedOriginMode, EndpointReselector,
     EndpointSelectorFilter, GuardrailsAction, GuardrailsFilter, LoadBalancerFilter, PiiKind, RateLimitMode,
-    RedirectStatus, RouterFilter, RuleTargetKind, access_record_already_emitted, bodyless_response, emit_access_record,
-    has_dot_dot_traversal, http::payload_processing::compression_config::CompressionConfig, mark_access_record_emitted,
-    normalize_rewritten_path,
+    RedirectStatus, RouterFilter, RuleTargetKind, SessionStore, SessionStoreRegistry, StickySessionsFilter,
+    access_record_already_emitted, bodyless_response, emit_access_record, has_dot_dot_traversal,
+    http::payload_processing::compression_config::CompressionConfig, mark_access_record_emitted, normalize_rewritten_path,
 };
 #[cfg(feature = "policy-engine")]
 pub use builtins::{PolicyFilter, PolicyPluginFactoryFn, register_policy_plugin_factory};
@@ -448,6 +448,7 @@ pub(crate) mod test_utils {
             health_registry: None,
             id_generator: &TEST_ID_GENERATOR,
             kv_stores: None,
+            session_stores: None,
             metrics_route: None,
             peer_identity: None,
             subrequest_client: None,
@@ -468,6 +469,7 @@ pub(crate) mod test_utils {
             cluster_retry_state: None,
             cluster_retry_state_released: false,
             endpoint_reselector: None,
+            pinned_endpoint_address: None,
             time_source: &praxis_core::time::SystemTimeSource,
             upstream: None,
         }

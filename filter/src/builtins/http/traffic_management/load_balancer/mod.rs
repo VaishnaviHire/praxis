@@ -131,7 +131,10 @@ impl LoadBalancerFilter {
 }
 
 #[async_trait]
-#[expect(clippy::too_many_lines, reason = "on_request orchestrates sequential setup")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "on_request orchestrates sequential setup and the pinned-endpoint branch"
+)]
 impl HttpFilter for LoadBalancerFilter {
     fn name(&self) -> &'static str {
         "load_balancer"
@@ -142,6 +145,11 @@ impl HttpFilter for LoadBalancerFilter {
     }
 
     async fn on_request(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
+        if ctx.upstream.is_some() {
+            debug!("upstream already set, skipping LB selection");
+            return Ok(FilterAction::Continue);
+        }
+
         let Some(cluster) = ctx.cluster.as_ref() else {
             return Err(
                 "load_balancer filter: no cluster set in context (is a router filter configured before this?)".into(),
@@ -155,6 +163,28 @@ impl HttpFilter for LoadBalancerFilter {
 
         let health = Self::cluster_health(ctx.health_registry, cluster_name);
 
+        // Session affinity: a preceding filter pinned an endpoint address.
+        // Build a proper Upstream with the cluster's TLS and connection options.
+        if let Some(pinned_addr) = ctx.pinned_endpoint_address.take() {
+            // Health state is built from the cluster's configured endpoints,
+            // so an unknown index means the pinned address left the cluster
+            // (e.g. a config reload); fall through to normal selection rather
+            // than routing to a removed endpoint. Recording the index also
+            // lets passive health checks observe pinned traffic.
+            let pinned_index = health.and_then(|h| h.endpoint_index(&pinned_addr));
+            if health.is_none() || pinned_index.is_some() {
+                debug!(cluster = %cluster_name, upstream = %pinned_addr, "using pinned endpoint from session affinity");
+                ctx.selected_endpoint_index = pinned_index;
+                ctx.upstream = Some(entry.build_upstream(pinned_addr, ctx));
+                return Ok(FilterAction::Continue);
+            }
+            debug!(
+                cluster = %cluster_name,
+                pinned = %pinned_addr,
+                "pinned endpoint no longer in cluster; selecting a new endpoint"
+            );
+        }
+
         if let Some(h) = health
             && h.endpoints().iter().all(|ep| !ep.is_healthy())
         {
@@ -167,9 +197,8 @@ impl HttpFilter for LoadBalancerFilter {
         })?;
         debug!(cluster = %cluster_name, upstream = %addr, "upstream selected");
 
-        if let Some(h) = health {
-            ctx.selected_endpoint_index = h.endpoint_index(&addr);
-        }
+        ctx.selected_endpoint_index = health.and_then(|h| h.endpoint_index(&addr)).or(Some(usize::MAX));
+        ctx.set_metadata("lb.selected", "true");
 
         // Track active request for retry budget.
         entry.retry_state.enter();
@@ -190,6 +219,10 @@ impl HttpFilter for LoadBalancerFilter {
     }
 
     async fn on_response(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
+        if ctx.get_metadata("lb.selected").is_none() {
+            return Ok(FilterAction::Continue);
+        }
+
         tracing::trace!("releasing in-flight counter");
         if let (Some(cluster_name), Some(upstream)) = (&ctx.cluster, &ctx.upstream)
             && let Some(entry) = self.clusters.get(cluster_name)

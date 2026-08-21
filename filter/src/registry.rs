@@ -286,6 +286,7 @@ fn register_http_builtins(filters: &mut HashMap<String, FilterRegistration>) {
     register_http(filters, "request_id", RequestIdFilter::from_config);
     register_http(filters, "router", crate::RouterFilter::from_config);
     register_http(filters, "static_response", StaticResponseFilter::from_config);
+    register_http(filters, "sticky_sessions", crate::StickySessionsFilter::from_config);
     register_http(filters, "timeout", TimeoutFilter::from_config);
     register_http(filters, "trace_context", TraceContextFilter::from_config);
     register_http(filters, "url_rewrite", UrlRewriteFilter::from_config);
@@ -424,6 +425,10 @@ mod tests {
             names.contains(&"static_response"),
             "static_response should be registered"
         );
+        assert!(
+            names.contains(&"sticky_sessions"),
+            "sticky_sessions should be registered"
+        );
         assert!(names.contains(&"tcp_access_log"), "tcp_access_log should be registered");
         assert!(
             names.contains(&"tcp_load_balancer"),
@@ -543,6 +548,7 @@ mod tests {
             "headers",
             "load_balancer",
             "router",
+            "sticky_sessions",
             "timeout",
         ];
 

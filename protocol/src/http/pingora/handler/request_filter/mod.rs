@@ -90,6 +90,11 @@ pub(in crate::http) async fn execute(
 
     ctx.client_http_version = Some(session.req_header().version);
 
+    // Clear stale upstream from previous request on this keep-alive connection.
+    // upstream_for_retry is set during upstream_peer selection and must not
+    // leak into the next request's filter context.
+    ctx.upstream_for_retry = None;
+
     let mut request = request_header_from_session(session);
     ctx.client_addr = session
         .client_addr()

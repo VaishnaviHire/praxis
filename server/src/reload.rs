@@ -55,6 +55,7 @@ pub(crate) fn reload_pipelines(
     listener_meta: &praxis_protocol::http::pingora::health::ListenerMetaStore,
     health_shutdown: &Arc<Mutex<CancellationToken>>,
     kv_stores: &praxis_core::kv::KvStoreRegistry,
+    session_stores: &Arc<praxis_filter::SessionStoreRegistry>,
     subrequest_client: &praxis_core::subrequest::SubRequestClient,
     log_level: Option<&Arc<praxis_core::logging::LogLevelState>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -78,7 +79,14 @@ pub(crate) fn reload_pipelines(
         new_ceiling,
     );
 
-    let new_pipelines = match resolve_pipelines(new_config, registry, &health_registry, kv_stores, &updated_client) {
+    let new_pipelines = match resolve_pipelines(
+        new_config,
+        registry,
+        &health_registry,
+        kv_stores,
+        session_stores,
+        &updated_client,
+    ) {
         Ok(p) => p,
         Err(e) => {
             error!(error = %e, "config reload failed: pipeline build error");
@@ -321,6 +329,7 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
             None,
         );
@@ -376,6 +385,7 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
             None,
         );
@@ -399,6 +409,7 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
             None,
         )
@@ -424,6 +435,7 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
             None,
         )
@@ -464,6 +476,7 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
             None,
         );
@@ -503,6 +516,7 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
             None,
         );
@@ -1327,6 +1341,7 @@ filter_chains:
             &registry,
             &health_registry,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
         )
         .unwrap();
@@ -1340,6 +1355,11 @@ filter_chains:
     /// Empty KV store registry for tests without KV stores.
     fn empty_kv_stores() -> praxis_core::kv::KvStoreRegistry {
         praxis_core::kv::KvStoreRegistry::new()
+    }
+
+    /// Empty session store registry for tests.
+    fn empty_session_stores() -> Arc<praxis_filter::SessionStoreRegistry> {
+        Arc::new(praxis_filter::SessionStoreRegistry::new())
     }
 
     /// Empty sub-request client for tests.

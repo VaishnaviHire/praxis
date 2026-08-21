@@ -348,6 +348,7 @@ macro_rules! filter_context {
             health_registry: $pipeline.health_registry(),
             id_generator: $pipeline.id_generator(),
             kv_stores: $pipeline.kv_stores(),
+            session_stores: $pipeline.session_stores(),
             subrequest_client: $pipeline.subrequest_client(),
             subrequest_response_mode: praxis_filter::SubRequestResponseMode::Buffered,
             request: $request,
@@ -366,8 +367,9 @@ macro_rules! filter_context {
             cluster_retry_state: $ctx.cluster_retry_state.clone(),
             cluster_retry_state_released: $ctx.cluster_retry_state_released,
             endpoint_reselector: $ctx.endpoint_reselector.clone(),
+            pinned_endpoint_address: None,
             time_source: $pipeline.time_source(),
-            upstream: $ctx.upstream.take(),
+            upstream: $ctx.upstream.take().or_else(|| $ctx.upstream_for_retry.clone()),
         }
     }};
 }

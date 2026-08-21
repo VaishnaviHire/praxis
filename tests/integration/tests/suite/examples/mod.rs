@@ -60,6 +60,7 @@ mod round_robin;
 mod security_examples;
 mod session_affinity;
 mod static_response;
+mod sticky_sessions;
 mod stream_buffer;
 mod subset_lb;
 mod timeout;

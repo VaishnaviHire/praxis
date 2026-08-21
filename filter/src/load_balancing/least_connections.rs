@@ -24,12 +24,17 @@ use super::endpoint::WeightedEndpoint;
 /// Uses an optimistic CAS loop for lock-free selection. Weight
 /// influences tie-breaking: when two endpoints have equal
 /// connection counts, the one with the higher weight wins.
+/// When weights are also equal, a round-robin counter ensures
+/// even distribution across endpoints with identical load.
 pub(crate) struct LeastConnections {
     /// Per-endpoint active-request counter.
     pub(crate) counters: HashMap<Arc<str>, AtomicUsize>,
 
     /// Deduplicated endpoint list with weights and original indices.
     endpoints: Vec<WeightedEndpoint>,
+
+    /// Round-robin tiebreaker for equal load and weight.
+    rr_counter: AtomicUsize,
 }
 
 impl LeastConnections {
@@ -39,7 +44,11 @@ impl LeastConnections {
             .iter()
             .map(|ep| (Arc::clone(&ep.address), AtomicUsize::new(0)))
             .collect();
-        Self { counters, endpoints }
+        Self {
+            counters,
+            endpoints,
+            rr_counter: AtomicUsize::new(0),
+        }
     }
 
     /// Pick the healthy endpoint with the fewest in-flight requests.
@@ -75,34 +84,59 @@ impl LeastConnections {
     /// available; falls back to all endpoints.
     #[expect(clippy::indexing_slicing, reason = "bounds checked")]
     fn find_best(&self, health: Option<&ClusterHealthState>, exclude: &[Arc<str>]) -> Option<(Arc<str>, usize)> {
+        let offset = self.rr_counter.fetch_add(1, Ordering::Relaxed);
+
         if let Some(state) = health
-            && let Some((addr, load)) = self
-                .endpoints
-                .iter()
-                .filter(|ep| {
+            && let Some((addr, load)) = self.select_from_candidates(
+                self.endpoints.iter().filter(|ep| {
                     ep.index < state.endpoints().len()
                         && state.endpoints()[ep.index].is_healthy()
                         && !is_excluded(&ep.address, exclude)
-                })
-                .map(|ep| {
-                    let load = self.counters[&*ep.address].load(Ordering::Acquire);
-                    (ep, load)
-                })
-                .min_by(|(a, a_load), (b, b_load)| a_load.cmp(b_load).then(b.weight.cmp(&a.weight)))
-                .map(|(ep, load)| (Arc::clone(&ep.address), load))
+                }),
+                offset,
+            )
         {
             return Some((addr, load));
         }
 
-        self.endpoints
-            .iter()
-            .filter(|ep| !is_excluded(&ep.address, exclude))
-            .map(|ep| {
-                let load = self.counters[&*ep.address].load(Ordering::Acquire);
-                (ep, load)
-            })
-            .min_by(|(a, a_load), (b, b_load)| a_load.cmp(b_load).then(b.weight.cmp(&a.weight)))
-            .map(|(ep, load)| (Arc::clone(&ep.address), load))
+        self.select_from_candidates(
+            self.endpoints.iter().filter(|ep| !is_excluded(&ep.address, exclude)),
+            offset,
+        )
+    }
+
+    /// Select the best candidate from an iterator of endpoints, using
+    /// the round-robin offset to break ties on equal load and weight.
+    #[expect(clippy::indexing_slicing, reason = "bounds checked by len guard")]
+    #[expect(single_use_lifetimes, reason = "required for impl Trait")]
+    fn select_from_candidates<'a>(
+        &self,
+        candidates: impl Iterator<Item = &'a WeightedEndpoint>,
+        offset: usize,
+    ) -> Option<(Arc<str>, usize)> {
+        let candidates: Vec<_> = candidates.collect();
+        let len = candidates.len();
+        if len == 0 {
+            return None;
+        }
+
+        let start = offset % len;
+        let mut best_idx = start;
+        let mut best_load = self.counters[&*candidates[start].address].load(Ordering::Acquire);
+        let mut best_weight = candidates[start].weight;
+
+        for i in 1..len {
+            let idx = (start + i) % len;
+            let ep = candidates[idx];
+            let load = self.counters[&*ep.address].load(Ordering::Acquire);
+            if load < best_load || (load == best_load && ep.weight > best_weight) {
+                best_idx = idx;
+                best_load = load;
+                best_weight = ep.weight;
+            }
+        }
+
+        Some((Arc::clone(&candidates[best_idx].address), best_load))
     }
 }
 
@@ -140,22 +174,21 @@ mod tests {
             WeightedEndpoint::simple(Arc::from("10.0.0.3:80"), 2, 1),
         ]);
 
-        assert_eq!(
-            &*lc.select(None, &[]).unwrap(),
-            "10.0.0.1:80",
-            "first selection should go to first endpoint"
-        );
-        assert_eq!(
-            &*lc.select(None, &[]).unwrap(),
-            "10.0.0.2:80",
-            "second selection should pick least-loaded"
-        );
+        let first = lc.select(None, &[]).unwrap();
+        assert_eq!(&*first, "10.0.0.1:80", "first selection should go to first endpoint");
+
+        let second = lc.select(None, &[]).unwrap();
+        assert_eq!(&*second, "10.0.0.2:80", "second selection should pick least-loaded");
+
         lc.release("10.0.0.1:80");
+        // After release: A=0, B=1, C=0. Either A or C is valid (both min-load).
+        let third = lc.select(None, &[]).unwrap();
+        let load_of_third = lc.counters[&*third].load(Ordering::Relaxed);
         assert_eq!(
-            &*lc.select(None, &[]).unwrap(),
-            "10.0.0.1:80",
-            "released endpoint should be selected again"
+            load_of_third, 1,
+            "third selection should pick an endpoint that was at 0 (now incremented to 1)"
         );
+        assert_ne!(&*third, "10.0.0.2:80", "should not pick the loaded endpoint");
     }
 
     #[test]

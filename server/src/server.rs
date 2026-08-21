@@ -164,6 +164,8 @@ struct ServerState {
     listener_meta: praxis_protocol::http::pingora::health::ListenerMetaStore,
     /// KV store registry.
     kv_stores: praxis_core::kv::KvStoreRegistry,
+    /// Session store registry, preserved across reloads.
+    session_stores: Arc<praxis_filter::SessionStoreRegistry>,
     /// Shared sub-request client for iterative sub-requests.
     subrequest_client: praxis_core::subrequest::SubRequestClient,
     /// Health check cancellation token.
@@ -208,8 +210,17 @@ fn build_server_state(
         subrequest_response_ceiling,
     );
 
-    let pipelines = resolve_pipelines(config, registry, health_registry, &kv_stores, &subrequest_client)
-        .unwrap_or_else(|e| fatal(&e));
+    let session_stores = Arc::new(praxis_filter::SessionStoreRegistry::new());
+
+    let pipelines = resolve_pipelines(
+        config,
+        registry,
+        health_registry,
+        &kv_stores,
+        &session_stores,
+        &subrequest_client,
+    )
+    .unwrap_or_else(|e| fatal(&e));
     let listener_meta = praxis_protocol::http::pingora::health::new_listener_meta_store(
         praxis_protocol::http::pingora::health::listener_meta_from_config(config),
     );
@@ -225,6 +236,7 @@ fn build_server_state(
         pipelines: Arc::new(pipelines),
         listener_meta,
         kv_stores,
+        session_stores,
         subrequest_client,
         health_shutdown,
         log_level,
@@ -284,6 +296,7 @@ fn spawn_watcher(
         initial_config: config,
         kv_stores: state.kv_stores,
         listener_meta: state.listener_meta,
+        session_stores: state.session_stores,
         pipelines: state.pipelines,
         referenced_files,
         registry: Arc::new(registry),
