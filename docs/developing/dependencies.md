@@ -45,9 +45,9 @@ Accepted, documented exceptions live in
 - `RUSTSEC-2024-0388` (`derivative`, unmaintained):
   transitive via the Pingora fork.
 - `RUSTSEC-2025-0134` (`rustls-pemfile`,
-  unmaintained): direct dependency in `praxis-tls`
-  and transitive via `pingora-rustls`; retained
-  until the rustls ecosystem replacement is adopted.
+  unmaintained): transitive via the Pingora fork's
+  `pingora-rustls` only; `praxis-tls` migrated to
+  the `rustls::pki_types` PEM iterators.
 - `RUSTSEC-2026-0253` (`lru`, unsound `pop()` panic
   safety): transitive; tracked until a fixed
   release is available.
@@ -88,9 +88,9 @@ organizations that underpin most of async Rust.
 
 ### TLS and cryptography (rustls / RustCrypto)
 
-`rustls`, `rustls-pemfile` (see exception above),
-`rcgen`, `sha2`, `subtle`, `zeroize` — maintained by
-the rustls project and the RustCrypto organization.
+`rustls`, `rcgen`, `sha2`, `subtle`, `zeroize` —
+maintained by the rustls project and the RustCrypto
+organization.
 
 ### Observability
 

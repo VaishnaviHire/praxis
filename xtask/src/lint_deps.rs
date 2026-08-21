@@ -197,8 +197,6 @@ fn collect_member_entries(fragment: &str, members: &mut Vec<String>, in_members:
 /// Lines with an inline `# workspace:ignore` comment, or preceded by one,
 /// are skipped.
 fn non_workspace_dep_lines(content: &str) -> Vec<String> {
-    const DEP_SECTIONS: [&str; 3] = ["[dependencies]", "[dev-dependencies]", "[build-dependencies]"];
-
     let mut offending = Vec::new();
     let mut in_dep_section = false;
     let mut skip_next = false;
@@ -207,7 +205,7 @@ fn non_workspace_dep_lines(content: &str) -> Vec<String> {
         let trimmed = line.trim();
 
         if trimmed.starts_with('[') {
-            in_dep_section = DEP_SECTIONS.contains(&trimmed);
+            in_dep_section = is_dependency_section(trimmed);
             skip_next = false;
             continue;
         }
@@ -233,6 +231,22 @@ fn non_workspace_dep_lines(content: &str) -> Vec<String> {
     }
 
     offending
+}
+
+/// Whether a TOML section header declares dependencies.
+///
+/// Covers the plain sections and platform-specific tables like
+/// `[target.'cfg(unix)'.dependencies]`, which a fixed-list match would
+/// silently exempt from the workspace-inheritance rule.
+fn is_dependency_section(header: &str) -> bool {
+    let name = header.trim_start_matches('[').trim_end_matches(']');
+    name == "dependencies"
+        || name == "dev-dependencies"
+        || name == "build-dependencies"
+        || (name.starts_with("target.")
+            && (name.ends_with(".dependencies")
+                || name.ends_with(".dev-dependencies")
+                || name.ends_with(".build-dependencies")))
 }
 
 /// Check whether a dependency line declares its source directly instead

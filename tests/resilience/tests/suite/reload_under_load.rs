@@ -44,15 +44,17 @@ fn reload_under_load_every_response_from_one_generation() {
             let addr = Arc::clone(&addr);
             thread::spawn(move || {
                 let mut requests = 0_u32;
+                let mut saw_gen_b = false;
                 let mut bad: Vec<(u16, String)> = Vec::new();
                 while !stop.load(Ordering::Relaxed) {
                     let (status, body) = http_get(&addr, "/", None);
                     requests += 1;
+                    saw_gen_b |= body == "gen-b";
                     if status != 200 || (body != "gen-a" && body != "gen-b") {
                         bad.push((status, body));
                     }
                 }
-                (requests, bad)
+                (requests, saw_gen_b, bad)
             })
         })
         .collect();
@@ -69,9 +71,11 @@ fn reload_under_load_every_response_from_one_generation() {
     stop.store(true, Ordering::Relaxed);
 
     let mut total_requests = 0;
+    let mut any_saw_gen_b = false;
     for (i, client) in clients.into_iter().enumerate() {
-        let (requests, bad) = client.join().expect("client thread should not panic");
+        let (requests, saw_gen_b, bad) = client.join().expect("client thread should not panic");
         total_requests += requests;
+        any_saw_gen_b |= saw_gen_b;
         assert!(
             bad.is_empty(),
             "client {i}: {} of {requests} responses were not a clean 200 from one generation: {:?}",
@@ -82,6 +86,12 @@ fn reload_under_load_every_response_from_one_generation() {
     assert!(
         total_requests > 100,
         "clients should sustain load across the swaps (got {total_requests} requests)"
+    );
+    // Without this the test passes even if hot reload never fires: the
+    // proxy starts on generation A and every response above is valid.
+    assert!(
+        any_saw_gen_b,
+        "the config swaps must actually take effect: no client ever saw generation B"
     );
 }
 

@@ -109,7 +109,8 @@ See [hot-reload.yaml] for an example.
 ## Admin
 
 `admin.address` binds a separate HTTP listener that serves
-`/healthy`, `/ready`, and `/metrics`.
+`/healthy`, `/ready`, `/metrics`, `/api/kv/*`, and
+`/api/pipelines`.
 
 - `/healthy` returns `200 OK` with `{"status":"ok"}`
   once the server is accepting connections (liveness).
@@ -126,9 +127,20 @@ See [hot-reload.yaml] for an example.
   (`praxis_filter_duration_seconds`, labels: `filter`,
   `phase`, `stream`).
 
+- `/api/kv/{store}/{key}` reads and writes entries in
+  configured key-value stores (when any are configured).
+- `/api/pipelines` (GET) returns a JSON snapshot of every
+  listener's resolved filter pipeline, including branch
+  chains and rejoin targets — the runtime introspection
+  view of the pipeline configuration. Filter it with
+  `?listener=NAME`.
+
 Any other path returns `404 NOT FOUND`. Useful for orchestrator
 health checks and monitoring without exposing them on
-the main listeners.
+the main listeners. The admin listener has no
+authentication; keep it on loopback or a management
+network (non-loopback binds require
+`insecure_options.allow_public_admin`).
 
 ```yaml
 admin:
