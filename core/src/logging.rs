@@ -11,10 +11,17 @@
 //! Set `PRAXIS_LOG_FORMAT=json` for structured JSON output.
 //! Per-module overrides come from `runtime.log_overrides` in the config YAML.
 
+mod log_level;
 mod size_rotation;
 
+use std::sync::Arc;
+
+pub use log_level::{
+    DEFAULT_OVERLAY_DURATION_SECS, GLOBAL_OVERLAY_KEY, LogLevelError, LogLevelOverlayView, LogLevelState,
+    LogLevelStateResponse, MAX_OVERLAY_DURATION_SECS, PutLogLevelRequest,
+};
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
+use tracing_subscriber::{layer::SubscriberExt as _, reload, util::SubscriberInitExt as _};
 
 use crate::{config::Config, errors::ProxyError};
 
@@ -40,6 +47,16 @@ pub struct TracingGuard {
     /// Tokio runtime kept alive for the tonic gRPC exporter.
     #[cfg(feature = "otel")]
     _otel_runtime: Option<::tokio::runtime::Runtime>,
+    /// Runtime log-level overlay state for the admin API.
+    log_level: Arc<LogLevelState>,
+}
+
+impl TracingGuard {
+    /// Shared runtime log-level state for admin `/api/log-level`.
+    #[must_use]
+    pub fn log_level_state(&self) -> Arc<LogLevelState> {
+        Arc::clone(&self.log_level)
+    }
 }
 
 impl Drop for TracingGuard {
@@ -52,6 +69,7 @@ impl Drop for TracingGuard {
             }
         }
 
+        // Drop worker guard to flush queued log lines, then runtime drops automatically.
         drop(self.worker_guard.take());
     }
 }
@@ -82,7 +100,11 @@ impl Drop for TracingGuard {
 /// [`ProxyError::Config`]: crate::errors::ProxyError::Config
 pub fn init_tracing(config: &Config) -> Result<TracingGuard, ProxyError> {
     validate_logging(config)?;
-    let env_filter = build_env_filter(config)?;
+    let baseline = build_baseline_directive(config)?;
+    let env_filter = tracing_subscriber::EnvFilter::new(&baseline);
+    let (filter_layer, reload_handle) = reload::Layer::new(env_filter);
+    let log_level = LogLevelState::new(baseline, reload_handle);
+
     let json = std::env::var("PRAXIS_LOG_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("json"));
     let telemetry = config.telemetry.resolve();
     let writer_bundle = writer::build_log_writer(&config.runtime.logging)?;
@@ -90,13 +112,14 @@ pub fn init_tracing(config: &Config) -> Result<TracingGuard, ProxyError> {
     warn_if_otel_config_without_feature(telemetry.otlp_endpoint.is_some(), telemetry.sampling_rate.is_some());
 
     #[cfg(feature = "otel")]
-    return init_with_otel(env_filter, json, &telemetry, writer_bundle);
+    return init_with_otel(filter_layer, json, &telemetry, writer_bundle, Arc::clone(&log_level));
 
     #[cfg(not(feature = "otel"))]
     {
-        init_fmt_only(env_filter, json, writer_bundle.writer);
+        init_fmt_only(filter_layer, json, writer_bundle.writer);
         Ok(TracingGuard {
             worker_guard: writer_bundle.worker_guard,
+            log_level,
         })
     }
 }
@@ -322,10 +345,11 @@ mod writer {
     reason = "tracing-subscriber layer composition creates deeply nested generic types; runs once at startup"
 )]
 fn init_with_otel(
-    env_filter: tracing_subscriber::EnvFilter,
+    filter_layer: reload::Layer<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>,
     json: bool,
     telemetry: &crate::config::TelemetryConfig,
     writer_bundle: writer::LogWriterBundle,
+    log_level: Arc<LogLevelState>,
 ) -> Result<TracingGuard, ProxyError> {
     use opentelemetry::trace::TracerProvider as _;
 
@@ -338,7 +362,7 @@ fn init_with_otel(
             .as_ref()
             .map(|p| tracing_opentelemetry::layer().with_tracer(p.tracer("praxis")));
         tracing_subscriber::registry()
-            .with(env_filter)
+            .with(filter_layer)
             .with(
                 tracing_subscriber::fmt::layer()
                     .json()
@@ -353,7 +377,7 @@ fn init_with_otel(
             .as_ref()
             .map(|p| tracing_opentelemetry::layer().with_tracer(p.tracer("praxis")));
         tracing_subscriber::registry()
-            .with(env_filter)
+            .with(filter_layer)
             .with(tracing_subscriber::fmt::layer().with_writer(writer))
             .with(otel_layer)
             .init();
@@ -365,19 +389,20 @@ fn init_with_otel(
         worker_guard,
         #[cfg(feature = "otel")]
         _otel_runtime: otel_runtime,
+        log_level,
     })
 }
 
 /// Initialize the layered subscriber with fmt only (no `otel` feature).
 #[cfg(not(feature = "otel"))]
 fn init_fmt_only(
-    env_filter: tracing_subscriber::EnvFilter,
+    filter_layer: reload::Layer<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>,
     json: bool,
     writer: tracing_subscriber::fmt::writer::BoxMakeWriter,
 ) {
     if json {
         tracing_subscriber::registry()
-            .with(env_filter)
+            .with(filter_layer)
             .with(
                 tracing_subscriber::fmt::layer()
                     .json()
@@ -388,7 +413,7 @@ fn init_fmt_only(
             .init();
     } else {
         tracing_subscriber::registry()
-            .with(env_filter)
+            .with(filter_layer)
             .with(tracing_subscriber::fmt::layer().with_writer(writer))
             .init();
     }
@@ -690,8 +715,17 @@ fn validate_and_build_directives(
 // Utility Functions
 // -----------------------------------------------------------------------------
 
+/// Build the baseline directive string from `RUST_LOG` and `runtime.log_overrides`.
+///
+/// # Errors
+///
+/// Returns [`ProxyError::Config`] when overrides are invalid.
+pub fn build_baseline_directive(config: &Config) -> Result<String, ProxyError> {
+    Ok(build_env_filter(config)?.to_string())
+}
+
 /// Returns `true` if `s` is a valid Rust module path and is non-empty.
-fn is_valid_module_path(s: &str) -> bool {
+pub(super) fn is_valid_module_path(s: &str) -> bool {
     !s.is_empty()
         && s.split("::").all(|segment| {
             !segment.is_empty()
@@ -709,6 +743,11 @@ fn is_valid_log_level(s: &str) -> bool {
         s.to_ascii_lowercase().as_str(),
         "error" | "warn" | "info" | "debug" | "trace"
     )
+}
+
+/// Returns `true` for admin overlay levels, including temporary `off`.
+pub(super) fn is_valid_admin_log_level(s: &str) -> bool {
+    is_valid_log_level(s) || s.eq_ignore_ascii_case("off")
 }
 
 // -----------------------------------------------------------------------------

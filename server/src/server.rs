@@ -13,6 +13,7 @@ use praxis_core::{
     PingoraServerRuntime,
     config::{Config, ProtocolKind},
     health::{HealthRegistry, build_health_registry},
+    logging::LogLevelState,
 };
 use praxis_filter::FilterRegistry;
 use praxis_protocol::{CertWatcherShutdowns, ListenerPipelines, Protocol as _, http::PingoraHttp, tcp::PingoraTcp};
@@ -90,8 +91,8 @@ pub fn resolve_config_path(explicit: Option<&str>) -> Option<PathBuf> {
 /// Config is owned for the server's lifetime (never returns).
 #[expect(clippy::allow_attributes, reason = "lint is platform/config-dependent")]
 #[allow(clippy::needless_pass_by_value, reason = "server owns config")]
-pub fn run_server(config: Config, config_path: Option<PathBuf>) -> ! {
-    run_server_with_registry(config, crate::build_full_registry(), config_path)
+pub fn run_server(config: Config, config_path: Option<PathBuf>, log_level: Option<Arc<LogLevelState>>) -> ! {
+    run_server_with_registry(config, crate::build_full_registry(), config_path, log_level)
 }
 
 /// Build filter pipelines from the given registry, register protocols and run the server.
@@ -104,8 +105,17 @@ pub fn run_server(config: Config, config_path: Option<PathBuf>) -> ! {
 ///
 /// [`register_filters!`]: praxis_filter::register_filters
 #[expect(clippy::allow_attributes, reason = "lint is platform/config-dependent")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "server bootstrap wires listeners, admin, and watcher"
+)]
 #[allow(clippy::needless_pass_by_value, reason = "server owns config")]
-pub fn run_server_with_registry(config: Config, registry: FilterRegistry, config_path: Option<PathBuf>) -> ! {
+pub fn run_server_with_registry(
+    config: Config,
+    registry: FilterRegistry,
+    config_path: Option<PathBuf>,
+    log_level: Option<Arc<LogLevelState>>,
+) -> ! {
     run_startup_security_checks(&config);
 
     // Install before pipelines and health checks emit startup metrics. The same
@@ -117,7 +127,7 @@ pub fn run_server_with_registry(config: Config, registry: FilterRegistry, config
         .map(|_| praxis_protocol::http::pingora::health::install_prometheus_admin_recorder());
 
     let health_registry = build_health_registry(&config.clusters);
-    let state = build_server_state(&config, &registry, &health_registry);
+    let state = build_server_state(&config, &registry, &health_registry, log_level.clone());
 
     info!("initializing server");
     let mut server = PingoraServerRuntime::new(&config);
@@ -129,6 +139,7 @@ pub fn run_server_with_registry(config: Config, registry: FilterRegistry, config
             health_registry: Some(health_registry),
             kv_registry: Some(state.kv_stores.clone()),
             pipelines: Some((Arc::clone(&state.pipelines), Arc::clone(&state.listener_meta))),
+            log_level: log_level.clone(),
             verbose: config.admin.verbose,
         },
         prometheus_recorder,
@@ -157,6 +168,8 @@ struct ServerState {
     subrequest_client: praxis_core::subrequest::SubRequestClient,
     /// Health check cancellation token.
     health_shutdown: Arc<Mutex<CancellationToken>>,
+    /// Runtime log-level overlay state for admin API and reload.
+    log_level: Option<Arc<LogLevelState>>,
 }
 
 /// Build filter pipelines, health checks, and registries.
@@ -164,7 +177,12 @@ struct ServerState {
     clippy::too_many_lines,
     reason = "connector + pipeline + health wiring is sequential"
 )]
-fn build_server_state(config: &Config, registry: &FilterRegistry, health_registry: &HealthRegistry) -> ServerState {
+fn build_server_state(
+    config: &Config,
+    registry: &FilterRegistry,
+    health_registry: &HealthRegistry,
+    log_level: Option<Arc<LogLevelState>>,
+) -> ServerState {
     info!("building filter pipelines");
     let kv_stores = praxis_core::kv::KvStoreRegistry::new();
     let pool_size = config
@@ -209,6 +227,7 @@ fn build_server_state(config: &Config, registry: &FilterRegistry, health_registr
         kv_stores,
         subrequest_client,
         health_shutdown,
+        log_level,
     }
 }
 
@@ -270,6 +289,7 @@ fn spawn_watcher(
         registry: Arc::new(registry),
         shutdown: CancellationToken::new(),
         subrequest_client: state.subrequest_client,
+        log_level: state.log_level,
     });
     Some(handle)
 }

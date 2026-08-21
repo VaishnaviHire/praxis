@@ -93,6 +93,9 @@ pub(crate) struct WatcherParams {
 
     /// Shared sub-request client for iterative sub-requests.
     pub(crate) subrequest_client: praxis_core::subrequest::SubRequestClient,
+
+    /// Runtime log-level state refreshed after successful reload.
+    pub(crate) log_level: Option<Arc<praxis_core::logging::LogLevelState>>,
 }
 
 // -----------------------------------------------------------------------------
@@ -196,6 +199,7 @@ async fn run_event_loop(rx: &mut mpsc::Receiver<()>, params: &WatcherParams) {
         &params.health_shutdown,
         &params.kv_stores,
         &params.subrequest_client,
+        params.log_level.as_ref(),
     );
     // A change seen while backing off is remembered rather than dropped,
     // and retried when the window expires. The filesystem will not
@@ -241,6 +245,7 @@ async fn run_event_loop(rx: &mut mpsc::Receiver<()>, params: &WatcherParams) {
             &params.health_shutdown,
             &params.kv_stores,
             &params.subrequest_client,
+            params.log_level.as_ref(),
         );
         update_reload_backoff(ok, &mut consecutive_failures, &mut last_failure);
         // Cleared on success; a failed attempt stays pending so the timer
@@ -291,6 +296,7 @@ fn handle_reload(
     health_shutdown: &Arc<Mutex<CancellationToken>>,
     kv_stores: &praxis_core::kv::KvStoreRegistry,
     subrequest_client: &praxis_core::subrequest::SubRequestClient,
+    log_level: Option<&Arc<praxis_core::logging::LogLevelState>>,
 ) -> bool {
     let content = match std::fs::read_to_string(config_path) {
         Ok(c) => c,
@@ -342,6 +348,7 @@ fn handle_reload(
         health_shutdown,
         kv_stores,
         subrequest_client,
+        log_level,
     ) {
         Ok(()) => {
             *current_config = new_config;
@@ -927,6 +934,7 @@ mod tests {
             &health_shutdown,
             &kv_stores,
             &subrequest_client,
+            None,
         );
 
         assert!(!ok, "an unparseable config must report failure");
@@ -949,6 +957,7 @@ mod tests {
             &health_shutdown,
             &kv_stores,
             &subrequest_client,
+            None,
         );
         assert!(recovered, "a subsequent valid config must reload");
     }
@@ -988,6 +997,7 @@ mod tests {
             subrequest_client: praxis_core::subrequest::SubRequestClient::new(
                 praxis_core::subrequest::SubRequestConnector::new(8, None),
             ),
+            log_level: None,
         });
 
         std::thread::sleep(Duration::from_millis(100));
@@ -1032,6 +1042,7 @@ mod tests {
             subrequest_client: praxis_core::subrequest::SubRequestClient::new(
                 praxis_core::subrequest::SubRequestConnector::new(8, None),
             ),
+            log_level: None,
         });
 
         std::thread::sleep(Duration::from_millis(WATCHER_STARTUP_MS));
@@ -1084,6 +1095,7 @@ mod tests {
             subrequest_client: praxis_core::subrequest::SubRequestClient::new(
                 praxis_core::subrequest::SubRequestConnector::new(8, None),
             ),
+            log_level: None,
         });
 
         std::thread::sleep(Duration::from_millis(WATCHER_STARTUP_MS));
@@ -1166,6 +1178,7 @@ mod tests {
             subrequest_client: praxis_core::subrequest::SubRequestClient::new(
                 praxis_core::subrequest::SubRequestConnector::new(8, None),
             ),
+            log_level: None,
         });
 
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -1230,6 +1243,7 @@ mod tests {
             subrequest_client: praxis_core::subrequest::SubRequestClient::new(
                 praxis_core::subrequest::SubRequestConnector::new(8, None),
             ),
+            log_level: None,
         });
 
         std::thread::sleep(Duration::from_millis(WATCHER_STARTUP_MS));
@@ -1296,6 +1310,7 @@ mod tests {
             subrequest_client: praxis_core::subrequest::SubRequestClient::new(
                 praxis_core::subrequest::SubRequestConnector::new(8, None),
             ),
+            log_level: None,
         });
 
         tracing::info!("waiting for startup pre-check reload (mismatched hash triggers swap)");
@@ -1361,6 +1376,7 @@ mod tests {
             subrequest_client: praxis_core::subrequest::SubRequestClient::new(
                 praxis_core::subrequest::SubRequestConnector::new(8, None),
             ),
+            log_level: None,
         });
 
         std::thread::sleep(Duration::from_millis(WATCHER_STARTUP_MS));
@@ -1520,6 +1536,7 @@ mod tests {
             subrequest_client: praxis_core::subrequest::SubRequestClient::new(
                 praxis_core::subrequest::SubRequestConnector::new(8, None),
             ),
+            log_level: None,
         });
 
         std::thread::sleep(Duration::from_millis(WATCHER_STARTUP_MS));
