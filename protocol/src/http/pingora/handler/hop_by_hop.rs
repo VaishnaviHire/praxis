@@ -70,13 +70,28 @@ pub(crate) fn preserve_for_upgrade(name: &str, is_websocket_upgrade: bool) -> bo
 ///
 /// [RFC 9112 Section 6.1]: https://datatracker.ietf.org/doc/html/rfc9112#section-6.1
 pub(crate) fn declares_chunked_framing(headers: &HeaderMap) -> bool {
+    // Operate on raw bytes, not to_str(): Pingora's detection accepts
+    // obs-text (0x80-0xFF) header bytes, and a value it frames as chunked
+    // must not read as non-chunked here, or the body would be dropped.
     headers
         .get_all(http::header::TRANSFER_ENCODING)
         .iter()
         .next_back()
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.rsplit(',').next())
-        .is_some_and(|token| token.trim().eq_ignore_ascii_case("chunked"))
+        .and_then(|value| value.as_bytes().rsplit(|&b| b == b',').next())
+        .is_some_and(|token| trim_ascii(token).eq_ignore_ascii_case(b"chunked"))
+}
+
+/// Trim ASCII whitespace from both ends of a byte slice.
+fn trim_ascii(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())
+        .map_or(start, |i| i + 1);
+    bytes.get(start..end).unwrap_or(&[])
 }
 
 /// Whether chunked framing must be re-established after hop-by-hop stripping.
@@ -289,6 +304,47 @@ fn is_essential(name: &str) -> bool {
 #[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declares_chunked_framing_matches_plain_and_compound() {
+        let mut plain = HeaderMap::new();
+        plain.insert(
+            http::header::TRANSFER_ENCODING,
+            http::HeaderValue::from_static("chunked"),
+        );
+        assert!(declares_chunked_framing(&plain));
+
+        let mut compound = HeaderMap::new();
+        compound.insert(
+            http::header::TRANSFER_ENCODING,
+            http::HeaderValue::from_static("gzip, chunked"),
+        );
+        assert!(declares_chunked_framing(&compound));
+    }
+
+    #[test]
+    fn declares_chunked_framing_rejects_non_chunked() {
+        let mut gzip = HeaderMap::new();
+        gzip.insert(http::header::TRANSFER_ENCODING, http::HeaderValue::from_static("gzip"));
+        assert!(!declares_chunked_framing(&gzip));
+
+        assert!(!declares_chunked_framing(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn declares_chunked_framing_handles_obs_text_bytes() {
+        // A value with an obs-text byte in an earlier token must still be
+        // detected as chunked, matching Pingora's byte-level framing.
+        let mut obs = HeaderMap::new();
+        obs.insert(
+            http::header::TRANSFER_ENCODING,
+            http::HeaderValue::from_bytes(b"\xa0x, chunked").unwrap(),
+        );
+        assert!(
+            declares_chunked_framing(&obs),
+            "obs-text in an earlier token must not hide the trailing chunked token"
+        );
+    }
 
     #[test]
     fn websocket_lowercase_is_upgrade() {

@@ -109,11 +109,18 @@ pub(crate) fn apply_rewritten_path(req: &mut RequestHeader, ctx: &mut PingoraReq
 ///
 /// Pingora forwards upstream headers after `StreamBuffer` pre-read, so a
 /// body-mutating filter must update `Content-Length` before those headers
-/// are sent to the backend.
+/// are sent to the backend. The pre-read fully dechunks the body, so the
+/// mutated length is authoritative: remove any `Transfer-Encoding` that
+/// hop-by-hop stripping re-established for a chunked inbound request, since
+/// emitting both `Content-Length` and `Transfer-Encoding: chunked` violates
+/// [RFC 9112 Section 6.2] and is the canonical request-smuggling ambiguity.
+///
+/// [RFC 9112 Section 6.2]: https://datatracker.ietf.org/doc/html/rfc9112#section-6.2
 pub(crate) fn apply_mutated_content_length(req: &mut RequestHeader, ctx: &PingoraRequestCtx) {
     let Some(new_len) = ctx.mutated_request_body_len else {
         return;
     };
+    let _remove = req.remove_header(&http::header::TRANSFER_ENCODING);
     let _result = req.insert_header(http::header::CONTENT_LENGTH, new_len.to_string());
 }
 
@@ -782,6 +789,35 @@ mod tests {
         assert_eq!(
             req.headers.get("content-length").and_then(|v| v.to_str().ok()),
             Some("512")
+        );
+    }
+
+    #[test]
+    fn mutated_content_length_strips_restored_chunked_framing() {
+        // A chunked inbound request through a body-mutating StreamBuffer
+        // pipeline: strip_hop_by_hop re-adds Transfer-Encoding, then the
+        // content-length mutation must remove it — emitting both is a
+        // request-smuggling gadget (RFC 9112 §6.2).
+        let mut req = make_request(&[("transfer-encoding", "chunked")]);
+        strip_hop_by_hop(&mut req, false);
+        assert_eq!(
+            req.headers.get("transfer-encoding").unwrap(),
+            "chunked",
+            "framing is restored before the length is known"
+        );
+
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.mutated_request_body_len = Some(42);
+        apply_mutated_content_length(&mut req, &ctx);
+
+        assert!(
+            req.headers.get("transfer-encoding").is_none(),
+            "content-length framing must remove the transfer-encoding header"
+        );
+        assert_eq!(
+            req.headers.get("content-length").and_then(|v| v.to_str().ok()),
+            Some("42"),
+            "the mutated length is authoritative"
         );
     }
 
