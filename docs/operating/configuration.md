@@ -189,10 +189,11 @@ filter_chains:
 ## Listeners
 
 Each listener has a required `name`, an `address`, optional
-`tls`, optional `protocol` (defaults to `http`), and an
-optional list of `filter_chains` to apply. When
-`filter_chains` is omitted it defaults to empty (no filters
-applied).
+`tls`, optional `protocol` (defaults to `http`), and a list
+of `filter_chains` to apply. HTTP listeners require at least
+one filter chain; `filter_chains` may only be omitted on
+`protocol: tcp` listeners that route via `upstream` or
+`cluster` instead.
 
 ```yaml
 listeners:
