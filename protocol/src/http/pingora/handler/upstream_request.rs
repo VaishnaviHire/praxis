@@ -33,6 +33,7 @@ use super::{
 pub(crate) fn strip_hop_by_hop(req: &mut RequestHeader, is_upgrade: bool) {
     let is_ws = is_upgrade && hop_by_hop::has_websocket_upgrade(&req.headers);
     let conn_values = hop_by_hop::snapshot_connection_values(&req.headers);
+    let was_chunked = hop_by_hop::declares_chunked_framing(&req.headers);
 
     for name in REQUEST_HOP_BY_HOP {
         if hop_by_hop::preserve_for_upgrade(name, is_ws) {
@@ -41,6 +42,9 @@ pub(crate) fn strip_hop_by_hop(req: &mut RequestHeader, is_upgrade: bool) {
         let _remove = req.remove_header(*name);
     }
     hop_by_hop::strip_connection_tokens(req, &conn_values, REQUEST_HOP_BY_HOP);
+    if hop_by_hop::should_restore_chunked_framing(&req.headers, was_chunked) {
+        let _insert = req.insert_header(http::header::TRANSFER_ENCODING, "chunked");
+    }
 
     if is_upgrade && !is_ws {
         debug!("stripping non-WebSocket upgrade headers to prevent h2c smuggling");
@@ -155,9 +159,10 @@ mod tests {
             req.headers.get("keep-alive").is_none(),
             "keep-alive header should be stripped"
         );
-        assert!(
-            req.headers.get("transfer-encoding").is_none(),
-            "transfer-encoding header should be stripped"
+        assert_eq!(
+            req.headers.get("transfer-encoding").unwrap(),
+            "chunked",
+            "chunked framing must be re-established for the upstream body writer"
         );
         assert!(
             req.headers.get("upgrade").is_none(),
@@ -688,6 +693,83 @@ mod tests {
             req.headers.get("connection").unwrap(),
             "Upgrade",
             "connection should be preserved for WebSocket upgrades"
+        );
+    }
+
+    #[test]
+    fn chunked_framing_preserved_without_content_length() {
+        let mut req = make_request(&[("transfer-encoding", "chunked"), ("content-type", "text/plain")]);
+
+        strip_hop_by_hop(&mut req, false);
+
+        assert_eq!(
+            req.headers.get("transfer-encoding").unwrap(),
+            "chunked",
+            "chunked request bodies must stay framed for Pingora's upstream writer"
+        );
+    }
+
+    #[test]
+    fn chunked_framing_normalized_from_compound_value() {
+        let mut req = make_request(&[("transfer-encoding", "gzip, chunked")]);
+
+        strip_hop_by_hop(&mut req, false);
+
+        assert_eq!(
+            req.headers.get("transfer-encoding").unwrap(),
+            "chunked",
+            "compound transfer codings ending in chunked are normalized to plain chunked"
+        );
+    }
+
+    #[test]
+    fn non_chunked_transfer_encoding_stripped() {
+        let mut req = make_request(&[("transfer-encoding", "gzip")]);
+
+        strip_hop_by_hop(&mut req, false);
+
+        assert!(
+            req.headers.get("transfer-encoding").is_none(),
+            "non-chunked transfer codings are hop-by-hop and must not be re-added"
+        );
+    }
+
+    #[test]
+    fn chunked_framing_not_restored_over_content_length() {
+        let mut req = make_request(&[("transfer-encoding", "chunked"), ("content-length", "5")]);
+
+        strip_hop_by_hop(&mut req, false);
+
+        assert!(
+            req.headers.get("transfer-encoding").is_none(),
+            "content-length framing wins once transfer-encoding is stripped"
+        );
+        assert_eq!(
+            req.headers.get("content-length").unwrap(),
+            "5",
+            "content-length must survive"
+        );
+    }
+
+    #[test]
+    fn connection_token_cannot_strip_host_or_content_length() {
+        let mut req = make_request(&[
+            ("connection", "host, content-length"),
+            ("host", "backend.internal"),
+            ("content-length", "5"),
+        ]);
+
+        strip_hop_by_hop(&mut req, false);
+
+        assert_eq!(
+            req.headers.get("host").unwrap(),
+            "backend.internal",
+            "Host must not be strippable via a Connection token"
+        );
+        assert_eq!(
+            req.headers.get("content-length").unwrap(),
+            "5",
+            "Content-Length must not be strippable via a Connection token"
         );
     }
 

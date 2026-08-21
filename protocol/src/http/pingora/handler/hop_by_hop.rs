@@ -62,6 +62,39 @@ pub(crate) fn preserve_for_upgrade(name: &str, is_websocket_upgrade: bool) -> bo
     is_websocket_upgrade && (name == "upgrade" || name == "connection")
 }
 
+/// Whether a message's headers declare chunked transfer framing.
+///
+/// Mirrors Pingora's framing detection (`is_chunked_encoding_from_headers`):
+/// the last `Transfer-Encoding` header value's last comma-separated token
+/// must be `chunked` ([RFC 9112 Section 6.1]).
+///
+/// [RFC 9112 Section 6.1]: https://datatracker.ietf.org/doc/html/rfc9112#section-6.1
+pub(crate) fn declares_chunked_framing(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(http::header::TRANSFER_ENCODING)
+        .iter()
+        .next_back()
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.rsplit(',').next())
+        .is_some_and(|token| token.trim().eq_ignore_ascii_case("chunked"))
+}
+
+/// Whether chunked framing must be re-established after hop-by-hop stripping.
+///
+/// `Transfer-Encoding` is nominally hop-by-hop, but it is also the header
+/// Pingora's body writers key on to frame the next hop's body
+/// (`init_body_writer_comm`: chunked beats `Content-Length`; with neither,
+/// requests are framed as zero-length and responses fall back to
+/// close-delimited). Stripping it without re-framing silently drops chunked
+/// request bodies and breaks response keep-alive, so callers re-insert a
+/// normalized `chunked` value whenever the original message declared chunked
+/// framing and no `Content-Length` replaced it. The next hop's writer
+/// re-frames the already-dechunked stream; H2 legs remove the header again
+/// before sending.
+pub(crate) fn should_restore_chunked_framing(headers: &HeaderMap, was_chunked: bool) -> bool {
+    was_chunked && !headers.contains_key(http::header::CONTENT_LENGTH)
+}
+
 /// Whether the `Upgrade` header value indicates a `WebSocket` upgrade.
 ///
 /// Returns `true` only when the value is exactly `websocket`
@@ -119,6 +152,13 @@ pub(crate) fn strip_connection_tokens<R: RemoveHeader>(
                 );
                 continue;
             }
+            if is_essential(trimmed) {
+                debug!(
+                    header = trimmed,
+                    "refusing to strip essential header named in Connection token"
+                );
+                continue;
+            }
             msg.remove_header_by_name(trimmed);
         }
     }
@@ -137,7 +177,10 @@ pub(crate) fn strip_hop_by_hop_header_map(headers: &mut HeaderMap, static_list: 
     for value in connection_values {
         let Ok(value) = value.to_str() else { continue };
         for token in value.split(',').map(str::trim).filter(|token| !token.is_empty()) {
-            if !static_list.iter().any(|name| token.eq_ignore_ascii_case(name)) {
+            if !static_list.iter().any(|name| token.eq_ignore_ascii_case(name))
+                && !is_proxy_owned(token)
+                && !is_essential(token)
+            {
                 headers.remove(token);
             }
         }
@@ -221,6 +264,20 @@ fn is_proxy_owned(name: &str) -> bool {
     name.get(..12).is_some_and(|p| p.eq_ignore_ascii_case("x-forwarded-"))
         || name.eq_ignore_ascii_case("forwarded")
         || praxis_core::reserved_headers::is_reserved(&name.to_ascii_lowercase())
+}
+
+/// Whether a header is essential to message routing or framing and must
+/// never be removed on the say-so of a `Connection` token.
+///
+/// A client sending `Connection: host` would otherwise make Praxis forward
+/// an HTTP/1.1 request with no `Host` header (malformed per [RFC 9112], and
+/// a vhost-selection bypass at the backend); `Connection: content-length`
+/// would erase the framing header, making Pingora forward a zero-length
+/// body. Mainstream proxies ignore Connection tokens naming these headers.
+///
+/// [RFC 9112]: https://datatracker.ietf.org/doc/html/rfc9112#section-3.2
+fn is_essential(name: &str) -> bool {
+    name.eq_ignore_ascii_case("host") || name.eq_ignore_ascii_case("content-length")
 }
 
 // -----------------------------------------------------------------------------
