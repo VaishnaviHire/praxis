@@ -139,15 +139,19 @@ page.
 | [maglev.yaml](configs/traffic-management/maglev.yaml) | Pins a user's requests to one backend by hashing a request header through a Maglev lookup table |
 | [p2c.yaml](configs/traffic-management/p2c.yaml) | Samples two random endpoints and picks the one with fewer in-flight requests |
 | [path-based-routing.yaml](configs/traffic-management/path-based-routing.yaml) | Routes by URL path prefix |
+| [priority-lb.yaml](configs/traffic-management/priority-lb.yaml) | Defines primary and failover endpoint tiers |
 | [random.yaml](configs/traffic-management/random.yaml) | Selects an upstream endpoint at random, weighted by endpoint weight |
 | [rate-limiting.yaml](configs/traffic-management/rate-limiting.yaml) | Token bucket rate limiter with per-IP or global modes |
 | [redirect.yaml](configs/traffic-management/redirect.yaml) | Returns a 3xx redirect without contacting any upstream |
 | [retry-policy.yaml](configs/traffic-management/retry-policy.yaml) | Automatically retries failed upstream requests with exponential backoff and a token-bucket budget to prevent retry storms |
+| [ring-hash.yaml](configs/traffic-management/ring-hash.yaml) | Routes requests to a stable backend by hashing a configurable request header through a sorted virtual-node ring |
 | [round-robin.yaml](configs/traffic-management/round-robin.yaml) | Default strategy |
 | [session-affinity.yaml](configs/traffic-management/session-affinity.yaml) | Hashes a request header to pin a user's requests to one backend |
 | [static-response.yaml](configs/traffic-management/static-response.yaml) | Returns a fixed response without contacting any upstream |
+| [subset-lb.yaml](configs/traffic-management/subset-lb.yaml) | Filters endpoints by metadata labels and applies an inner strategy within the matching subset |
 | [timeout.yaml](configs/traffic-management/timeout.yaml) | Returns 504 if the upstream takes longer than timeout_ms to respond |
 | [weighted-load-balancing.yaml](configs/traffic-management/weighted-load-balancing.yaml) | Traffic split proportional to per-endpoint weights |
+| [zone-aware.yaml](configs/traffic-management/zone-aware.yaml) | Prefers same-zone endpoints to reduce cross-zone network costs and latency |
 
 ### Transformation
 

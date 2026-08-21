@@ -258,6 +258,9 @@ async fn weighted_endpoints_expand_proportionally() {
             Endpoint::Weighted {
                 address: "10.0.0.2:80".into(),
                 weight: 3,
+                metadata: HashMap::default(),
+                zone: None,
+                priority: 0,
             },
         ],
     );
@@ -381,10 +384,16 @@ fn build_cluster_entry_preserves_weights_via_distribution() {
             Endpoint::Weighted {
                 address: "10.0.0.1:80".into(),
                 weight: 5,
+                metadata: HashMap::default(),
+                zone: None,
+                priority: 0,
             },
             Endpoint::Weighted {
                 address: "10.0.0.2:80".into(),
                 weight: 3,
+                metadata: HashMap::default(),
+                zone: None,
+                priority: 0,
             },
         ],
     );
@@ -448,11 +457,7 @@ fn build_cluster_entry_unreadable_tls_material_fails_closed() {
 
 #[test]
 fn build_strategy_round_robin() {
-    let endpoints = vec![WeightedEndpoint {
-        address: Arc::from("10.0.0.1:80"),
-        weight: 1,
-        index: 0,
-    }];
+    let endpoints = vec![WeightedEndpoint::simple(Arc::from("10.0.0.1:80"), 0, 1)];
     let strategy = build_strategy(&LoadBalancerStrategy::Simple(SimpleStrategy::RoundRobin), endpoints);
     assert!(
         matches!(strategy.inner(), SharedStrategy::RoundRobin(_)),
@@ -462,11 +467,7 @@ fn build_strategy_round_robin() {
 
 #[test]
 fn build_strategy_least_connections() {
-    let endpoints = vec![WeightedEndpoint {
-        address: Arc::from("10.0.0.1:80"),
-        weight: 1,
-        index: 0,
-    }];
+    let endpoints = vec![WeightedEndpoint::simple(Arc::from("10.0.0.1:80"), 0, 1)];
     let strategy = build_strategy(
         &LoadBalancerStrategy::Simple(SimpleStrategy::LeastConnections),
         endpoints,
@@ -479,11 +480,7 @@ fn build_strategy_least_connections() {
 
 #[test]
 fn build_strategy_consistent_hash() {
-    let endpoints = vec![WeightedEndpoint {
-        address: Arc::from("10.0.0.1:80"),
-        weight: 1,
-        index: 0,
-    }];
+    let endpoints = vec![WeightedEndpoint::simple(Arc::from("10.0.0.1:80"), 0, 1)];
     let strategy = build_strategy(
         &LoadBalancerStrategy::Parameterised(ParameterisedStrategy::ConsistentHash(ConsistentHashOpts {
             header: None,

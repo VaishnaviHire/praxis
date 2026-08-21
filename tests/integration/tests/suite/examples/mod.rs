@@ -47,16 +47,19 @@ mod pipeline;
 mod policy;
 #[cfg(feature = "policy-engine")]
 mod policy_http;
+mod priority_lb;
 mod protocol_examples;
 mod protocols;
 mod random;
 mod redirect;
 mod retry_policy;
+mod ring_hash;
 mod round_robin;
 mod security_examples;
 mod session_affinity;
 mod static_response;
 mod stream_buffer;
+mod subset_lb;
 mod timeout;
 mod trace_context;
 #[cfg(feature = "otel")]
@@ -66,3 +69,4 @@ mod url_rewriting;
 mod virtual_hosts;
 mod websocket;
 mod weighted_load_balancing;
+mod zone_aware;

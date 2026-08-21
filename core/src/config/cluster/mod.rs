@@ -13,7 +13,8 @@ use std::sync::Arc;
 pub use endpoint::Endpoint;
 pub use health_check::{HealthCheckConfig, HealthCheckType};
 pub use load_balancer_strategy::{
-    ConsistentHashOpts, LoadBalancerStrategy, MaglevOpts, ParameterisedStrategy, SimpleStrategy,
+    ConsistentHashOpts, HashFunction, LoadBalancerStrategy, MaglevOpts, ParameterisedStrategy, PriorityOpts,
+    RingHashOpts, SimpleStrategy, SubsetFallbackPolicy, SubsetOpts, ZoneAwareOpts,
 };
 pub use retry_policy::{
     BackoffConfig, BudgetPercent, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BODY_LIMIT_BYTES, HttpStatusCode,

@@ -345,11 +345,7 @@ mod tests {
 
     /// Build a [`WeightedEndpoint`] for testing.
     fn ep(addr: &str, weight: u32, index: usize) -> WeightedEndpoint {
-        WeightedEndpoint {
-            address: Arc::from(addr),
-            weight,
-            index,
-        }
+        WeightedEndpoint::simple(Arc::from(addr), index, weight)
     }
 
     /// Build a [`ClusterHealthState`] with `n` healthy endpoints.

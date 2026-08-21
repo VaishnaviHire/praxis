@@ -39,9 +39,9 @@ pub use branch_chain::{BranchChainConfig, BranchCondition};
 pub use chain_ref::ChainRef;
 pub use cluster::{
     BackoffConfig, BudgetPercent, Cluster, ConsistentHashOpts, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BODY_LIMIT_BYTES,
-    Endpoint, HealthCheckConfig, HealthCheckType, HttpStatusCode, LoadBalancerStrategy, MAX_RETRY_BODY_LIMIT_BYTES,
-    MaglevOpts, ParameterisedStrategy, RetriableCondition, RetryBodyLimit, RetryBudgetConfig, RetryPolicy,
-    SimpleStrategy,
+    Endpoint, HashFunction, HealthCheckConfig, HealthCheckType, HttpStatusCode, LoadBalancerStrategy,
+    MAX_RETRY_BODY_LIMIT_BYTES, MaglevOpts, ParameterisedStrategy, PriorityOpts, RetriableCondition, RetryBodyLimit,
+    RetryBudgetConfig, RetryPolicy, RingHashOpts, SimpleStrategy, SubsetFallbackPolicy, SubsetOpts, ZoneAwareOpts,
 };
 pub use condition::{Condition, ConditionMatch, ResponseCondition, ResponseConditionMatch};
 pub use filters::{FailureMode, FilterChainConfig, FilterEntry};

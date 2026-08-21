@@ -5,6 +5,7 @@
 
 mod endpoints;
 mod health_check;
+mod load_balancer;
 mod timeouts;
 mod tls;
 
@@ -58,6 +59,7 @@ pub(in crate::config::validate) fn validate_clusters(
         tls::validate_tls_settings(cluster, insecure_options)?;
         timeouts::validate_timeouts(cluster)?;
         validate_cluster_max_connections(cluster)?;
+        load_balancer::validate_lb_strategy(cluster)?;
         if let Some(hc) = &cluster.health_check {
             health_check::validate_health_check(hc, &cluster.name)?;
         }

@@ -23,6 +23,9 @@ If all endpoints are unhealthy, the filter enters panic mode and routes to all e
 | `clusters[].endpoints` | (string \| object)[] | yes | List of endpoints for the cluster. Each entry is either a plain `"host:port"` string or a `{ address, weight }` object. |
 | `clusters[].endpoints[].address` | string | yes | Socket address as `host:port`. |
 | `clusters[].endpoints[].weight` | integer | no | Relative forwarding weight. Higher values receive proportionally more traffic. Defaults to 1. |
+| `clusters[].endpoints[].metadata` | object<string, string> | no | Arbitrary key-value metadata for subset-based load balancing. |
+| `clusters[].endpoints[].priority` | integer | no | Priority tier (0 = primary, 1 = first failover, etc.). |
+| `clusters[].endpoints[].zone` | string | no | Locality zone identifier for zone-aware routing. |
 | `clusters[].health_check` | HealthCheckConfig | no | Active health check configuration for this cluster. |
 | `clusters[].health_check.type` | `http` \| `tcp` \| `grpc` | yes | Probe type: [`Http`], [`Tcp`], or [`Grpc`]. |
 | `clusters[].health_check.expected_status` | integer | no | Expected HTTP status code for a healthy response. |
@@ -34,7 +37,7 @@ If all endpoints are unhealthy, the filter enters panic mode and routes to all e
 | `clusters[].health_check.timeout_ms` | integer | no | Probe timeout in milliseconds. Must be less than `interval_ms`. |
 | `clusters[].health_check.unhealthy_threshold` | integer | no | Consecutive failures required to mark an endpoint unhealthy. |
 | `clusters[].idle_timeout_ms` | integer | no | Idle connection timeout in milliseconds. Closes pooled upstream connections that have been idle longer than this duration. `None` uses Pingora's default. |
-| `clusters[].load_balancer_strategy` | `round_robin` \| `least_connections` \| `p2c` \| `random` \| `consistent_hash` \| `maglev` | no | Load-balancing algorithm for this cluster. Defaults to `round_robin`. |
+| `clusters[].load_balancer_strategy` | `round_robin` \| `least_connections` \| `p2c` \| `random` \| `consistent_hash` \| `maglev` \| `ring_hash` \| `subset` \| `zone_aware` \| `priority` | no | Load-balancing algorithm for this cluster. Defaults to `round_robin`. |
 | `clusters[].max_connections` | integer | no | Maximum concurrent in-flight requests to this cluster. When set, excess requests receive 503. Prevents a single slow upstream from consuming all available capacity. |
 | `clusters[].read_timeout_ms` | integer | no | Per-read timeout in milliseconds. Applies to each individual read operation on an established upstream connection. A timeout fires a 502 response to the client. Use [`total_connection_timeout_ms`] to bound the entire exchange instead. |
 | `clusters[].tls` | ClusterTls | no | TLS settings for upstream connections. Presence implies TLS is enabled. Omit for plaintext HTTP. |
