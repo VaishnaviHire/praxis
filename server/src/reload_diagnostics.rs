@@ -22,6 +22,7 @@ pub(crate) fn log_restart_required_changes(old: &Config, new: &Config) {
     detect_subrequest_circuit_breaker_change(old, new);
     detect_startup_only_runtime_changes(old, new);
     detect_admin_changes(old, new);
+    detect_logging_change(old, new);
 }
 
 /// Detect listener additions, removals, and address rebinds.
@@ -237,6 +238,13 @@ fn detect_admin_changes(old: &Config, new: &Config) {
             new_address = ?new.admin.address,
             "admin configuration changed; requires restart (admin endpoint binds at startup)"
         );
+    }
+}
+
+/// Detect `runtime.logging` changes that require a restart.
+fn detect_logging_change(old: &Config, new: &Config) {
+    if old.runtime.logging != new.runtime.logging {
+        warn!("runtime.logging changed; requires restart (subscriber init is once-per-process)");
     }
 }
 
@@ -675,5 +683,18 @@ mod tests {
         let config = config_with_circuit_breaker(None);
         let warnings = capture_warnings(|| detect_subrequest_circuit_breaker_change(&config, &config));
         assert!(warnings.is_empty(), "both-none should produce no warnings");
+    }
+
+    #[test]
+    fn logging_change_warns() {
+        let old = config_with_circuit_breaker(None);
+        let mut new = old.clone();
+        new.runtime.logging.output = praxis_core::config::LogOutput::Stderr;
+        let warnings = capture_warnings(|| detect_logging_change(&old, &new));
+        assert_eq!(warnings.len(), 1, "logging change should warn once");
+        assert!(
+            warnings[0].contains("runtime.logging"),
+            "warning should mention logging"
+        );
     }
 }

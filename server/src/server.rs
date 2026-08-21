@@ -26,8 +26,21 @@ use crate::startup_checks::insecure_warn;
 use crate::startup_checks::warn_experimental_features;
 use crate::{
     pipelines::resolve_pipelines,
-    startup_checks::{enforce_root_check, warn_insecure_key_permissions, warn_insecure_options},
+    startup_checks::{
+        enforce_root_check, warn_insecure_key_permissions, warn_insecure_log_file_permissions, warn_insecure_options,
+    },
 };
+
+/// Root, insecure-option, and file-permission checks before the server starts.
+fn run_startup_security_checks(config: &Config) {
+    #[cfg(feature = "experimental")]
+    warn_experimental_features();
+    enforce_root_check(config);
+    warn_insecure_options(config);
+    init_runtime_limits(&config.runtime);
+    warn_insecure_key_permissions(config);
+    warn_insecure_log_file_permissions(config);
+}
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -93,12 +106,7 @@ pub fn run_server(config: Config, config_path: Option<PathBuf>) -> ! {
 #[expect(clippy::allow_attributes, reason = "lint is platform/config-dependent")]
 #[allow(clippy::needless_pass_by_value, reason = "server owns config")]
 pub fn run_server_with_registry(config: Config, registry: FilterRegistry, config_path: Option<PathBuf>) -> ! {
-    #[cfg(feature = "experimental")]
-    warn_experimental_features();
-    enforce_root_check(&config);
-    warn_insecure_options(&config);
-    init_runtime_limits(&config.runtime);
-    warn_insecure_key_permissions(&config);
+    run_startup_security_checks(&config);
 
     // Install before pipelines and health checks emit startup metrics. The same
     // handle is later shared by `/metrics` and the managed upkeep service.

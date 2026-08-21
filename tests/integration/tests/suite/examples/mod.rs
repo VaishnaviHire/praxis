@@ -48,6 +48,7 @@ mod policy;
 #[cfg(feature = "policy-engine")]
 mod policy_http;
 mod priority_lb;
+mod process_logging;
 mod protocol_examples;
 mod protocols;
 mod random;
