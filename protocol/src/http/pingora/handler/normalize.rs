@@ -42,6 +42,7 @@ const OBS_FOLD_REJECT_HEADERS: &[http::header::HeaderName] = &[http::header::HOS
 ///
 /// Returns `Some(rejection)` if the request is invalid:
 /// - Conflicting duplicate `Content-Length` or `Content-Type` values
+/// - Both `Content-Length` and `Transfer-Encoding` present ([RFC 9112 Section 6.2])
 /// - Obs-fold on `Host` or `Content-Length` headers
 ///
 /// On success, obs-fold sequences in non-sensitive headers are replaced
@@ -56,8 +57,12 @@ const OBS_FOLD_REJECT_HEADERS: &[http::header::HeaderName] = &[http::header::HOS
 /// ```
 ///
 /// [RFC 9112 Section 5.2]: https://datatracker.ietf.org/doc/html/rfc9112#section-5.2
+/// [RFC 9112 Section 6.2]: https://datatracker.ietf.org/doc/html/rfc9112#section-6.2
 pub(in crate::http) fn normalize_request_headers(session: &mut Session) -> Option<Rejection> {
     if let Some(r) = reject_conflicting_single_value_headers(session) {
+        return Some(r);
+    }
+    if let Some(r) = reject_dual_content_length_transfer_encoding(session) {
         return Some(r);
     }
     if let Some(r) = handle_obs_fold(session) {
@@ -95,6 +100,29 @@ fn reject_conflicting_single_value_headers(session: &mut Session) -> Option<Reje
         let _insert = session.req_header_mut().insert_header(header_name.clone(), canonical);
     }
 
+    None
+}
+
+// -----------------------------------------------------------------------------
+// Dual Content-Length / Transfer-Encoding (RFC 9112 Section 6.2)
+// -----------------------------------------------------------------------------
+
+/// Reject requests that carry both `Content-Length` and
+/// `Transfer-Encoding`.
+///
+/// [RFC 9112 Section 6.2] requires a proxy to reject such messages
+/// or strip `Content-Length` before forwarding. The combination is
+/// the canonical request-smuggling ambiguity: the proxy reads the
+/// body per `Transfer-Encoding` while a backend may read per
+/// `Content-Length`, enabling CL/TE desync attacks.
+///
+/// [RFC 9112 Section 6.2]: https://datatracker.ietf.org/doc/html/rfc9112#section-6.2
+fn reject_dual_content_length_transfer_encoding(session: &Session) -> Option<Rejection> {
+    let headers = &session.req_header().headers;
+    if headers.contains_key(http::header::CONTENT_LENGTH) && headers.contains_key(http::header::TRANSFER_ENCODING) {
+        debug!("rejecting request with both Content-Length and Transfer-Encoding");
+        return Some(Rejection::status(400));
+    }
     None
 }
 
@@ -393,6 +421,27 @@ mod tests {
             rejection.is_some_and(|r| r.status == 400),
             "conflicting duplicates must reject with 400"
         );
+    }
+
+    #[tokio::test]
+    async fn dual_content_length_and_transfer_encoding_is_rejected() {
+        let (mut session, _client) = session_for("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello").await;
+        session
+            .req_header_mut()
+            .insert_header("transfer-encoding", "chunked")
+            .unwrap();
+        let rejection = normalize_request_headers(&mut session);
+        assert!(
+            rejection.is_some_and(|r| r.status == 400),
+            "requests with both Content-Length and Transfer-Encoding must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn content_length_alone_passes_normalization() {
+        let (mut session, _client) = session_for("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello").await;
+        let rejection = normalize_request_headers(&mut session);
+        assert!(rejection.is_none(), "Content-Length alone must pass");
     }
 
     #[tokio::test]
