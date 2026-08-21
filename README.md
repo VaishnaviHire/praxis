@@ -50,7 +50,7 @@ For larger changes, open a [discussion] and follow the
 [proposal process].
 
 We have a Slack channel for the project on [CNCF Slack],
-plase join us in the [#praxis] channel there.
+please join us in the [#praxis] channel there.
 
 All participants are expected to follow the
 [Code of Conduct](CODE_OF_CONDUCT.md).
