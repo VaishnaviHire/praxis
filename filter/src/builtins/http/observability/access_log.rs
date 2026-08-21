@@ -149,16 +149,64 @@ pub fn mark_access_record_emitted(ctx: &mut HttpFilterContext<'_>) {
     ctx.extensions.insert(AccessRecordEmitted);
 }
 
+/// Extract `trace_id` and `span_id` from the `OpenTelemetry` context
+/// attached to the current tracing span.
+///
+/// Returns `None` when no `OTel` layer is active or the span context
+/// is invalid (e.g. tracing is not configured with OTLP export).
+#[cfg(feature = "otel")]
+fn extract_otel_ids() -> Option<(String, String)> {
+    use opentelemetry::trace::TraceContextExt as _;
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+
+    let span = tracing::Span::current();
+    let otel_ctx = span.context();
+    let span_ref = otel_ctx.span();
+    let span_context = span_ref.span_context();
+
+    span_context
+        .is_valid()
+        .then(|| (span_context.trace_id().to_string(), span_context.span_id().to_string()))
+}
+
 /// Emit a structured access log record for the current request.
+///
+/// When the `otel` feature is enabled and a valid `OpenTelemetry` context
+/// is attached to the current tracing span, the entry includes `trace_id`
+/// (32-char hex, W3C format) and `span_id` (16-char hex) fields for
+/// correlation with OTLP-exported traces. The fields are omitted when
+/// no `OTel` context is available.
 ///
 /// Shared by [`AccessLogFilter`]'s completion hooks and the protocol
 /// layer's fallback for requests whose lifecycle ended before those
 /// hooks could run (pre-upstream rejections, upstream failures, and
 /// streamed responses aborted mid-body). Fallback records bypass the
 /// filter's sampling: incomplete requests are always worth a record.
+#[expect(clippy::too_many_lines, reason = "dual info! paths for optional OTel trace fields")]
 pub fn emit_access_record(ctx: &HttpFilterContext<'_>, status: u16) {
     let path = sanitize_for_log(ctx.request.uri.path());
     let client_ip = ctx.client_addr.map(|a| a.to_string()).unwrap_or_default();
+
+    #[cfg(feature = "otel")]
+    if let Some((trace_id, span_id)) = extract_otel_ids() {
+        info!(
+            method = %ctx.request.method,
+            path = %path,
+            client_ip = %client_ip,
+            cluster = ctx.cluster_name().unwrap_or("-"),
+            duration_ms = truncate_u128(ctx.request_start.elapsed().as_millis()),
+            request_body_bytes = ctx.request_body_bytes,
+            request_id = ctx.request_id().unwrap_or("-"),
+            response_body_bytes = ctx.response_body_bytes,
+            span_id = %span_id,
+            status,
+            trace_id = %trace_id,
+            upstream = ctx.upstream_addr().unwrap_or("-"),
+            "access"
+        );
+        return;
+    }
+
     info!(
         method = %ctx.request.method,
         path = %path,
@@ -172,6 +220,7 @@ pub fn emit_access_record(ctx: &HttpFilterContext<'_>, status: u16) {
         response_body_bytes = ctx.response_body_bytes,
         "access"
     );
+}
 }
 
 #[async_trait]
@@ -687,6 +736,75 @@ mod tests {
             mapped.to_string(),
             "::ffff:10.0.0.1",
             "un-normalized mapped address keeps ::ffff: prefix in Display"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // OTel Trace ID Correlation
+    // -------------------------------------------------------------------------
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn extract_otel_ids_returns_none_without_otel_subscriber() {
+        let span = tracing::info_span!("test_no_otel");
+        let _guard = span.enter();
+        assert!(
+            extract_otel_ids().is_none(),
+            "extract_otel_ids should return None without an OTel subscriber"
+        );
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn extract_otel_ids_returns_none_with_no_active_span() {
+        assert!(
+            extract_otel_ids().is_none(),
+            "extract_otel_ids should return None when no span is active"
+        );
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn extract_otel_ids_returns_ids_with_active_otel_span() {
+        use opentelemetry::trace::TracerProvider as _;
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
+        let tracer = provider.tracer("test");
+        let layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let span = tracing::info_span!("test_span");
+        let _entered = span.enter();
+
+        let (trace_id, span_id) =
+            AccessLogFilter::extract_otel_ids().expect("ids should be present with an active OTel span");
+        assert_eq!(trace_id.len(), 32, "trace_id must be 32 hex chars, got {trace_id}");
+        assert_ne!(trace_id, "0".repeat(32), "trace_id must not be all-zero");
+        assert_eq!(span_id.len(), 16, "span_id must be 16 hex chars, got {span_id}");
+        assert_ne!(span_id, "0".repeat(16), "span_id must not be all-zero");
+    }
+
+    #[cfg(feature = "otel")]
+    #[tokio::test]
+    async fn emit_access_log_continues_without_otel_context() {
+        let filter = AccessLogFilter {
+            sample_every: 1,
+            counter: AtomicU64::default(),
+        };
+        let req = crate::test_utils::make_request(http::Method::GET, "/");
+        let mut ctx = crate::test_utils::make_filter_context(&req);
+        ctx.current_filter_id = Some(42);
+        let mut resp = crate::context::Response {
+            headers: http::HeaderMap::new(),
+            status: http::StatusCode::OK,
+        };
+        ctx.response_header = Some(&mut resp);
+        let action = filter.on_response(&mut ctx).await.unwrap();
+        assert!(
+            matches!(action, FilterAction::Continue),
+            "on_response should continue without OTel context"
         );
     }
 }
