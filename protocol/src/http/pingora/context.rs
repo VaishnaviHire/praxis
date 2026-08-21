@@ -251,6 +251,11 @@ pub struct PingoraRequestCtx {
     /// `logging()` hook when errors bypass `response_filter`.
     pub response_phase_done: bool,
 
+    /// Rejection raised during the response phase, carried across the
+    /// Pingora error boundary so `fail_to_proxy` can deliver its full
+    /// configured headers and body instead of a bare status envelope.
+    pub pending_rejection: Option<praxis_filter::Rejection>,
+
     /// Whether the response was delivered to completion: a bodyless
     /// response finished its response phase, or the response body
     /// reached end-of-stream. When still `false` in the `logging()`
@@ -538,6 +543,7 @@ impl Default for PingoraRequestCtx {
             upstream_response_status: None,
             response_phase_done: false,
             response_delivery_complete: false,
+            pending_rejection: None,
             retries: 0,
             rewritten_path: None,
             selected_endpoint_index: None,

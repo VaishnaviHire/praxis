@@ -92,7 +92,7 @@ pub(super) async fn execute(
             status: resp.status,
         });
     }
-    handle_response_result(result, upstream_response, resp, headers_modified)
+    handle_response_result(result, upstream_response, resp, headers_modified, ctx)
 }
 
 /// Run the response pipeline and capture the result plus header-modified flag.
@@ -165,6 +165,7 @@ fn handle_response_result(
     upstream_response: &mut pingora_http::ResponseHeader,
     mut resp: praxis_filter::Response,
     headers_modified: bool,
+    ctx: &mut PingoraRequestCtx,
 ) -> Result<()> {
     match result {
         Ok(
@@ -179,8 +180,12 @@ fn handle_response_result(
         },
         Ok(FilterAction::Reject(rejection)) => {
             warn!(status = rejection.status, "filter rejected response");
+            let status = rejection.status;
+            // Carry the full rejection across the error boundary so
+            // fail_to_proxy can deliver its configured headers and body.
+            ctx.pending_rejection = Some(rejection);
             Err(pingora_core::Error::explain(
-                pingora_core::ErrorType::HTTPStatus(rejection.status),
+                pingora_core::ErrorType::HTTPStatus(status),
                 "response rejected by filter pipeline",
             ))
         },
@@ -586,7 +591,14 @@ mod tests {
             status: http::StatusCode::IM_A_TEAPOT,
         };
 
-        handle_response_result(Ok(FilterAction::Continue), &mut upstream, resp, false).unwrap();
+        handle_response_result(
+            Ok(FilterAction::Continue),
+            &mut upstream,
+            resp,
+            false,
+            &mut PingoraRequestCtx::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             upstream.status, 418,
@@ -609,7 +621,14 @@ mod tests {
             status: http::StatusCode::OK,
         };
 
-        handle_response_result(Ok(FilterAction::Continue), &mut upstream, resp, true).unwrap();
+        handle_response_result(
+            Ok(FilterAction::Continue),
+            &mut upstream,
+            resp,
+            true,
+            &mut PingoraRequestCtx::default(),
+        )
+        .unwrap();
 
         // Serialising exercises the name-map zip that aborts on desync.
         let mut buf = bytes::BytesMut::new();
@@ -630,7 +649,14 @@ mod tests {
             status: http::StatusCode::OK,
         };
 
-        handle_response_result(Ok(FilterAction::Continue), &mut upstream, resp, true).unwrap();
+        handle_response_result(
+            Ok(FilterAction::Continue),
+            &mut upstream,
+            resp,
+            true,
+            &mut PingoraRequestCtx::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             upstream.get_reason_phrase(),

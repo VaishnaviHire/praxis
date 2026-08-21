@@ -84,7 +84,10 @@ impl FilterPipeline {
                 run_request_filter(http_filter, ctx, pf.failure_mode, self.record_filter_duration_metrics).await;
             ctx.current_filter_id = None;
             match outcome? {
-                HeaderFilterOutcome::Rejected(r) => return Ok(FilterAction::Reject(r)),
+                HeaderFilterOutcome::Rejected(r) => {
+                    ctx.executed_filter_indices[idx] = true;
+                    return Ok(FilterAction::Reject(r));
+                },
                 HeaderFilterOutcome::TerminalResponse(terminal) => {
                     ctx.executed_filter_indices[idx] = true;
                     return Ok(FilterAction::TerminalResponse(Box::new(terminal)));

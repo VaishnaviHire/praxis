@@ -13,7 +13,9 @@ use praxis_filter::{
     BodyAccess, BodyMode, FilterAction, FilterError, FilterFactory, FilterRegistry, HttpFilter, HttpFilterContext,
     Rejection,
 };
-use praxis_test_utils::{Backend, free_port, http_get, start_full_proxy_with_registry};
+use praxis_test_utils::{
+    Backend, free_port, http_get, http_send, parse_body, parse_header, parse_status, start_full_proxy_with_registry,
+};
 
 // ---------------------------------------------------------------------------
 // Custom filters
@@ -47,6 +49,28 @@ impl HttpFilter for RejectResponseBodyFilter {
         } else {
             Ok(FilterAction::Continue)
         }
+    }
+}
+
+/// Response-phase filter that rejects with configured headers and body.
+struct HeaderRejectResponseFilter;
+
+#[async_trait::async_trait]
+impl HttpFilter for HeaderRejectResponseFilter {
+    fn name(&self) -> &'static str {
+        "test_reject_response_phase"
+    }
+
+    async fn on_request(&self, _ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
+        Ok(FilterAction::Continue)
+    }
+
+    async fn on_response(&self, _ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
+        Ok(FilterAction::Reject(
+            Rejection::status(429)
+                .with_header("Retry-After", "7")
+                .with_body("slow down"),
+        ))
     }
 }
 
@@ -140,6 +164,11 @@ fn registry() -> FilterRegistry {
     )
     .unwrap();
     reg.register(
+        "test_reject_response_phase",
+        FilterFactory::Http(Arc::new(|_| Ok(Box::new(HeaderRejectResponseFilter)))),
+    )
+    .unwrap();
+    reg.register(
         "test_tiny_buffer_response",
         FilterFactory::Http(Arc::new(|_| Ok(Box::new(TinyBufferResponseFilter)))),
     )
@@ -206,6 +235,33 @@ fn response_body_rejection_does_not_deliver_body() {
 }
 
 #[test]
+fn response_phase_rejection_delivers_headers_and_body() {
+    let backend_port = Backend::fixed("upstream-content").start();
+    let proxy_port = free_port();
+    let config = Config::from_yaml(&proxy_yaml(proxy_port, backend_port, "test_reject_response_phase")).unwrap();
+    let reg = registry();
+    let _proxy = start_full_proxy_with_registry(&config, &reg);
+
+    let raw = http_send(
+        &format!("127.0.0.1:{proxy_port}"),
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+
+    assert_eq!(parse_status(&raw), 429, "rejection status must reach the client");
+    assert_eq!(
+        parse_header(&raw, "Retry-After").as_deref(),
+        Some("7"),
+        "rejection headers must survive the response-phase error boundary: {raw}"
+    );
+    let body = parse_body(&raw);
+    assert_eq!(body, "slow down", "rejection body must reach the client");
+    assert!(
+        !raw.contains("upstream-content"),
+        "rejected upstream content must not leak: {raw}"
+    );
+}
+
+#[test]
 fn response_body_filter_error_does_not_deliver_body() {
     let backend_port = Backend::fixed("confidential-payload").start();
     let proxy_port = free_port();
@@ -244,7 +300,7 @@ fn request_body_filter_error_rejects_request() {
     let reg = registry();
     let _proxy = start_full_proxy_with_registry(&config, &reg);
 
-    let raw = praxis_test_utils::http_send(
+    let raw = http_send(
         &format!("127.0.0.1:{proxy_port}"),
         "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbody",
     );

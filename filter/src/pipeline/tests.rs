@@ -491,6 +491,21 @@ async fn no_conditions_always_executes() {
     );
 }
 
+#[tokio::test]
+async fn rejecting_filter_is_marked_executed() {
+    let pipeline = make_pipeline(vec![Box::new(PassthroughFilter), Box::new(RejectFilter)]);
+    let req = crate::test_utils::make_request(Method::GET, "/");
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+
+    let action = pipeline.execute_http_request(&mut ctx).await.unwrap();
+
+    assert!(matches!(action, FilterAction::Reject(_)), "pipeline should reject");
+    assert!(
+        ctx.executed_filter_indices[1],
+        "the rejecting filter ran and must participate in response-phase cleanup"
+    );
+}
+
 #[test]
 fn body_capabilities_none_when_no_body_filters() {
     let pipeline = make_pipeline(vec![Box::new(RejectFilter)]);

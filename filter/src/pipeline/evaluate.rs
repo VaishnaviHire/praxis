@@ -85,7 +85,11 @@ async fn evaluate_branches_inner(
         match &branch.rejoin {
             RejoinTarget::Next => {},
             RejoinTarget::Terminal => return Ok(BranchOutcome::Terminal),
-            RejoinTarget::SkipTo(target) => return Ok(BranchOutcome::SkipTo(*target)),
+            RejoinTarget::SkipTo(target) => {
+                retain_filter_results(ctx);
+                ctx.filter_results.clear();
+                return Ok(BranchOutcome::SkipTo(*target));
+            },
             RejoinTarget::ReEnter(target) => {
                 retain_filter_results(ctx);
                 ctx.filter_results.clear();
@@ -189,6 +193,11 @@ async fn execute_branch_filters(
 /// discarded** because they reference indices in the parent
 /// pipeline, which the nested branch has no authority to control.
 /// Only `Terminal` and `Reject` propagate upward.
+///
+/// A nested `terminal`/`client` rejoin whose sub-chain produced no
+/// response fails closed with a 500, matching the top-level pipeline:
+/// "stop; respond to client" must never degrade into continuing the
+/// pipeline with the remaining filters skipped.
 async fn dispatch_nested_outcome(
     branches: &[ResolvedBranch],
     ctx: &mut HttpFilterContext<'_>,
@@ -210,7 +219,10 @@ async fn dispatch_nested_outcome(
             );
             Ok(None)
         },
-        BranchOutcome::Terminal => Ok(Some(FilterAction::Continue)),
+        BranchOutcome::Terminal => {
+            warn!("nested terminal branch produced no response; failing closed with 500");
+            Ok(Some(FilterAction::Reject(crate::actions::Rejection::status(500))))
+        },
         BranchOutcome::Reject(r) => Ok(Some(FilterAction::Reject(r))),
         BranchOutcome::TerminalResponse(t) => Ok(Some(FilterAction::TerminalResponse(t))),
         BranchOutcome::StreamingTerminalResponse(t) => Ok(Some(FilterAction::StreamingTerminalResponse(t))),
@@ -370,6 +382,24 @@ mod tests {
         assert!(
             matches!(outcome, BranchOutcome::SkipTo(5)),
             "SkipTo branch should advance to target index 5"
+        );
+    }
+
+    #[tokio::test]
+    async fn skip_to_clears_filter_results() {
+        let branches = vec![make_branch("skip", None, RejoinTarget::SkipTo(5), None, vec![])];
+        let req = crate::test_utils::make_request(Method::GET, "/");
+        let mut ctx = crate::test_utils::make_filter_context(&req);
+        let mut rs = FilterResultSet::new();
+        rs.set("status", "hit").unwrap();
+        ctx.filter_results.insert("cache", rs);
+
+        let outcome = evaluate_branches(&branches, &mut ctx).await.unwrap();
+
+        assert!(matches!(outcome, BranchOutcome::SkipTo(5)), "branch should skip");
+        assert!(
+            ctx.filter_results.is_empty(),
+            "SkipTo must clear ephemeral results like every other outcome"
         );
     }
 
@@ -562,8 +592,8 @@ mod tests {
         let mut ctx = crate::test_utils::make_filter_context(&req);
         let outcome = evaluate_branches(&outer_branches, &mut ctx).await.unwrap();
         assert!(
-            matches!(outcome, BranchOutcome::Continue),
-            "nested terminal should stop the branch but outer continues with Next rejoin"
+            matches!(&outcome, BranchOutcome::Reject(r) if r.status == 500),
+            "nested terminal with no response must fail closed, not continue the pipeline"
         );
     }
 
