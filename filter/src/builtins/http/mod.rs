@@ -12,8 +12,8 @@ mod transformation;
 pub mod value_safety;
 
 pub use observability::{
-    AccessLogFilter, RequestIdFilter, access_record_already_emitted, bodyless_response, emit_access_record,
-    mark_access_record_emitted,
+    AccessLogFilter, RequestIdFilter, TraceContextFilter, access_record_already_emitted, bodyless_response,
+    emit_access_record, mark_access_record_emitted,
 };
 pub use payload_processing::{CompressionFilter, JsonBodyFieldFilter, JsonRpcFilter};
 #[cfg(feature = "basic-auth-filter")]
