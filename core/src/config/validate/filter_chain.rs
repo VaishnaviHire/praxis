@@ -182,13 +182,14 @@ fn validate_chain_cardinality(chains: &[FilterChainConfig]) -> Result<(), ProxyE
     Ok(())
 }
 
-/// Reject empty or duplicate chain names.
+/// Reject empty, invalid-character, or duplicate chain names.
 fn validate_chain_names(chains: &[FilterChainConfig]) -> Result<(), ProxyError> {
     let mut seen = HashSet::new();
     for chain in chains {
         if chain.name.is_empty() {
             return Err(ProxyError::Config("filter chain name must not be empty".into()));
         }
+        super::validate_name_chars(&chain.name, "filter chain")?;
         if !seen.insert(&chain.name) {
             return Err(ProxyError::Config(format!(
                 "duplicate filter chain name '{}'",
@@ -454,6 +455,26 @@ filter_chains:
 "#;
         let err = Config::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("duplicate filter chain name"));
+    }
+
+    #[test]
+    fn reject_chain_name_with_special_chars() {
+        let yaml = r#"
+listeners:
+  - name: web
+    address: "0.0.0.0:8080"
+    filter_chains:
+      - "bad.chain"
+filter_chains:
+  - name: "bad.chain"
+    filters:
+      - filter: request_id
+"#;
+        let err = Config::from_yaml(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("alphanumeric"),
+            "filter chain names with special chars should be rejected: {err}"
+        );
     }
 
     #[test]
