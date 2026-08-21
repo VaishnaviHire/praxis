@@ -1186,11 +1186,12 @@ filter_chains:
             praxis_protocol::http::pingora::health::listener_meta_from_config(&two),
         );
 
-        // First reload removes the 'legacy' listener; its pipeline stays
-        // pinned to the now probe-less first-generation registry.
+        // First reload (new=one, old=two) removes the 'legacy' listener;
+        // its pipeline stays pinned to the now probe-less first-generation
+        // registry while 'web' swaps to a fresh one.
         reload_pipelines(
-            &two,
             &one,
+            &two,
             &registry,
             &live,
             &meta,
