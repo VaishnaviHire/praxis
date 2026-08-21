@@ -375,7 +375,16 @@ async fn run_terminal_response(
     ctx: &mut PingoraRequestCtx,
     terminal: TerminalResponse,
 ) {
-    let mut resp = match prepare_terminal_response(pipeline, ctx, terminal.status, terminal.headers).await {
+    // Boxed to keep this frame under the stack-size threshold: the header
+    // filter future is large and terminal responses are not the hot path.
+    let prepared = Box::pin(prepare_terminal_response(
+        pipeline,
+        ctx,
+        terminal.status,
+        terminal.headers,
+    ))
+    .await;
+    let mut resp = match prepared {
         Ok(resp) => resp,
         Err(rejection) => {
             send_rejection(session, rejection).await;

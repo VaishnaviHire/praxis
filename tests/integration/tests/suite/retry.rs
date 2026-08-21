@@ -5,8 +5,8 @@
 
 use praxis_core::config::Config;
 use praxis_test_utils::{
-    Backend, free_port, http_get, http_send, parse_status, simple_proxy_yaml, start_backend_with_shutdown,
-    start_proxy, start_reused_connection_kill_backend,
+    Backend, free_port, http_get, http_send, parse_status, simple_proxy_yaml, start_backend_with_shutdown, start_proxy,
+    start_reused_connection_kill_backend,
 };
 
 // -----------------------------------------------------------------------------

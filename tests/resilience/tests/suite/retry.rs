@@ -122,6 +122,8 @@ filter_chains:
               backoff:
                 base_interval_ms: 1
                 max_interval_ms: 5
+insecure_options:
+  allow_private_endpoints: true
 "#
     );
 
