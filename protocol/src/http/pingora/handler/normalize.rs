@@ -339,4 +339,66 @@ mod tests {
         assert_eq!(unfold_obs_fold(b"x"), b"x", "single byte input unchanged");
         assert_eq!(unfold_obs_fold(b"ab"), b"ab", "two byte input unchanged");
     }
+
+    /// Build a proxy session that has read the given raw HTTP/1.1
+    /// request. The client half must stay alive for response writes.
+    async fn session_for(raw: &str) -> (Session, tokio::io::DuplexStream) {
+        use tokio::io::AsyncWriteExt as _;
+
+        let (mut client, server) = tokio::io::duplex(1_048_576);
+        client.write_all(raw.as_bytes()).await.unwrap();
+        let mut session = Session::new_h1(Box::new(server));
+        let read = session.read_request().await.unwrap();
+        assert!(read, "the session must parse the request header");
+        (session, client)
+    }
+
+    #[tokio::test]
+    async fn identical_duplicate_content_type_is_canonicalized() {
+        let (mut session, _client) = session_for("GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        session
+            .req_header_mut()
+            .append_header("content-type", "text/plain")
+            .unwrap();
+        session
+            .req_header_mut()
+            .append_header("content-type", "text/plain")
+            .unwrap();
+
+        let rejection = normalize_request_headers(&mut session);
+        assert!(rejection.is_none(), "identical duplicates must not reject");
+        let count = session
+            .req_header()
+            .headers
+            .get_all(http::header::CONTENT_TYPE)
+            .iter()
+            .count();
+        assert_eq!(count, 1, "identical duplicates must collapse to one value");
+    }
+
+    #[tokio::test]
+    async fn conflicting_duplicate_content_type_is_rejected() {
+        let (mut session, _client) = session_for("GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        session
+            .req_header_mut()
+            .append_header("content-type", "text/plain")
+            .unwrap();
+        session
+            .req_header_mut()
+            .append_header("content-type", "application/json")
+            .unwrap();
+
+        let rejection = normalize_request_headers(&mut session);
+        assert!(
+            rejection.is_some_and(|r| r.status == 400),
+            "conflicting duplicates must reject with 400"
+        );
+    }
+
+    #[tokio::test]
+    async fn clean_requests_pass_normalization() {
+        let (mut session, _client) = session_for("GET / HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\n\r\n").await;
+        let rejection = normalize_request_headers(&mut session);
+        assert!(rejection.is_none(), "well-formed requests must pass");
+    }
 }

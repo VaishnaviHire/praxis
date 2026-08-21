@@ -328,4 +328,37 @@ mod tests {
         assert_eq!(peer.options.idle_timeout, Some(Duration::from_secs(4)));
         assert_eq!(peer.options.total_connection_timeout, Some(Duration::from_secs(5)));
     }
+
+    #[tokio::test]
+    async fn resolve_address_resolves_hostname_and_caches_it() {
+        let first = resolve_address("localhost:8123")
+            .await
+            .expect("localhost must resolve via the hosts file");
+        assert_eq!(first.port(), 8123, "the requested port must be preserved");
+        assert!(first.ip().is_loopback(), "localhost must resolve to loopback");
+
+        let second = resolve_address("localhost:8123")
+            .await
+            .expect("a cached hostname must resolve");
+        assert_eq!(first, second, "the cached lookup must return the same address");
+    }
+
+    #[test]
+    fn preferred_address_errors_on_empty_resolution() {
+        let err = select_preferred_address(&[], "empty.example:80").expect_err("no addresses must be an error");
+        assert!(
+            err.to_string().contains("empty.example"),
+            "the error must name the address: {err}"
+        );
+    }
+
+    #[test]
+    fn preferred_address_falls_back_to_ipv6_only() {
+        let ipv6 = "[::1]:9090".parse().unwrap();
+        assert_eq!(
+            select_preferred_address(&[ipv6], "v6.example:9090").unwrap(),
+            ipv6,
+            "an IPv6-only resolution must be usable"
+        );
+    }
 }

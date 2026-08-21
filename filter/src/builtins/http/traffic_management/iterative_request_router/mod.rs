@@ -41,7 +41,13 @@ mod config;
 mod streaming;
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::too_many_lines,
+    reason = "tests"
+)]
 mod tests;
 
 use std::{

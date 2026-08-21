@@ -4287,4 +4287,25 @@ mod filter_duration_metrics_tests {
             "disabled filter metrics should not record this filter: {metrics}"
         );
     }
+
+    #[test]
+    fn empty_pipeline_accessors_reflect_defaults() {
+        let registry = FilterRegistry::with_builtins();
+        let mut pipeline = FilterPipeline::build(&mut [], &registry).unwrap();
+
+        assert!(!pipeline.needs_body_filters(), "an empty pipeline needs no body hooks");
+        assert_eq!(pipeline.len(), 0, "an empty pipeline has no filters");
+        assert!(
+            pipeline.referenced_files().is_empty(),
+            "an empty pipeline references no external files"
+        );
+
+        let generator = Arc::new(praxis_core::id::IdGenerator::with_seed(9));
+        pipeline.set_id_generator(Arc::clone(&generator));
+        let _id_generator = pipeline.id_generator();
+
+        let source: Arc<dyn praxis_core::time::TimeSource> = Arc::new(praxis_core::time::SystemTimeSource);
+        pipeline.set_time_source(source);
+        let _time_source = pipeline.time_source();
+    }
 }
