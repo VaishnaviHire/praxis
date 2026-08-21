@@ -341,7 +341,6 @@ async fn run_pipeline(
 // -----------------------------------------------------------------------------
 
 /// Run response filters on a buffered terminal response and send it downstream.
-#[expect(clippy::large_stack_frames, reason = "terminal response lifecycle with body filters")]
 async fn run_terminal_response(
     pipeline: &FilterPipeline,
     session: &mut Session,

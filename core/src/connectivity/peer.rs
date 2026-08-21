@@ -316,13 +316,13 @@ mod tests {
             .converted_or_init(|| -> Arc<[pingora_core::utils::tls::WrappedX509]> {
                 Arc::from(ca_from_cached(&cached_ca))
             })
-            .map(|arc| Arc::as_ptr(arc))
+            .map(Arc::as_ptr)
             .unwrap();
         let converted_b: *const [pingora_core::utils::tls::WrappedX509] = cached_ca
             .converted_or_init(|| -> Arc<[pingora_core::utils::tls::WrappedX509]> {
                 Arc::from(ca_from_cached(&cached_ca))
             })
-            .map(|arc| Arc::as_ptr(arc))
+            .map(Arc::as_ptr)
             .unwrap();
         assert_eq!(
             converted_a, converted_b,
