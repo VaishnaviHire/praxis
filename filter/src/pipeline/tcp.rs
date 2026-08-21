@@ -474,6 +474,8 @@ mod tests {
             time_source: Arc::new(praxis_core::time::SystemTimeSource),
             request_body_ceiling: None,
             response_body_ceiling: None,
+            request_body_access_by_idx: Vec::new(),
+            response_body_access_by_idx: Vec::new(),
         }
     }
 

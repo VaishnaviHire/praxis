@@ -77,6 +77,24 @@ pub(super) fn compute_body_capabilities(filters: &[PipelineFilter]) -> BodyCapab
     caps
 }
 
+/// Precompute each filter's declared body access as index-aligned flags.
+///
+/// The body-chunk loops run once per chunk per filter; the declared
+/// access is a per-filter constant, so these flags let the loops skip
+/// non-body filters without a per-chunk virtual call.
+pub(super) fn body_access_by_index(filters: &[PipelineFilter]) -> (Vec<bool>, Vec<bool>) {
+    filters
+        .iter()
+        .map(|pf| match &pf.filter {
+            AnyFilter::Http(f) => (
+                f.request_body_access() != BodyAccess::None,
+                f.response_body_access() != BodyAccess::None,
+            ),
+            AnyFilter::Tcp(_) => (false, false),
+        })
+        .unzip()
+}
+
 /// Recursively accumulate body capabilities from a slice of pipeline filters.
 pub(super) fn accumulate_caps(caps: &mut BodyCapabilities, filters: &[PipelineFilter]) {
     accumulate_caps_inner(caps, filters, false);

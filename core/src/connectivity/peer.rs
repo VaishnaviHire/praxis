@@ -23,6 +23,13 @@ use super::ConnectionOptions;
 /// TTL for cached DNS entries.
 const DNS_TTL_SECS: u64 = 60;
 
+/// TTL for cached resolution failures.
+///
+/// Short enough that a recovered resolver is picked up quickly, long
+/// enough that a dead hostname cannot stampede the blocking resolver
+/// with one getaddrinfo call per request.
+const NEGATIVE_DNS_TTL_SECS: u64 = 5;
+
 /// Maximum cached DNS entries before oldest-entry eviction.
 const MAX_DNS_ENTRIES: usize = 1_024;
 
@@ -51,14 +58,36 @@ pub enum AddressResolutionError {
     /// DNS returned no usable address.
     #[error("upstream address '{0}' resolved to zero addresses")]
     Empty(String),
+
+    /// A recent resolution of the same address failed (negative cache).
+    #[error("upstream address resolution recently failed for '{address}': {message}")]
+    RecentFailure {
+        /// Address being resolved.
+        address: String,
+        /// Message from the cached failure.
+        message: String,
+    },
 }
 
-/// Cached DNS resolution result.
+/// Cached DNS resolution result: the preferred address, or the failure
+/// message when the last resolution failed (negative caching).
 struct DnsCacheEntry {
-    /// Preferred (IPv4-first) address from the last resolution.
-    preferred: SocketAddr,
+    /// Outcome of the last resolution.
+    outcome: Result<SocketAddr, String>,
     /// Cache insertion time.
     resolved_at: Instant,
+}
+
+impl DnsCacheEntry {
+    /// Whether this entry is still valid at its outcome-specific TTL.
+    fn is_fresh(&self) -> bool {
+        let ttl = if self.outcome.is_ok() {
+            DNS_TTL_SECS
+        } else {
+            NEGATIVE_DNS_TTL_SECS
+        };
+        self.resolved_at.elapsed().as_secs() < ttl
+    }
 }
 
 /// Process-wide bounded DNS cache.
@@ -71,6 +100,14 @@ fn dns_cache() -> &'static DashMap<String, DnsCacheEntry> {
     CACHE.get_or_init(DashMap::new)
 }
 
+/// Per-hostname single-flight gates: concurrent misses on one hostname
+/// coalesce into a single blocking `getaddrinfo` call instead of a
+/// stampede at every TTL boundary.
+fn dns_inflight() -> &'static DashMap<String, Arc<tokio::sync::Mutex<()>>> {
+    static INFLIGHT: OnceLock<DashMap<String, Arc<tokio::sync::Mutex<()>>>> = OnceLock::new();
+    INFLIGHT.get_or_init(DashMap::new)
+}
+
 /// Resolve an upstream address without blocking the async worker.
 ///
 /// Literal socket addresses take the allocation-free fast path. Hostnames use
@@ -81,18 +118,41 @@ fn dns_cache() -> &'static DashMap<String, DnsCacheEntry> {
 ///
 /// Returns [`AddressResolutionError`] when resolution fails or returns no
 /// usable addresses.
-#[expect(
-    clippy::too_many_lines,
-    reason = "cache lookup, resolution, and insertion form one operation"
-)]
 pub async fn resolve_address(address: &str) -> Result<SocketAddr, AddressResolutionError> {
     if let Ok(addr) = address.parse::<SocketAddr>() {
         return Ok(addr);
     }
-    if let Some(addr) = lookup_cached(address) {
-        return Ok(addr);
+    if let Some(cached) = lookup_cached(address) {
+        return cached;
     }
 
+    // Single-flight: losers wait on the winner's lock, then hit the cache
+    // it populated. The Arc is cloned before the shard guard drops so the
+    // await below never holds a DashMap lock.
+    let gate = Arc::clone(
+        &dns_inflight()
+            .entry(address.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+    );
+    let _flight = gate.lock().await;
+    if let Some(cached) = lookup_cached(address) {
+        return cached;
+    }
+
+    let outcome = resolve_uncached(address).await;
+    insert_cached(
+        address,
+        match &outcome {
+            Ok(preferred) => Ok(*preferred),
+            Err(e) => Err(e.to_string()),
+        },
+    );
+    dns_inflight().remove(address);
+    outcome
+}
+
+/// Run the blocking resolver and select the preferred address.
+async fn resolve_uncached(address: &str) -> Result<SocketAddr, AddressResolutionError> {
     let owned = address.to_owned();
     let task_address = owned.clone();
     let addrs = tokio::task::spawn_blocking(move || {
@@ -104,15 +164,15 @@ pub async fn resolve_address(address: &str) -> Result<SocketAddr, AddressResolut
         address: owned.clone(),
         message: error.to_string(),
     })?
-    .map_err(|source| AddressResolutionError::Resolve {
-        address: owned.clone(),
-        source,
-    })?;
-    let preferred = select_preferred_address(&addrs, address)?;
+    .map_err(|source| AddressResolutionError::Resolve { address: owned, source })?;
+    select_preferred_address(&addrs, address)
+}
 
+/// Store a resolution outcome, evicting the oldest entry at capacity.
+fn insert_cached(address: &str, outcome: Result<SocketAddr, String>) {
     let cache = dns_cache();
     if cache.len() >= MAX_DNS_ENTRIES && !cache.contains_key(address) {
-        cache.retain(|_, entry| entry.resolved_at.elapsed().as_secs() < DNS_TTL_SECS);
+        cache.retain(|_, entry| entry.is_fresh());
         if cache.len() >= MAX_DNS_ENTRIES
             && let Some(oldest) = cache
                 .iter()
@@ -123,20 +183,28 @@ pub async fn resolve_address(address: &str) -> Result<SocketAddr, AddressResolut
         }
     }
     cache.insert(
-        owned,
+        address.to_owned(),
         DnsCacheEntry {
-            preferred,
+            outcome,
             resolved_at: Instant::now(),
         },
     );
-    Ok(preferred)
 }
 
-/// Return a non-expired cached preferred address.
-fn lookup_cached(address: &str) -> Option<SocketAddr> {
-    dns_cache()
-        .get(address)
-        .and_then(|entry| (entry.resolved_at.elapsed().as_secs() < DNS_TTL_SECS).then_some(entry.preferred))
+/// Return a non-expired cached outcome (positive or negative).
+fn lookup_cached(address: &str) -> Option<Result<SocketAddr, AddressResolutionError>> {
+    dns_cache().get(address).and_then(|entry| {
+        entry.is_fresh().then(|| {
+            entry
+                .outcome
+                .as_ref()
+                .map_err(|message| AddressResolutionError::RecentFailure {
+                    address: address.to_owned(),
+                    message: message.clone(),
+                })
+                .copied()
+        })
+    })
 }
 
 /// Select IPv4 when available, otherwise the first result.
@@ -363,6 +431,40 @@ mod tests {
             .await
             .expect("a cached hostname must resolve");
         assert_eq!(first, second, "the cached lookup must return the same address");
+    }
+
+    #[tokio::test]
+    async fn failed_resolution_is_negatively_cached() {
+        let bogus = "does-not-exist.praxis-negative-cache-test.invalid:80";
+        resolve_address(bogus)
+            .await
+            .expect_err(".invalid hostnames must fail to resolve");
+
+        let second = resolve_address(bogus)
+            .await
+            .expect_err("a recent failure must be served from the negative cache");
+        assert!(
+            matches!(second, AddressResolutionError::RecentFailure { .. }),
+            "the second failure should come from the negative cache, got: {second}"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_misses_coalesce_into_one_resolution() {
+        // All tasks race the same uncached hostname; single-flight means
+        // they either win the gate or wait and hit the cache — every task
+        // must still get the same answer.
+        let tasks: Vec<_> = std::iter::repeat_with(|| tokio::spawn(resolve_address("localhost:8124")))
+            .take(8)
+            .collect();
+        let mut addrs = Vec::new();
+        for task in tasks {
+            addrs.push(task.await.unwrap().expect("localhost must resolve"));
+        }
+        assert!(
+            addrs.windows(2).all(|w| w[0] == w[1]),
+            "coalesced resolutions must agree on the address"
+        );
     }
 
     #[test]

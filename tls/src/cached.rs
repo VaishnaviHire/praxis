@@ -277,7 +277,10 @@ pub struct CachedClusterTls {
     client_cert: Option<Arc<CachedClientCert>>,
 
     /// SNI hostname for outbound connections.
-    sni: Option<String>,
+    ///
+    /// [`Arc<str>`] so the per-request clone in the load balancer's
+    /// upstream construction is reference-counted, not reallocated.
+    sni: Option<Arc<str>>,
 
     /// Whether to verify upstream certificates.
     verify: bool,
@@ -311,7 +314,7 @@ impl CachedClusterTls {
         Ok(Self {
             ca,
             client_cert,
-            sni: tls.sni.clone(),
+            sni: tls.sni.as_deref().map(Arc::from),
             verify: tls.verify,
         })
     }
@@ -333,7 +336,7 @@ impl CachedClusterTls {
 
     /// Set the SNI hostname.
     pub fn set_sni(&mut self, sni: String) {
-        self.sni = Some(sni);
+        self.sni = Some(Arc::from(sni));
     }
 
     /// Whether to verify upstream certificates.
@@ -699,7 +702,7 @@ mod tests {
         let cached = CachedClusterTls {
             ca: None,
             client_cert: Some(Arc::new(client_cert)),
-            sni: Some("api.example.com".to_owned()),
+            sni: Some(Arc::from("api.example.com")),
             verify: true,
         };
 

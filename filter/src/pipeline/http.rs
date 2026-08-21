@@ -210,6 +210,11 @@ impl FilterPipeline {
                 );
                 continue;
             }
+            // Declared body access is a per-filter constant; the pre-computed
+            // flag skips non-body filters without a per-chunk virtual call.
+            if !self.request_body_access_by_idx.get(idx).copied().unwrap_or(true) {
+                continue;
+            }
             let Some(http_filter) = as_request_body_filter(&pf.filter, &pf.conditions, ctx.request) else {
                 continue;
             };
@@ -294,6 +299,11 @@ impl FilterPipeline {
                     filter = pf.filter.name(),
                     "skipped response body (not executed in request phase)"
                 );
+                continue;
+            }
+            // Declared body access is a per-filter constant; the pre-computed
+            // flag skips non-body filters without a per-chunk virtual call.
+            if !self.response_body_access_by_idx.get(idx).copied().unwrap_or(true) {
                 continue;
             }
             let Some(http_filter) = as_response_body_filter(&pf.filter, &pf.response_conditions, response_header)

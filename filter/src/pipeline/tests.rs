@@ -1901,6 +1901,8 @@ async fn skip_to_excludes_skipped_filters_from_response() {
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/");
@@ -1971,6 +1973,8 @@ async fn skip_to_excludes_skipped_filters_from_body_hooks() {
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/");
@@ -2041,6 +2045,8 @@ async fn body_hooks_run_for_every_filter_before_the_request_phase() {
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/");
@@ -2102,6 +2108,8 @@ async fn all_executed_filters_run_on_response() {
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/");
@@ -2162,6 +2170,8 @@ async fn skipped_filter_skips_its_branches() {
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/other");
@@ -3377,6 +3387,8 @@ fn test_pipeline(body_capabilities: BodyCapabilities, filters: Vec<PipelineFilte
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     }
 }
 
@@ -3403,6 +3415,8 @@ fn make_pipeline(filters: Vec<Box<dyn HttpFilter>>) -> FilterPipeline {
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     }
 }
 
@@ -3431,6 +3445,8 @@ fn make_pipeline_with_conditions(
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     }
 }
 
@@ -3459,6 +3475,8 @@ fn make_pipeline_with_response_conditions(
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     }
 }
 
@@ -4074,6 +4092,8 @@ fn streaming_capability_detected_when_filter_declares_it() {
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
         request_body_ceiling: None,
         response_body_ceiling: None,
+        request_body_access_by_idx: Vec::new(),
+        response_body_access_by_idx: Vec::new(),
     };
     assert!(
         pipeline.may_select_streaming_subrequest_response(),
