@@ -189,14 +189,15 @@ impl PingoraTcpProxy {
     }
 
     /// Run TCP connect filters; returns the resolved upstream address if allowed.
+    #[expect(clippy::too_many_arguments, reason = "pipeline generation pinned by caller")]
     async fn run_connect_filters(
         &self,
+        pipeline: &FilterPipeline,
         remote_addr: &str,
         local_addr: &str,
         sni: Option<&str>,
         connect_time: std::time::Instant,
     ) -> Option<String> {
-        let pipeline = self.pipeline.load();
         let upstream_cow = self.upstream_addr.as_deref().map(Cow::Borrowed);
         let health_registry = pipeline.health_registry().cloned();
 
@@ -213,13 +214,14 @@ impl PingoraTcpProxy {
             bytes_out: 0,
         };
 
-        resolve_connect_result(&pipeline, &mut ctx, remote_addr).await
+        resolve_connect_result(pipeline, &mut ctx, remote_addr).await
     }
 
     /// Run TCP disconnect filters for logging.
     #[expect(clippy::too_many_arguments, reason = "per-connection metrics")]
     async fn run_disconnect_filters(
         &self,
+        pipeline: &FilterPipeline,
         remote_addr: &str,
         local_addr: &str,
         upstream_addr: &str,
@@ -228,7 +230,6 @@ impl PingoraTcpProxy {
         bytes_in: u64,
         bytes_out: u64,
     ) {
-        let pipeline = self.pipeline.load();
         let health_registry = pipeline.health_registry().cloned();
         let mut ctx = TcpFilterContext {
             remote_addr,
@@ -297,8 +298,19 @@ impl ServerApp for PingoraTcpProxy {
             (None, Vec::new())
         };
 
+        // Pin one pipeline generation for the whole connection so paired
+        // connect/disconnect filter state (e.g. least-connections counters)
+        // stays on the same instance across a hot reload.
+        let pipeline = self.pipeline.load_full();
+
         let upstream_addr = self
-            .run_connect_filters(&remote_addr, &local_addr, sni_hostname.as_deref(), connect_time)
+            .run_connect_filters(
+                &pipeline,
+                &remote_addr,
+                &local_addr,
+                sni_hostname.as_deref(),
+                connect_time,
+            )
             .await?;
 
         let upstream_connect_start = std::time::Instant::now();
@@ -319,6 +331,7 @@ impl ServerApp for PingoraTcpProxy {
         {
             error!(upstream = %upstream_addr, error = %e, "failed to write peeked bytes to upstream");
             self.run_disconnect_filters(
+                &pipeline,
                 &remote_addr,
                 &local_addr,
                 &upstream_addr,
@@ -337,6 +350,7 @@ impl ServerApp for PingoraTcpProxy {
             .await;
 
         self.run_disconnect_filters(
+            &pipeline,
             &remote_addr,
             &local_addr,
             &upstream_addr,

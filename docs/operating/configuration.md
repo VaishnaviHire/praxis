@@ -83,7 +83,19 @@ continues serving with the old config.
 - Listener add, remove, or address rebind
 - Protocol changes (HTTP to TCP)
 - Compression module addition
-- TLS enable/disable
+- TLS enable/disable, and any change inside a
+  listener's `tls` block (certificate *file contents*
+  are hot-reloaded by the certificate watcher;
+  config-level TLS changes are not)
+- Startup-only `runtime` settings (`threads`,
+  `work_stealing`, `global_queue_interval`,
+  `log_overrides`, `max_connections`,
+  `max_memory_bytes`, `subrequest_pool_size`,
+  `subrequest_max_connections`,
+  `subrequest_circuit_breaker`, `upstream_ca_file`,
+  `upstream_keepalive_pool_size`)
+- The `admin` section (the admin endpoint binds at
+  startup)
 
 Stateful filters (rate limiter, circuit breaker) reset
 their state on reload. Operators should expect a brief
