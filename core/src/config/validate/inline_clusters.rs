@@ -21,6 +21,9 @@ use crate::{
 /// Filter type names whose config may define inline clusters.
 const CLUSTER_BEARING_FILTERS: &[&str] = &["load_balancer", "tcp_load_balancer"];
 
+/// Filter type whose config nests filter entries under `steps[].filters`.
+const STEP_BEARING_FILTER: &str = "iterative_request_router";
+
 // -----------------------------------------------------------------------------
 // Inline Cluster Validation
 // -----------------------------------------------------------------------------
@@ -61,7 +64,45 @@ fn validate_entry(chain_name: &str, entry: &FilterEntry, insecure_options: &Inse
             }
         }
     }
+
+    if entry.filter_type == STEP_BEARING_FILTER {
+        for nested in extract_step_filters(chain_name, entry)? {
+            validate_entry(chain_name, &nested, insecure_options)?;
+        }
+    }
     Ok(())
+}
+
+/// Deserialize filter entries nested under an `iterative_request_router`
+/// filter's `steps[].filters`.
+///
+/// These live in the opaque filter config exactly like inline branch
+/// filters, and can themselves declare inline load-balancer clusters that
+/// would otherwise bypass validation.
+fn extract_step_filters(chain_name: &str, entry: &FilterEntry) -> Result<Vec<FilterEntry>, ProxyError> {
+    let serde_yaml::Value::Mapping(mapping) = &entry.config else {
+        return Ok(Vec::new());
+    };
+    let Some(serde_yaml::Value::Sequence(steps)) = mapping.get("steps") else {
+        return Ok(Vec::new());
+    };
+    let mut filters = Vec::new();
+    for step in steps {
+        let serde_yaml::Value::Mapping(step_map) = step else {
+            continue;
+        };
+        let Some(step_filters) = step_map.get("filters") else {
+            continue;
+        };
+        let parsed: Vec<FilterEntry> = serde_yaml::from_value(step_filters.clone()).map_err(|e| {
+            ProxyError::Config(format!(
+                "chain '{chain_name}': filter '{}': invalid step filters: {e}",
+                entry.filter_type
+            ))
+        })?;
+        filters.extend(parsed);
+    }
+    Ok(filters)
 }
 
 /// Deserialize the `clusters` key from an opaque filter config, if present.
@@ -180,6 +221,16 @@ mod tests {
             "          - name: web\n            endpoints:\n              - address: \"192.0.2.1:80\"\n                weight: 5\n",
         );
         Config::from_yaml(&yaml).expect("valid inline cluster should pass validation");
+    }
+
+    #[test]
+    fn inline_cluster_in_iterative_router_step_validated() {
+        let yaml = "listeners:\n  - name: main\n    address: \"127.0.0.1:18080\"\n    protocol: http\n    filter_chains: [main]\nfilter_chains:\n  - name: main\n    filters:\n      - filter: iterative_request_router\n        steps:\n          - name: call\n            filters:\n              - filter: load_balancer\n                clusters:\n                  - name: web\n                    endpoints:\n                      - address: \"192.0.2.1:80\"\n                        weight: 2000000000\n";
+        let err = Config::from_yaml(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("weight"),
+            "clusters inside iterative_request_router steps must be validated: {err}"
+        );
     }
 
     #[test]

@@ -2476,7 +2476,9 @@ fn irr_yaml(proxy_port: u16, irr_config: &str) -> String {
         .join("\n");
 
     format!(
-        "listeners:\n\
+        "insecure_options:\n\
+         \x20 allow_private_endpoints: true\n\
+         listeners:\n\
          \x20 - name: default\n\
          \x20   address: \"127.0.0.1:{proxy_port}\"\n\
          \x20   filter_chains: [main]\n\
