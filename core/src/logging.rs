@@ -445,22 +445,14 @@ fn build_otel_provider(
         return Ok((None, None));
     };
 
-    if let Ok(protocol) = std::env::var(crate::config::OTLP_PROTOCOL_ENV_VAR)
-        && protocol != "grpc"
-    {
-        return Err(ProxyError::Config(format!(
-            "Praxis supports only gRPC for OTLP export, but {}={protocol}",
-            crate::config::OTLP_PROTOCOL_ENV_VAR,
-        )));
-    }
-
     let runtime = build_exporter_runtime()?;
 
-    // `build_span_exporter` is synchronous but tonic's channel setup must run
-    // inside a Tokio runtime context; entering is enough — nothing is awaited.
+    // Both tonic (gRPC) and reqwest (HTTP) clients need a Tokio runtime context.
+    // Enter the kept-alive runtime; nothing is awaited, setup is synchronous.
     let exporter = {
         let _guard = runtime.enter();
-        build_span_exporter(endpoint, config.otlp_headers.as_ref())?
+        let protocol = resolve_otlp_protocol();
+        build_span_exporter(endpoint, config.otlp_headers.as_ref(), &protocol)?
     };
     let batch_processor = build_batch_processor(exporter, config);
     let resource = build_otel_resource(config);
@@ -502,9 +494,35 @@ fn build_exporter_runtime() -> Result<::tokio::runtime::Runtime, ProxyError> {
 // OTLP Exporter Builder
 // -----------------------------------------------------------------------------
 
-/// Build the OTLP span exporter with endpoint and optional gRPC headers.
+/// Resolve the OTLP export protocol from `OTEL_EXPORTER_OTLP_PROTOCOL`
+/// env var, defaulting to `"grpc"`.
+#[cfg(feature = "otel")]
+fn resolve_otlp_protocol() -> String {
+    std::env::var(crate::config::OTLP_PROTOCOL_ENV_VAR)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "grpc".to_owned())
+}
+
+/// Build the OTLP span exporter for the selected protocol.
 #[cfg(feature = "otel")]
 fn build_span_exporter(
+    endpoint: &str,
+    headers: Option<&std::collections::HashMap<String, String>>,
+    protocol: &str,
+) -> Result<opentelemetry_otlp::SpanExporter, ProxyError> {
+    match protocol {
+        "grpc" => build_grpc_exporter(endpoint, headers),
+        "http/protobuf" => build_http_exporter(endpoint, headers),
+        other => Err(ProxyError::Config(format!(
+            "unsupported OTLP protocol \"{other}\"; supported: \"grpc\", \"http/protobuf\""
+        ))),
+    }
+}
+
+/// Build a gRPC (tonic) OTLP span exporter.
+#[cfg(feature = "otel")]
+fn build_grpc_exporter(
     endpoint: &str,
     headers: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<opentelemetry_otlp::SpanExporter, ProxyError> {
@@ -520,7 +538,58 @@ fn build_span_exporter(
 
     builder
         .build()
-        .map_err(|e| ProxyError::Config(format!("failed to build OTLP span exporter: {e}")))
+        .map_err(|e| ProxyError::Config(format!("failed to build OTLP gRPC exporter: {e}")))
+}
+
+/// Build an HTTP/protobuf OTLP span exporter.
+#[cfg(feature = "otel")]
+fn build_http_exporter(
+    endpoint: &str,
+    headers: Option<&std::collections::HashMap<String, String>>,
+) -> Result<opentelemetry_otlp::SpanExporter, ProxyError> {
+    use opentelemetry_otlp::{WithExportConfig as _, WithHttpConfig as _};
+
+    // opentelemetry-otlp does not append the signal path when the endpoint is
+    // set programmatically (unlike env-var config). If the endpoint has no path
+    // or only "/", append the standard OTLP traces path.
+    let endpoint = append_signal_path_if_needed(endpoint);
+
+    let mut builder = opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_endpoint(endpoint);
+
+    if let Some(hdrs) = headers {
+        builder = builder.with_headers(hdrs.clone());
+    }
+
+    builder
+        .build()
+        .map_err(|e| ProxyError::Config(format!("failed to build OTLP HTTP exporter: {e}")))
+}
+
+/// Append `/v1/traces` to the endpoint if it has no path component.
+///
+/// When an endpoint like `http://host:4317` or `http://host:4317/` is
+/// configured, the programmatic HTTP exporter does not automatically append
+/// the signal path (unlike env-var based configuration). This function
+/// detects endpoints with no meaningful path and appends the standard
+/// OTLP traces signal path.
+#[cfg(feature = "otel")]
+fn append_signal_path_if_needed(endpoint: &str) -> String {
+    // Parse the endpoint; if invalid, return as-is (the builder will error later)
+    let Ok(mut url) = endpoint.parse::<http::Uri>() else {
+        return endpoint.to_owned();
+    };
+
+    // Check if the path is empty or just "/"
+    let path = url.path();
+    if path.is_empty() || path == "/" {
+        // Append the signal path
+        format!("{}/v1/traces", endpoint.trim_end_matches('/'))
+    } else {
+        // Path already present; use as-is
+        endpoint.to_owned()
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -543,9 +612,11 @@ fn build_batch_processor(
         .batch_interval_secs
         .unwrap_or(crate::config::TelemetryConfig::DEFAULT_BATCH_INTERVAL_SECS);
 
+    // The queue must hold at least one full export batch, or spans beyond
+    // the queue cap are silently dropped before they can ever be exported.
     let batch_config = opentelemetry_sdk::trace::BatchConfigBuilder::default()
         .with_max_export_batch_size(batch_size)
-        .with_max_queue_size(2048)
+        .with_max_queue_size(batch_size.max(2_048))
         .with_scheduled_delay(std::time::Duration::from_secs(batch_interval))
         .build();
 
