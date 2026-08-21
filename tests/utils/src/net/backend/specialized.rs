@@ -151,38 +151,41 @@ pub fn start_reused_connection_kill_backend() -> (BackendGuard, ReusedConnection
     let log_handle = Arc::clone(&log);
     let connection_counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    let guard = spawn_tcp_server_with_shutdown(move |mut stream| {
+    let guard = spawn_tcp_server_with_shutdown(move |stream| {
         let connection_num = connection_counter.fetch_add(1, Ordering::Relaxed);
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-
-        for request_num in 0_usize.. {
-            let Some((method, path)) = read_one_request(&mut stream) else {
-                break;
-            };
-            log.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((
-                connection_num,
-                request_num,
-                method,
-                path,
-            ));
-
-            if request_num > 0 {
-                tracing::debug!(connection_num, request_num, "killing reused connection");
-                break;
-            }
-
-            let body = "pooled-ok";
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
-                body.len()
-            );
-            if stream.write_all(response.as_bytes()).is_err() {
-                break;
-            }
-        }
+        serve_then_kill_connection(stream, connection_num, &log);
     });
 
     (guard, log_handle)
+}
+
+/// Serve the first request on `stream` with keep-alive, then read and
+/// drop the second without responding, recording each into `log`.
+fn serve_then_kill_connection(mut stream: TcpStream, connection_num: usize, log: &ReusedConnectionLog) {
+    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+    for request_num in 0_usize.. {
+        let Some((method, path)) = read_one_request(&mut stream) else {
+            break;
+        };
+        log.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((connection_num, request_num, method, path));
+
+        if request_num > 0 {
+            tracing::debug!(connection_num, request_num, "killing reused connection");
+            break;
+        }
+
+        let body = "pooled-ok";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
+            body.len()
+        );
+        if stream.write_all(response.as_bytes()).is_err() {
+            break;
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
