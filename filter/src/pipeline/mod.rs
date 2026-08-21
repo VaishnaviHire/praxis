@@ -213,6 +213,19 @@ impl FilterPipeline {
         self.filters.is_empty()
     }
 
+    /// Whether any top-level filter has the given type name.
+    ///
+    /// ```
+    /// use praxis_filter::{FilterPipeline, FilterRegistry};
+    ///
+    /// let registry = FilterRegistry::with_builtins();
+    /// let pipeline = FilterPipeline::build(&mut [], &registry).unwrap();
+    /// assert!(!pipeline.contains_filter("access_log"));
+    /// ```
+    pub fn contains_filter(&self, type_name: &str) -> bool {
+        self.filters.iter().any(|pf| pf.filter.name() == type_name)
+    }
+
     /// Compression configuration, if a compression filter is present.
     pub fn compression_config(&self) -> Option<&CompressionConfig> {
         self.compression.as_ref()

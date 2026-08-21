@@ -14,7 +14,8 @@ pub use http::{
     GrpcDetectionFilter, GuardrailsAction, GuardrailsFilter, HeaderFilter, IpAclFilter, IterativeRequestRouterFilter,
     JsonBodyFieldFilter, JsonRpcFilter, LoadBalancerFilter, PathRewriteFilter, PeerIdentityTrustFilter, PiiKind,
     RateLimitFilter, RateLimitMode, RedirectFilter, RedirectStatus, RequestIdFilter, RouterFilter, RuleTargetKind,
-    StaticResponseFilter, TimeoutFilter, UrlRewriteFilter, has_dot_dot_traversal, normalize_rewritten_path,
+    StaticResponseFilter, TimeoutFilter, UrlRewriteFilter, bodyless_response, emit_access_record,
+    has_dot_dot_traversal, normalize_rewritten_path,
 };
 #[cfg(feature = "policy-engine")]
 pub use http::{PolicyFilter, PolicyPluginFactoryFn, register_policy_plugin_factory};

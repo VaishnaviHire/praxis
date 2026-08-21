@@ -351,6 +351,24 @@ fn record_retry_exhausted_if_attempted(ctx: &PingoraRequestCtx, cluster: ::metri
     }
 }
 
+/// Emit a fallback access record for requests whose lifecycle ended
+/// before the access log filter's completion hooks could run.
+///
+/// Covers pre-upstream rejections, upstream connect and read failures,
+/// and streamed responses aborted mid-body: none of these reach the
+/// bodyless response phase or body end-of-stream where the filter
+/// emits. Only fires when the pipeline configures an `access_log`
+/// filter; these records bypass the filter's sampling because
+/// incomplete requests are always worth a record.
+fn maybe_emit_fallback_access_log(pipeline: &FilterPipeline, status: u16, ctx: &mut PingoraRequestCtx) {
+    if ctx.response_delivery_complete || ctx.connection_upgraded || !pipeline.contains_filter("access_log") {
+        return;
+    }
+    if let Some(filter_ctx) = ctx.filter_context_for(pipeline, None) {
+        praxis_filter::emit_access_record(&filter_ctx, status);
+    }
+}
+
 /// Run response filters during the logging phase if the
 /// response phase never executed (upstream error, filter
 /// rejection, etc.).
@@ -1314,6 +1332,70 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // Fallback Access Log
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn fallback_access_log_emits_for_incomplete_request() {
+        let pipeline = access_log_pipeline();
+        let mut ctx = make_fallback_ctx();
+
+        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut ctx));
+        assert_eq!(
+            events.len(),
+            1,
+            "incomplete request must produce a fallback access record"
+        );
+    }
+
+    #[test]
+    fn fallback_access_log_skips_completed_delivery() {
+        let pipeline = access_log_pipeline();
+        let mut ctx = make_fallback_ctx();
+        ctx.response_delivery_complete = true;
+
+        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 200, &mut ctx));
+        assert!(events.is_empty(), "completed delivery already logged via the filter");
+    }
+
+    #[test]
+    fn fallback_access_log_skips_upgraded_connections() {
+        let pipeline = access_log_pipeline();
+        let mut ctx = make_fallback_ctx();
+        ctx.connection_upgraded = true;
+
+        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 101, &mut ctx));
+        assert!(events.is_empty(), "upgraded connections have no body completion");
+    }
+
+    #[test]
+    fn fallback_access_log_skips_without_access_log_filter() {
+        let registry = praxis_filter::FilterRegistry::with_builtins();
+        let pipeline = FilterPipeline::build(&mut [], &registry).unwrap();
+        let mut ctx = make_fallback_ctx();
+
+        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut ctx));
+        assert!(events.is_empty(), "no access_log filter means no fallback record");
+    }
+
+    #[test]
+    fn response_body_eos_marks_delivery_complete() {
+        let registry = praxis_filter::FilterRegistry::with_builtins();
+        let pipeline = FilterPipeline::build(&mut [], &registry).unwrap();
+        let mut ctx = PingoraRequestCtx::default();
+        let mut body: Option<Bytes> = None;
+
+        let _timeout = response_body_filter::execute(&pipeline, &mut body, false, &mut ctx).unwrap();
+        assert!(
+            !ctx.response_delivery_complete,
+            "mid-stream chunks must not mark delivery complete"
+        );
+
+        let _timeout = response_body_filter::execute(&pipeline, &mut body, true, &mut ctx).unwrap();
+        assert!(ctx.response_delivery_complete, "end-of-stream marks delivery complete");
+    }
+
+    // -------------------------------------------------------------------------
     // Span Attribute Helpers
     // -------------------------------------------------------------------------
 
@@ -1394,6 +1476,68 @@ mod tests {
     /// Create a connect error for tests.
     fn make_error() -> Box<pingora_core::Error> {
         pingora_core::Error::explain(pingora_core::ErrorType::ConnectError, "test connect failure")
+    }
+
+    /// Build a pipeline containing an `access_log` filter.
+    fn access_log_pipeline() -> FilterPipeline {
+        let registry = praxis_filter::FilterRegistry::with_builtins();
+        let mut entries = vec![praxis_filter::FilterEntry {
+            branch_chains: None,
+            conditions: vec![],
+            failure_mode: praxis_filter::FailureMode::default(),
+            filter_type: "access_log".to_owned(),
+            config: serde_yaml::Value::Null,
+            name: None,
+            response_conditions: vec![],
+        }];
+        FilterPipeline::build(&mut entries, &registry).unwrap()
+    }
+
+    /// Build a context with a request snapshot for fallback logging tests.
+    fn make_fallback_ctx() -> PingoraRequestCtx {
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.request_snapshot = Some(praxis_filter::Request {
+            method: http::Method::GET,
+            uri: "/incomplete".parse().unwrap(),
+            headers: http::HeaderMap::new(),
+        });
+        ctx
+    }
+
+    /// Capture `access` info events emitted while running `f`.
+    fn capture_access_events<F: FnOnce()>(f: F) -> Vec<String> {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let messages = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let capture = AccessCapture(Arc::clone(&messages));
+        let subscriber = tracing_subscriber::registry().with(capture);
+        tracing::subscriber::with_default(subscriber, f);
+        let mut guard = messages.lock().unwrap();
+        std::mem::take(&mut *guard)
+    }
+
+    /// Layer capturing `access` records for assertions.
+    struct AccessCapture(Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for AccessCapture {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+            let mut visitor = AccessMessageVisitor(String::new());
+            event.record(&mut visitor);
+            if visitor.0.contains("access") {
+                self.0.lock().unwrap().push(visitor.0);
+            }
+        }
+    }
+
+    /// Visitor extracting the `message` field from an event.
+    struct AccessMessageVisitor(String);
+
+    impl tracing::field::Visit for AccessMessageVisitor {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0 = format!("{value:?}");
+            }
+        }
     }
 
     /// Build a [`PingoraRequestCtx`] for passive health testing.

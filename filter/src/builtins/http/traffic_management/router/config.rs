@@ -116,6 +116,10 @@ struct RouterRouteConfigRaw {
     /// Not implemented. Setting this is rejected at startup.
     #[serde(default)]
     json_aliases: Option<Vec<JsonAlias>>,
+
+    /// Optional per-route retry policy override.
+    #[serde(default)]
+    retry_policy: Option<praxis_core::config::RetryPolicy>,
 }
 
 impl TryFrom<RouterRouteConfigRaw> for RouterRouteConfig {
@@ -128,6 +132,7 @@ impl TryFrom<RouterRouteConfigRaw> for RouterRouteConfig {
                 cluster: raw.cluster,
                 headers: raw.headers,
                 host: raw.host,
+                retry_policy: raw.retry_policy,
             },
             json_aliases: raw.json_aliases,
         })

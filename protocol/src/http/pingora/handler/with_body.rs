@@ -28,8 +28,9 @@ use tracing::{Instrument as _, debug};
 
 use super::{
     adjust_compression, emit_request_metrics, fail_to_proxy, handle_connect_failure, hop_by_hop::RemoveHeader as _,
-    logging_cleanup, record_passive_health, record_response_span_attributes, release_retry_state, request_body_filter,
-    request_filter, response_body_filter, response_filter, upstream_peer, upstream_request, via,
+    logging_cleanup, maybe_emit_fallback_access_log, record_passive_health, record_response_span_attributes,
+    release_retry_state, request_body_filter, request_filter, response_body_filter, response_filter, upstream_peer,
+    upstream_request, via,
 };
 use crate::http::pingora::{context::PingoraRequestCtx, metrics};
 
@@ -342,12 +343,14 @@ impl ProxyHttp for PingoraHttpHandler {
     async fn logging(&self, session: &mut Session, e: Option<&pingora_core::Error>, ctx: &mut Self::CTX) {
         record_response_span_attributes(session, ctx);
         let span = std::mem::replace(&mut ctx.request_span, tracing::Span::none());
+        let written_status = session.response_written().map_or(0, |resp| resp.status.as_u16());
         async {
             let pipeline = ctx.pipeline(&self.pipeline);
             emit_request_metrics(session, ctx);
             record_passive_health(&pipeline, e, ctx);
             release_retry_state(ctx);
             logging_cleanup(&pipeline, ctx).await;
+            maybe_emit_fallback_access_log(&pipeline, written_status, ctx);
         }
         .instrument(span)
         .await;

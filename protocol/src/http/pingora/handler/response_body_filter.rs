@@ -39,6 +39,10 @@ pub(super) fn execute(
         return Ok(None);
     }
 
+    if end_of_stream {
+        ctx.response_delivery_complete = true;
+    }
+
     let caps = pipeline.body_capabilities();
 
     if !caps.needs_response_body {

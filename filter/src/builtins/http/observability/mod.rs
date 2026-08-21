@@ -6,5 +6,5 @@
 mod access_log;
 mod request_id;
 
-pub use access_log::AccessLogFilter;
+pub use access_log::{AccessLogFilter, bodyless_response, emit_access_record};
 pub use request_id::RequestIdFilter;

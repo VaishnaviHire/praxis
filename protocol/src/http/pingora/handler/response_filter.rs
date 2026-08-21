@@ -56,6 +56,11 @@ pub(super) async fn execute(
     let name_fingerprint_before = header_name_fingerprint(&resp.headers);
     ctx.connection_upgraded = is_upgrade_response;
     ctx.upstream_response_status = Some(upstream_response.status.as_u16());
+    if let Some(request) = &ctx.request_snapshot
+        && praxis_filter::bodyless_response(resp.status, &request.method)
+    {
+        ctx.response_delivery_complete = true;
+    }
 
     // Evaluate HTTP-status retry before running response filters / committing
     // the response phase, so a retriable 5xx does not leak to the client.

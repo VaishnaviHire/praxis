@@ -240,6 +240,10 @@ struct RouteRaw {
     /// Host to match.
     #[serde(default)]
     host: Option<String>,
+
+    /// Optional per-route retry policy override.
+    #[serde(default)]
+    retry_policy: Option<RetryPolicy>,
 }
 
 impl TryFrom<RouteRaw> for Route {
@@ -251,6 +255,7 @@ impl TryFrom<RouteRaw> for Route {
             cluster: raw.cluster,
             headers: raw.headers,
             host: raw.host,
+            retry_policy: raw.retry_policy,
         })
     }
 }

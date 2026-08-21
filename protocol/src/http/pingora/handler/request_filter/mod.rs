@@ -502,7 +502,12 @@ fn run_parent_terminal_body_filters(
             error!(error = %e, "response body filter error on terminal response");
             Err(Rejection::status(500))
         },
-        _ => Ok(()),
+        _ => {
+            if end_of_stream {
+                ctx.response_delivery_complete = true;
+            }
+            Ok(())
+        },
     }
 }
 

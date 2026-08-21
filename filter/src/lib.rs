@@ -45,7 +45,7 @@ pub use builtins::BasicAuthFilter;
 pub use builtins::{
     CircuitBreakerFilter, ContainsValue, CredentialInjectionFilter, DisallowedOriginMode, EndpointReselector,
     EndpointSelectorFilter, GuardrailsAction, GuardrailsFilter, LoadBalancerFilter, PiiKind, RateLimitMode,
-    RedirectStatus, RouterFilter, RuleTargetKind, has_dot_dot_traversal,
+    RedirectStatus, RouterFilter, RuleTargetKind, bodyless_response, emit_access_record, has_dot_dot_traversal,
     http::payload_processing::compression_config::CompressionConfig, normalize_rewritten_path,
 };
 #[cfg(feature = "policy-engine")]

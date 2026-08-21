@@ -251,6 +251,13 @@ pub struct PingoraRequestCtx {
     /// `logging()` hook when errors bypass `response_filter`.
     pub response_phase_done: bool,
 
+    /// Whether the response was delivered to completion: a bodyless
+    /// response finished its response phase, or the response body
+    /// reached end-of-stream. When still `false` in the `logging()`
+    /// hook, the request ended early (rejection, upstream failure, or
+    /// aborted stream) and a fallback access record is emitted.
+    pub response_delivery_complete: bool,
+
     /// Number of upstream connection retries attempted.
     pub retries: u32,
 
@@ -530,6 +537,7 @@ impl Default for PingoraRequestCtx {
             response_header_snapshot: None,
             upstream_response_status: None,
             response_phase_done: false,
+            response_delivery_complete: false,
             retries: 0,
             rewritten_path: None,
             selected_endpoint_index: None,
