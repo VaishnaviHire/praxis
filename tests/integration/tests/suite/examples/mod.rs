@@ -11,6 +11,7 @@ mod access_log_fields;
 mod access_logging;
 mod admin_interface;
 mod api_key_filter;
+mod authority_override;
 mod basic_reverse_proxy;
 mod branching;
 mod canary_routing;

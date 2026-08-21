@@ -96,11 +96,26 @@ struct LoadBalancerConfig {
 impl LoadBalancerFilter {
     /// Create a load balancer from a list of cluster definitions.
     ///
+    /// # Panics
+    ///
+    /// Panics when a cluster contains an invalid authority override.
+    /// Use [`Self::try_new`] when cluster definitions are not already
+    /// validated.
+    #[expect(clippy::panic, reason = "preserves the infallible public constructor contract")]
+    pub fn new(clusters: &[Cluster]) -> Self {
+        match Self::try_new(clusters) {
+            Ok(filter) => filter,
+            Err(error) => panic!("invalid load balancer cluster configuration: {error}"),
+        }
+    }
+
+    /// Try to create a load balancer from a list of cluster definitions.
+    ///
     /// # Errors
     ///
-    /// Returns [`FilterError`] when a cluster's TLS material cannot be
-    /// loaded (missing or unparsable CA / client-cert files).
-    pub fn new(clusters: &[Cluster]) -> Result<Self, FilterError> {
+    /// Returns [`FilterError`] if any cluster's authority override
+    /// is invalid.
+    pub fn try_new(clusters: &[Cluster]) -> Result<Self, FilterError> {
         let map = clusters
             .iter()
             .map(|c| Ok((Arc::clone(&c.name), build_cluster_entry(c)?)))
@@ -120,7 +135,7 @@ impl LoadBalancerFilter {
         if cfg.clusters.is_empty() {
             return Err("load_balancer: 'clusters' is empty; every request would fail with 502".into());
         }
-        Ok(Box::new(Self::new(&cfg.clusters)?))
+        Ok(Box::new(Self::try_new(&cfg.clusters)?))
     }
 
     /// Look up health state for `cluster_name` from the context's

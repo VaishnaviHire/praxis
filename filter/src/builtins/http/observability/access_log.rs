@@ -1267,6 +1267,7 @@ conditions:
         ctx.cluster = Some(std::sync::Arc::from("backend"));
         ctx.upstream = Some(Upstream {
             address: std::sync::Arc::from("10.0.0.2:8080"),
+            authority: None,
             connection: std::sync::Arc::new(ConnectionOptions::default()),
             tls: None,
         });
