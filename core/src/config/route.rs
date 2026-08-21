@@ -222,22 +222,25 @@ pub struct Route {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RouteRaw {
-    /// Exact path to match.
+    /// Exact path to match. Exactly one of `path` or `path_prefix`
+    /// must be set.
     #[serde(default)]
     path: Option<String>,
 
-    /// Path prefix to match.
+    /// Path prefix to match; the longest matching prefix wins. Exactly
+    /// one of `path` or `path_prefix` must be set.
     #[serde(default)]
     path_prefix: Option<String>,
 
     /// Name of the cluster to route matched requests to.
     cluster: Arc<str>,
 
-    /// Request headers to match.
+    /// Request headers to match. All specified headers must be present
+    /// with matching values (AND semantics, case-sensitive).
     #[serde(default)]
     headers: Option<HashMap<String, String>>,
 
-    /// Host to match.
+    /// Host to match. If set, the route only applies to this host.
     #[serde(default)]
     host: Option<String>,
 
