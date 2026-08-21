@@ -251,11 +251,17 @@ impl FilterPipeline {
         body: &mut Option<Bytes>,
         end_of_stream: bool,
     ) -> Result<FilterAction, FilterError> {
-        let response_header = ctx.response_header.as_ref().map(|resp| crate::context::Response {
-            headers: resp.headers.clone(),
-            status: resp.status,
-        });
-        self.execute_http_response_body_with_response_header(ctx, body, end_of_stream, response_header.as_ref())
+        if !self.body_capabilities.any_response_body_condition {
+            return self.execute_http_response_body_with_response_header(ctx, body, end_of_stream, None);
+        }
+        // Temporarily move the exclusive header borrow out of the context
+        // so a shared view can be passed alongside `&mut ctx` — no header
+        // map clone per body chunk.
+        let response_header = ctx.response_header.take();
+        let result =
+            self.execute_http_response_body_with_response_header(ctx, body, end_of_stream, response_header.as_deref());
+        ctx.response_header = response_header;
+        result
     }
 
     /// Run all HTTP response body filters in reverse order, using `response_header`

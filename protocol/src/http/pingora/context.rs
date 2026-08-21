@@ -76,11 +76,12 @@ pub struct PingoraRequestCtx {
     /// Verified downstream TLS peer identity.
     ///
     /// Set once from the SSL digest in `request_filter` before
-    /// the first filter runs.  Cloned (not moved) into each
-    /// `HttpFilterContext` so it is available in both pre-read
+    /// the first filter runs.  Shared via [`Arc`] with each
+    /// `HttpFilterContext` (an `Arc` clone per phase, not a deep
+    /// copy per body chunk) so it is available in both pre-read
     /// body phases and the main filter pipeline.  `None` for
     /// non-mTLS or no-client-cert connections.
-    pub peer_identity: Option<praxis_tls::TlsPeerIdentity>,
+    pub peer_identity: Option<Arc<praxis_tls::TlsPeerIdentity>>,
 
     /// Whether the connection was upgraded via 101 Switching Protocols.
     ///
@@ -321,7 +322,6 @@ pub struct PingoraRequestCtx {
 /// [`HttpFilterContext`]: praxis_filter::HttpFilterContext
 macro_rules! filter_context {
     ($ctx:expr, $pipeline:expr, $request:expr, $response_header:expr) => {{
-        $pipeline.prepare_extensions(&mut $ctx.extensions);
         praxis_filter::HttpFilterContext {
             buffered_request_body: $ctx
                 .pre_read_body
@@ -473,6 +473,9 @@ impl PingoraRequestCtx {
             return Arc::clone(existing);
         }
         let pipeline = swap.load_full();
+        // Extension preparation is once per request, when the pipeline is
+        // pinned — not per filter context (body chunks build one each).
+        pipeline.prepare_extensions(&mut self.extensions);
         self.pinned_pipeline = Some(Arc::clone(&pipeline));
         pipeline
     }

@@ -167,7 +167,7 @@ pub struct HttpFilterContext<'a> {
     /// request` with no cert).  Populated once from the SSL digest
     /// before the first filter runs and preserved across all
     /// subsequent `build_filter_context()` calls for the request.
-    pub peer_identity: Option<TlsPeerIdentity>,
+    pub peer_identity: Option<Arc<TlsPeerIdentity>>,
 
     /// Type-safe request-scoped extension container.
     ///

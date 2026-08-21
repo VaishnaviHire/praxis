@@ -1345,7 +1345,7 @@ struct SubPipelineRuntimeResources<'a> {
     kv_stores: Option<&'a praxis_core::kv::KvStoreRegistry>,
 
     /// Verified downstream mTLS identity.
-    peer_identity: Option<&'a praxis_tls::TlsPeerIdentity>,
+    peer_identity: Option<&'a Arc<praxis_tls::TlsPeerIdentity>>,
 
     /// Start time of the containing client request.
     request_start: Instant,

@@ -10,12 +10,12 @@
 //! [`HttpPeer`]: pingora_core::upstreams::peer::HttpPeer
 
 use std::{
-    collections::HashMap,
     net::SocketAddr,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
     time::Instant,
 };
 
+use dashmap::DashMap;
 use pingora_core::upstreams::peer::HttpPeer;
 
 use super::ConnectionOptions;
@@ -55,16 +55,20 @@ pub enum AddressResolutionError {
 
 /// Cached DNS resolution result.
 struct DnsCacheEntry {
-    /// All addresses returned by the resolver.
-    addrs: Vec<SocketAddr>,
+    /// Preferred (IPv4-first) address from the last resolution.
+    preferred: SocketAddr,
     /// Cache insertion time.
     resolved_at: Instant,
 }
 
 /// Process-wide bounded DNS cache.
-fn dns_cache() -> &'static Mutex<HashMap<String, DnsCacheEntry>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, DnsCacheEntry>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+///
+/// Sharded ([`DashMap`]) so the per-request read path never contends
+/// on a single process-wide lock; the preferred address is stored
+/// pre-selected so a hit is one lock-free lookup with no scan.
+fn dns_cache() -> &'static DashMap<String, DnsCacheEntry> {
+    static CACHE: OnceLock<DashMap<String, DnsCacheEntry>> = OnceLock::new();
+    CACHE.get_or_init(DashMap::new)
 }
 
 /// Resolve an upstream address without blocking the async worker.
@@ -106,14 +110,14 @@ pub async fn resolve_address(address: &str) -> Result<SocketAddr, AddressResolut
     })?;
     let preferred = select_preferred_address(&addrs, address)?;
 
-    let mut cache = dns_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cache = dns_cache();
     if cache.len() >= MAX_DNS_ENTRIES && !cache.contains_key(address) {
         cache.retain(|_, entry| entry.resolved_at.elapsed().as_secs() < DNS_TTL_SECS);
         if cache.len() >= MAX_DNS_ENTRIES
             && let Some(oldest) = cache
                 .iter()
-                .min_by_key(|(_, entry)| entry.resolved_at)
-                .map(|(key, _)| key.clone())
+                .min_by_key(|entry| entry.value().resolved_at)
+                .map(|entry| entry.key().clone())
         {
             cache.remove(&oldest);
         }
@@ -121,29 +125,18 @@ pub async fn resolve_address(address: &str) -> Result<SocketAddr, AddressResolut
     cache.insert(
         owned,
         DnsCacheEntry {
-            addrs,
+            preferred,
             resolved_at: Instant::now(),
         },
     );
-    drop(cache);
     Ok(preferred)
 }
 
-/// Return a non-expired cached address, preferring IPv4.
+/// Return a non-expired cached preferred address.
 fn lookup_cached(address: &str) -> Option<SocketAddr> {
-    let cache = dns_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    cache.get(address).and_then(|entry| {
-        (entry.resolved_at.elapsed().as_secs() < DNS_TTL_SECS)
-            .then(|| {
-                entry
-                    .addrs
-                    .iter()
-                    .find(|addr| addr.is_ipv4())
-                    .or_else(|| entry.addrs.first())
-                    .copied()
-            })
-            .flatten()
-    })
+    dns_cache()
+        .get(address)
+        .and_then(|entry| (entry.resolved_at.elapsed().as_secs() < DNS_TTL_SECS).then_some(entry.preferred))
 }
 
 /// Select IPv4 when available, otherwise the first result.
@@ -187,7 +180,10 @@ pub fn apply_connection_options(peer: &mut HttpPeer, opts: &ConnectionOptions) {
 /// Apply pre-cached TLS settings to an [`HttpPeer`].
 ///
 /// Maps CA certificates, client certificates, and the verify toggle
-/// from [`CachedClusterTls`] onto the peer's options.
+/// from [`CachedClusterTls`] onto the peer's options. The Pingora-typed
+/// conversions are memoized per cluster on first use, so the request
+/// path pays only an [`Arc`] clone instead of re-parsing certificate
+/// DER on every request.
 ///
 /// [`HttpPeer`]: pingora_core::upstreams::peer::HttpPeer
 /// [`CachedClusterTls`]: praxis_tls::CachedClusterTls
@@ -198,12 +194,17 @@ pub fn apply_cached_tls(peer: &mut HttpPeer, tls: &praxis_tls::CachedClusterTls,
         peer.options.verify_hostname = false;
     }
 
-    if let Some(ca) = tls.ca() {
-        peer.options.ca = Some(Arc::from(ca_from_cached(ca)));
+    if let Some(ca) = tls.ca()
+        && let Some(converted) =
+            ca.converted_or_init(|| -> Arc<[pingora_core::utils::tls::WrappedX509]> { Arc::from(ca_from_cached(ca)) })
+    {
+        peer.options.ca = Some(Arc::clone(converted));
     }
 
-    if let Some(client) = tls.client_cert() {
-        peer.client_cert_key = Some(Arc::new(client_cert_from_cached(client)));
+    if let Some(client) = tls.client_cert()
+        && let Some(converted) = client.converted_or_init(|| Arc::new(client_cert_from_cached(client)))
+    {
+        peer.client_cert_key = Some(Arc::clone(converted));
     }
 }
 
@@ -251,7 +252,7 @@ pub fn derive_sni(address: &str) -> String {
     let host = address.rsplit_once(':').map_or(address, |(h, _)| h);
     let host_bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
     if host_bare.parse::<std::net::IpAddr>().is_ok() {
-        tracing::warn!(
+        tracing::debug!(
             address,
             "upstream is an IP without explicit SNI; TLS hostname verification is meaningless"
         );
@@ -306,6 +307,27 @@ mod tests {
     #[test]
     fn derive_sni_returns_empty_for_ipv6() {
         assert_eq!(derive_sni("[::1]:8443"), "", "should return empty for IPv6 address");
+    }
+
+    #[test]
+    fn apply_cached_tls_memoizes_ca_conversion() {
+        let cached_ca = Arc::new(praxis_tls::CachedCaCerts::new(vec![vec![1, 2, 3]]));
+        let converted_a: *const [pingora_core::utils::tls::WrappedX509] = cached_ca
+            .converted_or_init(|| -> Arc<[pingora_core::utils::tls::WrappedX509]> {
+                Arc::from(ca_from_cached(&cached_ca))
+            })
+            .map(|arc| Arc::as_ptr(arc))
+            .unwrap();
+        let converted_b: *const [pingora_core::utils::tls::WrappedX509] = cached_ca
+            .converted_or_init(|| -> Arc<[pingora_core::utils::tls::WrappedX509]> {
+                Arc::from(ca_from_cached(&cached_ca))
+            })
+            .map(|arc| Arc::as_ptr(arc))
+            .unwrap();
+        assert_eq!(
+            converted_a, converted_b,
+            "the CA conversion must be memoized, not rebuilt per request"
+        );
     }
 
     #[test]

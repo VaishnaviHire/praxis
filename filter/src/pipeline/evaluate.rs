@@ -43,7 +43,25 @@ use crate::{
 // -----------------------------------------------------------------------------
 
 /// Evaluate all branches on a filter, executing matching ones.
-pub(crate) fn evaluate_branches<'a>(
+///
+/// The branch-free case — the overwhelmingly common one — takes a
+/// synchronous fast path with no boxed future: only nested branch
+/// recursion (via [`evaluate_branches_boxed`]) pays a heap allocation.
+pub(crate) async fn evaluate_branches(
+    branches: &[ResolvedBranch],
+    ctx: &mut HttpFilterContext<'_>,
+) -> Result<BranchOutcome, FilterError> {
+    if branches.is_empty() {
+        retain_filter_results(ctx);
+        ctx.filter_results.clear();
+        return Ok(BranchOutcome::Continue);
+    }
+    evaluate_branches_inner(branches, ctx).await
+}
+
+/// Boxed entry point breaking the async recursion cycle for nested
+/// branches (branches within branches).
+fn evaluate_branches_boxed<'a>(
     branches: &'a [ResolvedBranch],
     ctx: &'a mut HttpFilterContext<'_>,
 ) -> Pin<Box<dyn Future<Output = Result<BranchOutcome, FilterError>> + Send + 'a>> {
@@ -202,30 +220,41 @@ async fn dispatch_nested_outcome(
     branches: &[ResolvedBranch],
     ctx: &mut HttpFilterContext<'_>,
 ) -> Result<Option<FilterAction>, FilterError> {
-    let outcome = evaluate_branches(branches, ctx).await?;
+    let outcome = if branches.is_empty() {
+        retain_filter_results(ctx);
+        ctx.filter_results.clear();
+        BranchOutcome::Continue
+    } else {
+        evaluate_branches_boxed(branches, ctx).await?
+    };
+    Ok(map_nested_outcome(outcome))
+}
+
+/// Convert a nested branch outcome into the parent's stopping action.
+fn map_nested_outcome(outcome: BranchOutcome) -> Option<FilterAction> {
     match outcome {
-        BranchOutcome::Continue => Ok(None),
+        BranchOutcome::Continue => None,
         BranchOutcome::SkipTo(target) => {
             warn!(
                 target,
                 "discarding SkipTo from nested branch; nested control flow does not propagate"
             );
-            Ok(None)
+            None
         },
         BranchOutcome::ReEnter(target) => {
             warn!(
                 target,
                 "discarding ReEnter from nested branch; nested control flow does not propagate"
             );
-            Ok(None)
+            None
         },
         BranchOutcome::Terminal => {
             warn!("nested terminal branch produced no response; failing closed with 500");
-            Ok(Some(FilterAction::Reject(crate::actions::Rejection::status(500))))
+            Some(FilterAction::Reject(crate::actions::Rejection::status(500)))
         },
-        BranchOutcome::Reject(r) => Ok(Some(FilterAction::Reject(r))),
-        BranchOutcome::TerminalResponse(t) => Ok(Some(FilterAction::TerminalResponse(t))),
-        BranchOutcome::StreamingTerminalResponse(t) => Ok(Some(FilterAction::StreamingTerminalResponse(t))),
+        BranchOutcome::Reject(r) => Some(FilterAction::Reject(r)),
+        BranchOutcome::TerminalResponse(t) => Some(FilterAction::TerminalResponse(t)),
+        BranchOutcome::StreamingTerminalResponse(t) => Some(FilterAction::StreamingTerminalResponse(t)),
     }
 }
 
