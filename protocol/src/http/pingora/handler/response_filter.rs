@@ -56,11 +56,10 @@ pub(super) async fn execute(
     let name_fingerprint_before = header_name_fingerprint(&resp.headers);
     ctx.connection_upgraded = is_upgrade_response;
     ctx.upstream_response_status = Some(upstream_response.status.as_u16());
-    if let Some(request) = &ctx.request_snapshot
-        && praxis_filter::bodyless_response(resp.status, &request.method)
-    {
-        ctx.response_delivery_complete = true;
-    }
+    let is_bodyless = ctx
+        .request_snapshot
+        .as_ref()
+        .is_some_and(|request| praxis_filter::bodyless_response(resp.status, &request.method));
 
     // Evaluate HTTP-status retry before running response filters / committing
     // the response phase, so a retriable 5xx does not leak to the client.
@@ -92,7 +91,7 @@ pub(super) async fn execute(
             status: resp.status,
         });
     }
-    handle_response_result(result, upstream_response, resp, headers_modified, ctx)
+    handle_response_result(result, upstream_response, resp, headers_modified, is_bodyless, ctx)
 }
 
 /// Run the response pipeline and capture the result plus header-modified flag.
@@ -160,11 +159,17 @@ async fn run_response_pipeline(
 ///
 /// [`HeaderMap`]: http::HeaderMap
 /// [`RespParts`]: http::response::Parts
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "linear result dispatch"
+)]
 fn handle_response_result(
     result: std::result::Result<FilterAction, praxis_filter::FilterError>,
     upstream_response: &mut pingora_http::ResponseHeader,
     mut resp: praxis_filter::Response,
     headers_modified: bool,
+    is_bodyless: bool,
     ctx: &mut PingoraRequestCtx,
 ) -> Result<()> {
     match result {
@@ -175,6 +180,12 @@ fn handle_response_result(
             | FilterAction::TerminalResponse(_)
             | FilterAction::StreamingTerminalResponse(_),
         ) => {
+            // Bodyless responses skip the body phase, so a successful
+            // header phase is their delivery completion. Marking earlier
+            // would hide responses the pipeline itself rejects.
+            if is_bodyless {
+                ctx.response_delivery_complete = true;
+            }
             write_back_response(upstream_response, &mut resp, headers_modified);
             Ok(())
         },
@@ -596,6 +607,7 @@ mod tests {
             &mut upstream,
             resp,
             false,
+            false,
             &mut PingoraRequestCtx::default(),
         )
         .unwrap();
@@ -626,6 +638,7 @@ mod tests {
             &mut upstream,
             resp,
             true,
+            false,
             &mut PingoraRequestCtx::default(),
         )
         .unwrap();
@@ -654,6 +667,7 @@ mod tests {
             &mut upstream,
             resp,
             true,
+            false,
             &mut PingoraRequestCtx::default(),
         )
         .unwrap();

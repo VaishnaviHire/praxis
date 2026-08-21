@@ -107,6 +107,8 @@ impl FilterPipeline {
             subrequest_client: None,
             may_select_streaming_subrequest_response,
             time_source: Arc::new(SystemTimeSource),
+            request_body_ceiling: None,
+            response_body_ceiling: None,
         }
     }
 

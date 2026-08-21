@@ -39,13 +39,10 @@ pub(super) fn execute(
         return Ok(None);
     }
 
-    if end_of_stream {
-        ctx.response_delivery_complete = true;
-    }
-
     let caps = pipeline.body_capabilities();
 
     if !caps.needs_response_body {
+        mark_delivered_at_eos(ctx, end_of_stream);
         return Ok(None);
     }
 
@@ -59,7 +56,25 @@ pub(super) fn execute(
                     "response body exceeds maximum size",
                 ));
             }
+            mark_delivered_at_eos(ctx, end_of_stream);
             return Ok(None);
+        },
+
+        BodyMode::Stream => {
+            // The global body_limits ceiling applies to streamed bodies too;
+            // Stream mode just counts instead of buffering. The projection
+            // does not mutate the counter — the filter pipeline below is
+            // the accumulator. `None` is only reachable with
+            // allow_unbounded_body.
+            let chunk_len = body.as_ref().map_or(0, Bytes::len) as u64;
+            if let Some(max) = pipeline.response_body_ceiling()
+                && ctx.response_body_bytes.saturating_add(chunk_len) > max as u64
+            {
+                return Err(pingora_core::Error::explain(
+                    pingora_core::ErrorType::InternalError,
+                    "streamed response body exceeds global body limit",
+                ));
+            }
         },
 
         BodyMode::StreamBuffer { max_bytes } if !ctx.response_body_released => {
@@ -71,7 +86,7 @@ pub(super) fn execute(
             }
         },
 
-        BodyMode::StreamBuffer { .. } | BodyMode::Stream => {},
+        BodyMode::StreamBuffer { .. } => {},
         _ => tracing::error!("unhandled BodyMode variant in response body filter"),
     }
 
@@ -97,6 +112,7 @@ pub(super) fn execute(
             | FilterAction::StreamingTerminalResponse(_),
         ) => {
             suppress_stream_buffer_chunk(body, is_stream_buffer, ctx.response_body_released, end_of_stream);
+            mark_delivered_at_eos(ctx, end_of_stream);
             Ok(None)
         },
         Ok(FilterAction::Release) => {
@@ -107,6 +123,7 @@ pub(super) fn execute(
                 &mut ctx.response_body_buffer,
                 end_of_stream,
             );
+            mark_delivered_at_eos(ctx, end_of_stream);
             Ok(None)
         },
         Ok(FilterAction::Reject(rejection)) => {
@@ -129,6 +146,17 @@ pub(super) fn execute(
                 format!("response body filter error: {e}"),
             ))
         },
+    }
+}
+
+/// Record that the response was delivered to completion.
+///
+/// Called only on success exits: setting the flag before the size checks
+/// and filter runs in the same invocation would mark responses aborted at
+/// end-of-stream as delivered, suppressing the fallback access record.
+fn mark_delivered_at_eos(ctx: &mut PingoraRequestCtx, end_of_stream: bool) {
+    if end_of_stream {
+        ctx.response_delivery_complete = true;
     }
 }
 

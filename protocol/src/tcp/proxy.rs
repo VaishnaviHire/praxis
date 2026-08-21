@@ -250,6 +250,10 @@ impl PingoraTcpProxy {
 #[async_trait]
 impl ServerApp for PingoraTcpProxy {
     #[expect(clippy::too_many_lines, reason = "linear connection lifecycle")]
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "linear connection lifecycle with error-path cleanup"
+    )]
     async fn process_new(self: &Arc<Self>, mut session: Stream, shutdown: &ShutdownWatch) -> Option<Stream> {
         let connect_time = std::time::Instant::now();
         let (remote_addr, local_addr) = extract_addrs(&session);
@@ -323,6 +327,21 @@ impl ServerApp for PingoraTcpProxy {
             stream
         } else {
             crate::http::pingora::metrics::record_upstream_connect_failure(cluster_label);
+            // Connect filters already ran (least-connections/P2C counters
+            // were incremented on selection), so the paired disconnect
+            // filters must run on this exit path too or the in-flight
+            // counters leak permanently.
+            self.run_disconnect_filters(
+                &pipeline,
+                &remote_addr,
+                &local_addr,
+                &upstream_addr,
+                sni_hostname.as_deref(),
+                connect_time,
+                0,
+                0,
+            )
+            .await;
             return None;
         };
 
@@ -393,12 +412,29 @@ async fn resolve_connect_result(
         },
         Ok(FilterAction::Reject(r)) => {
             warn!(remote = %remote_addr, status = r.status, "TCP connection rejected by filter");
+            release_selected_endpoint(pipeline, ctx).await;
             None
         },
         Err(e) => {
             error!(remote = %remote_addr, error = %e, "TCP connect filter error");
+            release_selected_endpoint(pipeline, ctx).await;
             None
         },
+    }
+}
+
+/// Run disconnect filters when the connect phase selected an endpoint but
+/// the connection will not proceed.
+///
+/// A rejection or error from a filter after `tcp_load_balancer` leaves the
+/// selected endpoint's in-flight counter incremented; only the disconnect
+/// hook releases it.
+async fn release_selected_endpoint(pipeline: &FilterPipeline, ctx: &mut TcpFilterContext<'_>) {
+    if ctx.upstream_addr.is_none() {
+        return;
+    }
+    if let Err(e) = pipeline.execute_tcp_disconnect(ctx).await {
+        error!(error = %e, "TCP disconnect filter error while releasing rejected connection");
     }
 }
 
@@ -655,6 +691,90 @@ fn resolve_listener_label(
 )]
 mod tests {
     use super::*;
+
+    /// Rejects every TCP connection; stands in for a policy filter placed
+    /// after the load balancer.
+    struct RejectingTcpFilter;
+
+    #[async_trait]
+    impl praxis_filter::TcpFilter for RejectingTcpFilter {
+        fn name(&self) -> &'static str {
+            "test_tcp_reject"
+        }
+
+        async fn on_connect(
+            &self,
+            _ctx: &mut TcpFilterContext<'_>,
+        ) -> Result<FilterAction, praxis_filter::FilterError> {
+            Ok(FilterAction::Reject(praxis_filter::Rejection::status(403)))
+        }
+    }
+
+    /// Build a two-endpoint least-connections pipeline: the LB selects and
+    /// increments; a rejecting filter after it forces the release path.
+    fn least_connections_pipeline(reject_after_lb: bool) -> FilterPipeline {
+        let mut yaml = String::from(
+            "- filter: tcp_load_balancer\n  clusters:\n    - name: db\n      load_balancer_strategy: least_connections\n      endpoints: [\"10.0.0.1:5432\", \"10.0.0.2:5432\"]\n",
+        );
+        if reject_after_lb {
+            yaml.push_str("- filter: test_tcp_reject\n");
+        }
+        let mut entries: Vec<praxis_core::config::FilterEntry> = serde_yaml::from_str(&yaml).unwrap();
+        let mut registry = praxis_filter::FilterRegistry::with_builtins();
+        registry
+            .register(
+                "test_tcp_reject",
+                praxis_filter::FilterFactory::Tcp(Arc::new(|_config| Ok(Box::new(RejectingTcpFilter)))),
+            )
+            .unwrap();
+        FilterPipeline::build(&mut entries, &registry).unwrap()
+    }
+
+    fn make_tcp_ctx<'a>(cluster: &str) -> TcpFilterContext<'a> {
+        TcpFilterContext {
+            remote_addr: "192.0.2.7:9999",
+            local_addr: "127.0.0.1:5432",
+            sni: None,
+            upstream_addr: None,
+            cluster: Some(Arc::from(cluster)),
+            health_registry: None,
+            kv_stores: None,
+            connect_time: std::time::Instant::now(),
+            bytes_in: 0,
+            bytes_out: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_connection_releases_least_connections_counter() {
+        let pipeline = least_connections_pipeline(true);
+
+        // First attempt: LB selects endpoint 1, the ACL filter then rejects.
+        // The release path must decrement the counter again.
+        let first = resolve_connect_result(&pipeline, &mut make_tcp_ctx("db"), "192.0.2.7:9999").await;
+        assert!(first.is_none(), "the ACL filter should reject the connection");
+
+        // If the counter leaked, least-connections now sees [1, 0] and the
+        // next selection goes to endpoint 2; with the release it sees [0, 0]
+        // and picks endpoint 1 again.
+        let no_reject = least_connections_pipeline(false);
+        let mut probe = make_tcp_ctx("db");
+        let selected = resolve_connect_result(&no_reject, &mut probe, "192.0.2.7:9999").await;
+        assert_eq!(
+            selected.as_deref(),
+            Some("10.0.0.1:5432"),
+            "fresh pipeline sanity check: first selection is endpoint 1"
+        );
+
+        let mut probe2 = make_tcp_ctx("db");
+        let action = pipeline.execute_tcp_connect(&mut probe2).await;
+        drop(action);
+        assert_eq!(
+            probe2.upstream_addr.as_deref(),
+            Some("10.0.0.1:5432"),
+            "after a rejected connection the counter must be released, so endpoint 1 is least-loaded again"
+        );
+    }
 
     #[test]
     fn resolve_listener_label_exact_bind_address() {

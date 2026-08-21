@@ -82,7 +82,25 @@ pub(super) async fn execute(
             }
         },
 
-        BodyMode::StreamBuffer { .. } | BodyMode::Stream => {},
+        BodyMode::Stream => {
+            // The global body_limits ceiling applies to streamed bodies too;
+            // Stream mode just counts instead of buffering. The projection
+            // does not mutate the counter — the filter pipeline below is
+            // the accumulator. `None` is only reachable with
+            // allow_unbounded_body.
+            let chunk_len = body.as_ref().map_or(0, Bytes::len) as u64;
+            if let Some(max) = pipeline.request_body_ceiling()
+                && ctx.request_body_bytes.saturating_add(chunk_len) > max as u64
+            {
+                send_rejection(session, Rejection::status(413)).await;
+                return Err(pingora_core::Error::explain(
+                    pingora_core::ErrorType::HTTPStatus(413),
+                    "streamed request body exceeds global body limit",
+                ));
+            }
+        },
+
+        BodyMode::StreamBuffer { .. } => {},
         _ => tracing::error!("unhandled BodyMode variant in request body filter"),
     }
 

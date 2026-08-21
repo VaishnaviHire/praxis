@@ -125,9 +125,17 @@ pub(crate) fn reload_pipelines(
 // -----------------------------------------------------------------------------
 
 /// The health registry pinned by the currently live pipelines.
-fn live_health_registry(live: &ListenerPipelines) -> Option<HealthRegistry> {
-    live.listener_names()
-        .filter_map(|name| live.get(name))
+///
+/// Only listeners present in the previous config are considered:
+/// `ListenerPipelines` keeps its startup key set forever, so a listener
+/// removed or renamed in an earlier reload still holds an old-generation
+/// pipeline pinned to a registry whose probe tasks were cancelled. Reading
+/// from that frozen registry would carry over stale health verdicts.
+fn live_health_registry(live: &ListenerPipelines, old_config: &Config) -> Option<HealthRegistry> {
+    old_config
+        .listeners
+        .iter()
+        .filter_map(|listener| live.get(&listener.name))
         .find_map(|slot| slot.load().health_registry().cloned())
 }
 
@@ -144,7 +152,7 @@ fn carry_over_health_state(
     new_config: &Config,
     new_registry: &HealthRegistry,
 ) {
-    let Some(old_registry) = live_health_registry(live) else {
+    let Some(old_registry) = live_health_registry(live, old_config) else {
         return;
     };
 
@@ -1120,6 +1128,100 @@ filter_chains:
         assert!(
             entry.endpoints()[0].is_healthy(),
             "healthy endpoint must stay healthy across reload"
+        );
+    }
+
+    /// Same cluster/chain as [`health_checked_config`] plus a second
+    /// listener that a later reload removes from the config.
+    fn health_checked_config_two_listeners() -> Config {
+        Config::from_yaml(
+            r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+  - name: legacy
+    address: "127.0.0.1:8081"
+    filter_chains: [main]
+clusters:
+  - name: backend
+    endpoints: ["10.0.0.1:80", "10.0.0.2:80"]
+    health_check:
+      type: tcp
+      interval_ms: 60000
+filter_chains:
+  - name: main
+    filters:
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: "backend"
+      - filter: load_balancer
+        clusters:
+          - name: "backend"
+            endpoints:
+              - "10.0.0.1:80"
+              - "10.0.0.2:80"
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn carry_over_ignores_stale_pipeline_of_removed_listener() {
+        let two = health_checked_config_two_listeners();
+        let one = health_checked_config();
+        let registry = FilterRegistry::with_builtins();
+        let stale_health = build_health_registry(&two.clusters);
+        let live = resolve_pipelines(
+            &two,
+            &registry,
+            &stale_health,
+            &empty_kv_stores(),
+            &empty_subrequest_client(),
+        )
+        .unwrap();
+        let shutdown = Arc::new(Mutex::new(CancellationToken::new()));
+        let meta = praxis_protocol::http::pingora::health::new_listener_meta_store(
+            praxis_protocol::http::pingora::health::listener_meta_from_config(&two),
+        );
+
+        // First reload removes the 'legacy' listener; its pipeline stays
+        // pinned to the now probe-less first-generation registry.
+        reload_pipelines(
+            &two,
+            &one,
+            &registry,
+            &live,
+            &meta,
+            &shutdown,
+            &empty_kv_stores(),
+            &empty_subrequest_client(),
+        )
+        .unwrap();
+
+        // The frozen registry accumulates a stale verdict.
+        stale_health.get("backend").unwrap().endpoints()[0].mark_unhealthy();
+
+        // The next reload must carry state from the current generation
+        // (via 'web', all healthy), never from the removed listener's
+        // frozen registry.
+        reload_pipelines(
+            &one,
+            &one,
+            &registry,
+            &live,
+            &meta,
+            &shutdown,
+            &empty_kv_stores(),
+            &empty_subrequest_client(),
+        )
+        .unwrap();
+
+        let new_registry = live.get("web").unwrap().load().health_registry().cloned().unwrap();
+        assert!(
+            new_registry.get("backend").unwrap().endpoints()[0].is_healthy(),
+            "a stale verdict from a removed listener's frozen registry must not be carried over"
         );
     }
 

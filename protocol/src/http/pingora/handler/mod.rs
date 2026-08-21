@@ -365,6 +365,12 @@ fn maybe_emit_fallback_access_log(pipeline: &FilterPipeline, status: u16, ctx: &
         return;
     }
     if let Some(filter_ctx) = ctx.filter_context_for(pipeline, None) {
+        // Honor the entry's request conditions: a scoped access_log (e.g.
+        // only /api paths) must not gain fallback records for requests the
+        // operator excluded. Sampling is still deliberately bypassed.
+        if !pipeline.filter_request_conditions_match("access_log", filter_ctx.request) {
+            return;
+        }
         praxis_filter::emit_access_record(&filter_ctx, status);
     }
 }
@@ -382,11 +388,18 @@ async fn logging_cleanup(pipeline: &FilterPipeline, ctx: &mut PingoraRequestCtx)
         let state = filter_ctx.filter_state;
         let exec_idx = filter_ctx.executed_filter_indices;
         let body_idx = filter_ctx.body_done_indices;
+        // The context macro takes cluster/upstream out of ctx; restore them
+        // so the fallback access record that follows can attribute the
+        // failure to the routed cluster and selected endpoint.
+        let cluster = filter_ctx.cluster;
+        let upstream = filter_ctx.upstream;
         ctx.extensions = extensions;
         ctx.filter_metadata = metadata;
         ctx.filter_state = state;
         ctx.cached_executed_filter_indices = exec_idx;
         ctx.cached_body_done_indices = body_idx;
+        ctx.cluster = cluster;
+        ctx.upstream = upstream;
     }
 }
 
@@ -923,8 +936,11 @@ mod tests {
             headers: http::HeaderMap::new(),
         });
         logging_cleanup(&pipeline, &mut ctx).await;
-        assert!(ctx.cluster.is_none(), "cluster should be taken by logging_cleanup");
-        assert!(ctx.upstream.is_none(), "upstream should be taken by logging_cleanup");
+        assert_eq!(
+            ctx.cluster.as_deref(),
+            Some("test-cluster"),
+            "cluster must be restored so the fallback access record can attribute the failure"
+        );
     }
 
     #[tokio::test]
@@ -1376,6 +1392,52 @@ mod tests {
 
         let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut ctx));
         assert!(events.is_empty(), "no access_log filter means no fallback record");
+    }
+
+    #[test]
+    fn fallback_access_log_honors_entry_conditions() {
+        let registry = praxis_filter::FilterRegistry::with_builtins();
+        let mut entries = vec![praxis_filter::FilterEntry {
+            branch_chains: None,
+            conditions: vec![serde_yaml::from_str("when:\n  path_prefix: /api\n").unwrap()],
+            failure_mode: praxis_filter::FailureMode::default(),
+            filter_type: "access_log".to_owned(),
+            config: serde_yaml::Value::Null,
+            name: None,
+            response_conditions: vec![],
+        }];
+        let pipeline = FilterPipeline::build(&mut entries, &registry).unwrap();
+
+        let mut excluded = make_fallback_ctx();
+        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut excluded));
+        assert!(
+            events.is_empty(),
+            "requests the operator scoped out must not gain fallback records"
+        );
+
+        let mut included = make_fallback_ctx();
+        if let Some(snapshot) = included.request_snapshot.as_mut() {
+            snapshot.uri = "/api/users".parse().unwrap();
+        }
+        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut included));
+        assert_eq!(events.len(), 1, "in-scope incomplete requests still get a record");
+    }
+
+    #[test]
+    fn aborted_response_body_at_eos_is_not_marked_delivered() {
+        // access_log declares read-only response body access, so the hook
+        // reaches the SizeLimit check instead of early-returning.
+        let pipeline = access_log_pipeline();
+        let mut ctx = make_fallback_ctx();
+        ctx.response_body_mode = BodyMode::SizeLimit { max_bytes: 4 };
+        let mut body = Some(Bytes::from_static(b"exceeds the limit"));
+
+        let result = response_body_filter::execute(&pipeline, &mut body, true, &mut ctx);
+        assert!(result.is_err(), "over-limit body must abort");
+        assert!(
+            !ctx.response_delivery_complete,
+            "a response aborted at end-of-stream was not delivered; the fallback record must fire"
+        );
     }
 
     #[test]

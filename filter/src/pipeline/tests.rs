@@ -1899,6 +1899,8 @@ async fn skip_to_excludes_skipped_filters_from_response() {
         may_select_streaming_subrequest_response: false,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/");
@@ -1967,6 +1969,8 @@ async fn skip_to_excludes_skipped_filters_from_body_hooks() {
         subrequest_client: None,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/");
@@ -2035,6 +2039,8 @@ async fn body_hooks_run_for_every_filter_before_the_request_phase() {
         subrequest_client: None,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/");
@@ -2094,6 +2100,8 @@ async fn all_executed_filters_run_on_response() {
         may_select_streaming_subrequest_response: false,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/");
@@ -2152,6 +2160,8 @@ async fn skipped_filter_skips_its_branches() {
         may_select_streaming_subrequest_response: false,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     };
 
     let req = crate::test_utils::make_request(Method::GET, "/other");
@@ -3365,6 +3375,8 @@ fn test_pipeline(body_capabilities: BodyCapabilities, filters: Vec<PipelineFilte
         may_select_streaming_subrequest_response: false,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     }
 }
 
@@ -3389,6 +3401,8 @@ fn make_pipeline(filters: Vec<Box<dyn HttpFilter>>) -> FilterPipeline {
         may_select_streaming_subrequest_response: false,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     }
 }
 
@@ -3415,6 +3429,8 @@ fn make_pipeline_with_conditions(
         may_select_streaming_subrequest_response: false,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     }
 }
 
@@ -3441,6 +3457,8 @@ fn make_pipeline_with_response_conditions(
         may_select_streaming_subrequest_response: false,
         pipeline_extensions: Vec::new(),
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     }
 }
 
@@ -4054,6 +4072,8 @@ fn streaming_capability_detected_when_filter_declares_it() {
         subrequest_client: None,
         may_select_streaming_subrequest_response: true,
         time_source: Arc::new(praxis_core::time::SystemTimeSource),
+        request_body_ceiling: None,
+        response_body_ceiling: None,
     };
     assert!(
         pipeline.may_select_streaming_subrequest_response(),

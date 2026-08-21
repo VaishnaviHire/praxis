@@ -64,21 +64,27 @@ pub(in crate::http) async fn execute(
     ctx: &mut PingoraRequestCtx,
 ) -> Result<bool> {
     if let Some(rejection) = validation::validate_host_header(session) {
+        snapshot_for_early_exit(session, ctx);
         send_rejection(session, rejection).await;
         return Ok(true);
     }
 
     if let Some(rejection) = super::normalize::normalize_request_headers(session) {
+        snapshot_for_early_exit(session, ctx);
         send_rejection(session, rejection).await;
         return Ok(true);
     }
 
     if let Some(rejection) = reject_reserved_internal_headers(session) {
+        snapshot_for_early_exit(session, ctx);
         send_rejection(session, rejection).await;
         return Ok(true);
     }
 
     if let Some(handled) = validation::handle_max_forwards(session).await {
+        if handled {
+            snapshot_for_early_exit(session, ctx);
+        }
         return Ok(handled);
     }
 
@@ -127,11 +133,13 @@ pub(in crate::http) async fn execute(
                 ctx.pre_read_mutations = pre_read.mutations;
             },
             Err(PreReadError::Rejected(rejection)) => {
+                ctx.request_snapshot = Some(request);
                 send_rejection(session, rejection).await;
                 return Ok(true);
             },
             Err(PreReadError::Filter(e)) => {
                 error!(error = %e, "body filter error during pre-read");
+                ctx.request_snapshot = Some(request);
                 send_rejection(session, Rejection::status(500)).await;
                 return Ok(true);
             },
@@ -336,6 +344,26 @@ async fn run_pipeline(
     }
 }
 
+/// Populate the request snapshot and client address for a pre-pipeline exit.
+///
+/// The fallback access record built during the logging phase needs a
+/// request snapshot; rejections issued before the pipeline runs (Host
+/// validation, header normalization, reserved-header and Max-Forwards
+/// handling) would otherwise leave it unset and the record silently
+/// skipped — precisely the requests operators most want logged.
+fn snapshot_for_early_exit(session: &mut Session, ctx: &mut PingoraRequestCtx) {
+    if ctx.request_snapshot.is_none() {
+        ctx.request_snapshot = Some(request_header_from_session(session));
+    }
+    if ctx.client_addr.is_none() {
+        ctx.client_addr = session
+            .client_addr()
+            .and_then(|a| a.as_inet())
+            .map(std::net::SocketAddr::ip)
+            .map(normalize_mapped_ipv4);
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Terminal Response
 // -----------------------------------------------------------------------------
@@ -355,7 +383,14 @@ async fn run_terminal_response(
         },
     };
     let mut body = terminal.body;
-    if let Err(rejection) = run_parent_terminal_body_filters(pipeline, ctx, &resp, &mut body, true) {
+    // Bodyless responses (HEAD, 204, 304, 1xx) have no body phase: running
+    // the body filters would make access_log emit a second record after its
+    // on_response already emitted for the bodyless status.
+    let is_bodyless = ctx
+        .request_snapshot
+        .as_ref()
+        .is_some_and(|request| praxis_filter::bodyless_response(resp.status, &request.method));
+    if !is_bodyless && let Err(rejection) = run_parent_terminal_body_filters(pipeline, ctx, &resp, &mut body, true) {
         send_rejection(session, rejection).await;
         return;
     }

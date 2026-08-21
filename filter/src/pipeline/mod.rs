@@ -133,6 +133,12 @@ pub struct FilterPipeline {
 
     /// Wall-clock time source for filters that need timestamps.
     time_source: Arc<dyn TimeSource>,
+
+    /// Global request body ceiling, enforced by counting in Stream mode.
+    request_body_ceiling: Option<usize>,
+
+    /// Global response body ceiling, enforced by counting in Stream mode.
+    response_body_ceiling: Option<usize>,
 }
 
 #[expect(
@@ -190,7 +196,22 @@ impl FilterPipeline {
             allow_unbounded,
         )?;
 
+        self.request_body_ceiling = max_request;
+        self.response_body_ceiling = max_response;
+
         Ok(())
+    }
+
+    /// Global request body ceiling; `None` means unbounded was allowed.
+    #[must_use]
+    pub fn request_body_ceiling(&self) -> Option<usize> {
+        self.request_body_ceiling
+    }
+
+    /// Global response body ceiling; `None` means unbounded was allowed.
+    #[must_use]
+    pub fn response_body_ceiling(&self) -> Option<usize> {
+        self.response_body_ceiling
     }
 
     /// Pre-computed body processing capabilities for this pipeline.
@@ -224,6 +245,19 @@ impl FilterPipeline {
     /// ```
     pub fn contains_filter(&self, type_name: &str) -> bool {
         self.filters.iter().any(|pf| pf.filter.name() == type_name)
+    }
+
+    /// Whether any filter of `type_name` has request conditions matching
+    /// `request` (an unconditional entry always matches).
+    ///
+    /// Used by protocol-level fallbacks that emit on a filter's behalf, so
+    /// an operator's `when`/`unless` scoping is honored outside the normal
+    /// request phase.
+    pub fn filter_request_conditions_match(&self, type_name: &str, request: &crate::Request) -> bool {
+        self.filters
+            .iter()
+            .filter(|pf| pf.filter.name() == type_name)
+            .any(|pf| crate::condition::should_execute(&pf.conditions, request))
     }
 
     /// Compression configuration, if a compression filter is present.
