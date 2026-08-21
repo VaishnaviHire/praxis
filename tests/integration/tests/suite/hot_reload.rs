@@ -299,6 +299,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{endpoint_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#
         )
     };
@@ -368,6 +370,8 @@ filter_chains:
             endpoints:
               - "127.0.0.1:{p1}"
               - "127.0.0.1:{p2}"
+insecure_options:
+  allow_private_endpoints: true
 "#
         )
     };
@@ -461,6 +465,8 @@ filter_chains:
           - name: api
             endpoints:
               - "127.0.0.1:{api_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         api_port = api_backend.port()
     );
@@ -497,6 +503,8 @@ filter_chains:
           - name: health
             endpoints:
               - "127.0.0.1:{health_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         api_port = api_backend.port(),
         health_port = health_backend.port()
@@ -539,6 +547,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#
     )
 }
@@ -620,6 +630,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#
     )
 }

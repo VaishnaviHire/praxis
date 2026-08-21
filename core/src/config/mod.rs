@@ -702,7 +702,7 @@ filter_chains:
         clusters:
           - name: "backend"
             endpoints:
-              - "127.0.0.1:3000"
+              - "192.0.2.10:3000"
 "#;
 
     /// Recursively collect all `.yaml` files under `root`.

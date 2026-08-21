@@ -131,6 +131,8 @@ runtime:
   work_stealing: true
 
 shutdown_timeout_secs: 30
+insecure_options:
+  allow_private_endpoints: true
 "#
     );
     let config = Config::from_yaml(&yaml).unwrap();
@@ -183,6 +185,7 @@ fn production_gateway_example_serves_https_and_http() {
     )
     .replace("/etc/praxis/tls/cert.pem", &certs.cert_path.display().to_string())
     .replace("/etc/praxis/tls/key.pem", &certs.key_path.display().to_string());
+    let patched = praxis_test_utils::allow_loopback_endpoints(&patched);
     let config = Config::from_yaml(&patched).expect("production-gateway example should parse");
 
     let _proxy = start_full_proxy(&config);

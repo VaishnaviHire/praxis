@@ -44,6 +44,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         backend_port = backend.port,
     );
@@ -95,6 +97,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         backend_port = backend.port,
     );
@@ -156,6 +160,8 @@ filter_chains:
             endpoints:
               - "127.0.0.1:{live_port}"
               - "127.0.0.1:{dead_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#
     );
 
@@ -207,6 +213,8 @@ filter_chains:
               - "127.0.0.1:{dead_a}"
               - "127.0.0.1:{dead_b}"
               - "127.0.0.1:{dead_c}"
+insecure_options:
+  allow_private_endpoints: true
 "#
     );
 

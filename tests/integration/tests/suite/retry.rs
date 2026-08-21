@@ -33,6 +33,8 @@ filter_chains:
             endpoints:
 {endpoints}
 {retry_policy}
+insecure_options:
+  allow_private_endpoints: true
 "#
     )
 }

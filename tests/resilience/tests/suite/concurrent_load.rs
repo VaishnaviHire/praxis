@@ -120,6 +120,8 @@ filter_chains:
           - name: web
             endpoints:
               - "127.0.0.1:{web_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#
     );
 
@@ -184,6 +186,8 @@ filter_chains:
             endpoints:
               - "127.0.0.1:{live_port}"
               - "127.0.0.1:{dead_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#
     );
 

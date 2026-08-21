@@ -50,6 +50,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -111,6 +113,8 @@ filter_chains:
           - name: web
             endpoints:
               - "127.0.0.1:{web_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -207,6 +211,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -232,6 +238,7 @@ fn upstream_tls_origination_end_to_end() {
     let yaml = format!(
         r#"
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_no_verify: true
 listeners:
   - name: plain
@@ -277,6 +284,7 @@ fn both_side_tls_end_to_end() {
     let yaml = format!(
         r#"
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_no_verify: true
 listeners:
   - name: secure
@@ -356,6 +364,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -414,6 +424,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -469,6 +481,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -500,6 +514,7 @@ fn upstream_mtls_proxy_presents_client_cert() {
     let yaml = format!(
         r#"
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_no_verify: true
 listeners:
   - name: plain
@@ -548,6 +563,7 @@ fn upstream_tls_verify_disabled_with_self_signed() {
     let yaml = format!(
         r#"
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_no_verify: true
 listeners:
   - name: plain
@@ -601,6 +617,7 @@ listeners:
     filter_chains:
       - main
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_without_sni: true
 filter_chains:
   - name: main
@@ -636,6 +653,7 @@ fn sni_derived_from_hostname_address() {
     let yaml = format!(
         r#"
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_no_verify: true
 listeners:
   - name: plain
@@ -680,6 +698,7 @@ fn sni_ip_address_leaves_sni_empty() {
     let yaml = format!(
         r#"
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_no_verify: true
 listeners:
   - name: plain
@@ -834,6 +853,8 @@ filter_chains:
               sni: "localhost"
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         ca = certs.ca_cert_path.display(),
     );
@@ -883,6 +904,8 @@ filter_chains:
               verify: true
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
     );
 
@@ -937,6 +960,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -1013,6 +1038,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -1044,6 +1071,7 @@ fn upstream_mtls_missing_client_cert_returns_502() {
     let yaml = format!(
         r#"
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_no_verify: true
 listeners:
   - name: plain
@@ -1106,6 +1134,8 @@ filter_chains:
                 ca_path: "{ca}"
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         ca = certs.ca_cert_path.display(),
     );
@@ -1146,6 +1176,8 @@ filter_chains:
               verify: true
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
     );
 
@@ -1196,6 +1228,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         alpha_cert = alpha_certs.cert_path.display(),
         alpha_key = alpha_certs.key_path.display(),
@@ -1260,6 +1294,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -1317,6 +1353,8 @@ filter_chains:
               verify: true
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         ca = certs.ca_cert_path.display(),
     );
@@ -1350,6 +1388,7 @@ fn full_mtls_listener_and_upstream_end_to_end() {
     let yaml = format!(
         r#"
 insecure_options:
+  allow_private_endpoints: true
   allow_tls_no_verify: true
 listeners:
   - name: secure
@@ -1445,6 +1484,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         alpha_cert = alpha_certs.cert_path.display(),
         alpha_key = alpha_certs.key_path.display(),
@@ -1525,6 +1566,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         alpha_cert = alpha_certs.cert_path.display(),
         alpha_key = alpha_certs.key_path.display(),
@@ -1599,6 +1642,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = server_certs.cert_path.display(),
         key = server_certs.key_path.display(),
@@ -1661,6 +1706,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         alpha_cert = alpha_certs.cert_path.display(),
         alpha_key = alpha_certs.key_path.display(),
@@ -1718,6 +1765,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         alpha_cert = alpha_certs.cert_path.display(),
         alpha_key = alpha_certs.key_path.display(),
@@ -1781,6 +1830,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -1842,6 +1893,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = cert_path.display(),
         key = key_path.display(),
@@ -1919,6 +1972,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = cert_path.display(),
         key = key_path.display(),
@@ -1990,6 +2045,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2044,6 +2101,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2168,6 +2227,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2225,6 +2286,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2282,6 +2345,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2367,6 +2432,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2430,6 +2497,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2706,6 +2775,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2764,6 +2835,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),
@@ -2820,6 +2893,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#,
         cert = certs.cert_path.display(),
         key = certs.key_path.display(),

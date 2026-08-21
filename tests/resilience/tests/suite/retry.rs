@@ -33,6 +33,8 @@ filter_chains:
           - name: backend
             endpoints:
               - "127.0.0.1:{backend_port}"
+insecure_options:
+  allow_private_endpoints: true
 "#
     );
 
@@ -71,6 +73,8 @@ filter_chains:
             endpoints:
               - "127.0.0.1:{backend_a}"
               - "127.0.0.1:{backend_b}"
+insecure_options:
+  allow_private_endpoints: true
 "#
     );
 
