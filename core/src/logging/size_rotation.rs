@@ -81,6 +81,15 @@ impl SizeRotatingWriter {
     /// Shift archives and rename the active file to `.1`.
     fn perform_roll(path: &Path, max_files: u32) -> io::Result<()> {
         prune_and_shift(path, max_files)?;
+        if max_files <= 1 {
+            // Retain only the active file: discard the rolled-out content
+            // instead of renaming it to `.1`, which would leave active + `.1`
+            // (two files) for a configured limit of one.
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+            return Ok(());
+        }
         fs::rename(path, rotated_path(path, 1))?;
         Ok(())
     }
@@ -138,8 +147,14 @@ impl Write for SizeRotatingWriter {
             .ok_or_else(|| io::Error::other("size rotation writer file not open"))?;
         let written = file.write(buf)?;
         state.size += written as u64;
-        if state.size >= self.max_bytes {
-            Self::roll_locked(&mut state, &self.path, self.max_files)?;
+        // The bytes are already committed to the active file. If the roll
+        // fails, honor io::Write by still reporting them as written rather
+        // than returning Err (which a blocking caller could retry, duplicating
+        // the line). size stays over the threshold, so the next write retries
+        // the roll.
+        if state.size >= self.max_bytes && Self::roll_locked(&mut state, &self.path, self.max_files).is_err() {
+            drop(state);
+            return Ok(written);
         }
         drop(state);
         Ok(written)
@@ -262,6 +277,25 @@ mod tests {
             vec![1, 2],
             "oldest archive should be pruned when max_files is 3"
         );
+    }
+
+    #[test]
+    fn max_files_one_keeps_only_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proxy.log");
+        let mut writer = SizeRotatingWriter::open(&path, 8, 1).unwrap();
+
+        writer.write_all(b"12345678").unwrap();
+        assert!(path.exists(), "active file should exist after roll");
+        assert!(
+            list_rotated_indices(&path).is_empty(),
+            "max_files = 1 must retain only the active file, with no .1 archive"
+        );
+
+        // A second roll still leaves just the active file.
+        writer.write_all(b"abcdefgh").unwrap();
+        assert!(path.exists());
+        assert!(list_rotated_indices(&path).is_empty());
     }
 
     #[test]
