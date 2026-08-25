@@ -88,55 +88,58 @@ impl LeastConnections {
 
         if let Some(state) = health
             && let Some((addr, load)) = self.select_from_candidates(
-                self.endpoints.iter().filter(|ep| {
+                |ep| {
                     ep.index < state.endpoints().len()
                         && state.endpoints()[ep.index].is_healthy()
                         && !is_excluded(&ep.address, exclude)
-                }),
+                },
                 offset,
             )
         {
             return Some((addr, load));
         }
 
-        self.select_from_candidates(
-            self.endpoints.iter().filter(|ep| !is_excluded(&ep.address, exclude)),
-            offset,
-        )
+        self.select_from_candidates(|ep| !is_excluded(&ep.address, exclude), offset)
     }
 
-    /// Select the best candidate from an iterator of endpoints, using
-    /// the round-robin offset to break ties on equal load and weight.
-    #[expect(clippy::indexing_slicing, reason = "bounds checked by len guard")]
-    #[expect(single_use_lifetimes, reason = "required for impl Trait")]
-    fn select_from_candidates<'a>(
+    /// Select the best candidate among endpoints matching `keep`, using the
+    /// round-robin offset to break ties on equal load and weight.
+    ///
+    /// Two passes over the endpoint slice (count, then a rank-scan) avoid the
+    /// per-call `Vec` allocation a collected rotated scan would need, while
+    /// preserving the exact tie-break: lowest load wins, then highest weight,
+    /// then the endpoint earliest in rotation order (rank 0 == `start`).
+    #[expect(clippy::indexing_slicing, reason = "counters is keyed by every endpoint address")]
+    fn select_from_candidates(
         &self,
-        candidates: impl Iterator<Item = &'a WeightedEndpoint>,
+        keep: impl Fn(&WeightedEndpoint) -> bool,
         offset: usize,
     ) -> Option<(Arc<str>, usize)> {
-        let candidates: Vec<_> = candidates.collect();
-        let len = candidates.len();
+        let len = self.endpoints.iter().filter(|ep| keep(ep)).count();
         if len == 0 {
             return None;
         }
-
         let start = offset % len;
-        let mut best_idx = start;
-        let mut best_load = self.counters[&*candidates[start].address].load(Ordering::Acquire);
-        let mut best_weight = candidates[start].weight;
 
-        for i in 1..len {
-            let idx = (start + i) % len;
-            let ep = candidates[idx];
+        // best = (rank, load, weight, address); lower rank is earlier in the
+        // rotation starting at `start`.
+        let mut best: Option<(usize, usize, u32, &Arc<str>)> = None;
+        for (filtered_index, ep) in self.endpoints.iter().filter(|ep| keep(ep)).enumerate() {
+            let rank = (filtered_index + len - start) % len;
             let load = self.counters[&*ep.address].load(Ordering::Acquire);
-            if load < best_load || (load == best_load && ep.weight > best_weight) {
-                best_idx = idx;
-                best_load = load;
-                best_weight = ep.weight;
+            let better = match best {
+                None => true,
+                Some((best_rank, best_load, best_weight, _)) => {
+                    load < best_load
+                        || (load == best_load && ep.weight > best_weight)
+                        || (load == best_load && ep.weight == best_weight && rank < best_rank)
+                },
+            };
+            if better {
+                best = Some((rank, load, ep.weight, &ep.address));
             }
         }
-
-        Some((Arc::clone(&candidates[best_idx].address), best_load))
+        best.map(|(_, load, _, addr)| (Arc::clone(addr), load))
     }
 }
 
