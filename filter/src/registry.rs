@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::{
     any_filter::AnyFilter,
-    factory::{FilterFactory, http_builtin, tcp_builtin},
+    factory::{FilterFactory, HttpFilterFactoryFn, TcpFilterFactoryFn, http_builtin, tcp_builtin},
     filter::FilterError,
 };
 
@@ -294,12 +294,7 @@ fn register_http_builtins(filters: &mut HashMap<String, FilterRegistration>) {
 }
 
 /// Registers a single HTTP filter factory with [`SecurityClass::Standard`].
-#[expect(clippy::type_complexity, reason = "complex function pointer")]
-fn register_http(
-    filters: &mut HashMap<String, FilterRegistration>,
-    name: &str,
-    factory_fn: fn(&serde_yaml::Value) -> Result<Box<dyn crate::filter::HttpFilter>, FilterError>,
-) {
+fn register_http(filters: &mut HashMap<String, FilterRegistration>, name: &str, factory_fn: HttpFilterFactoryFn) {
     insert_registration(filters, name, http_builtin(factory_fn), SecurityClass::Standard);
 }
 
@@ -321,11 +316,10 @@ fn register_http_with_registry(
 }
 
 /// Registers a single HTTP filter factory with [`SecurityClass::Security`].
-#[expect(clippy::type_complexity, reason = "complex function pointer")]
 fn register_http_security(
     filters: &mut HashMap<String, FilterRegistration>,
     name: &str,
-    factory_fn: fn(&serde_yaml::Value) -> Result<Box<dyn crate::filter::HttpFilter>, FilterError>,
+    factory_fn: HttpFilterFactoryFn,
 ) {
     insert_registration(filters, name, http_builtin(factory_fn), SecurityClass::Security);
 }
@@ -346,12 +340,7 @@ fn register_tcp_builtins(filters: &mut HashMap<String, FilterRegistration>) {
 }
 
 /// Registers a single TCP filter factory with [`SecurityClass::Standard`].
-#[expect(clippy::type_complexity, reason = "complex function pointer")]
-fn register_tcp(
-    filters: &mut HashMap<String, FilterRegistration>,
-    name: &str,
-    factory_fn: fn(&serde_yaml::Value) -> Result<Box<dyn crate::tcp_filter::TcpFilter>, FilterError>,
-) {
+fn register_tcp(filters: &mut HashMap<String, FilterRegistration>, name: &str, factory_fn: TcpFilterFactoryFn) {
     insert_registration(filters, name, tcp_builtin(factory_fn), SecurityClass::Standard);
 }
 

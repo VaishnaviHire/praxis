@@ -263,8 +263,7 @@ impl RateLimitFilter {
             RateLimitMode::PerIp => RateLimitState::PerIp(PerIpState::new()),
         };
 
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "burst fits u64")]
-        let burst_string = (burst as u64).to_string();
+        let burst_string = cfg.burst.to_string();
         Ok(Box::new(Self {
             state,
             rate: cfg.rate,

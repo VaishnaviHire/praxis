@@ -140,13 +140,17 @@ impl PowerOfTwoChoices {
     }
 
     /// Filter to healthy endpoints, falling back to all on panic mode.
-    #[expect(clippy::indexing_slicing, reason = "bounds checked by ep.index < len()")]
     fn healthy_candidates(&self, health: Option<&ClusterHealthState>) -> SmallVec<[&WeightedEndpoint; 8]> {
         if let Some(state) = health {
             let healthy: SmallVec<[_; 8]> = self
                 .endpoints
                 .iter()
-                .filter(|ep| ep.index < state.endpoints().len() && state.endpoints()[ep.index].is_healthy())
+                .filter(|ep| {
+                    state
+                        .endpoints()
+                        .get(ep.index)
+                        .is_some_and(praxis_core::health::EndpointHealth::is_healthy)
+                })
                 .collect();
             if !healthy.is_empty() {
                 return healthy;

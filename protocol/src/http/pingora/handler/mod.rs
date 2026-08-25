@@ -601,13 +601,9 @@ fn h2_server_options() -> H2Options {
 /// the total exceeds `max_bytes`. Returns `false` when the body is `None`.
 fn check_body_size_limit(body: Option<&Bytes>, accumulated_bytes: &mut u64, max_bytes: usize) -> bool {
     if let Some(chunk) = body {
-        #[expect(clippy::allow_attributes, reason = "cast lint is platform-dependent")]
-        #[allow(clippy::cast_possible_truncation, reason = "chunk length fits u64")]
         let chunk_len = chunk.len() as u64;
         *accumulated_bytes += chunk_len;
 
-        #[expect(clippy::allow_attributes, reason = "cast lint is platform-dependent")]
-        #[allow(clippy::cast_possible_truncation, reason = "max_bytes fits u64")]
         let limit = max_bytes as u64;
         return *accumulated_bytes > limit;
     }

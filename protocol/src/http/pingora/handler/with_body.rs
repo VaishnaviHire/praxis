@@ -130,7 +130,6 @@ impl ProxyHttp for PingoraHttpHandler {
         }
     }
 
-    #[expect(clippy::cast_possible_truncation, reason = "millis fit u64")]
     async fn early_request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<()>
     where
         Self::CTX: Send + Sync,
@@ -160,7 +159,7 @@ impl ProxyHttp for PingoraHttpHandler {
 
         if let Some(timeout) = self.downstream_read_timeout {
             debug!(
-                timeout_ms = timeout.as_millis() as u64,
+                timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
                 "applying downstream read timeout"
             );
             session.set_read_timeout(Some(timeout));

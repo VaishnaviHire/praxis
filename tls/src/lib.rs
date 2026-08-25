@@ -5,9 +5,7 @@
 #![expect(
     clippy::arithmetic_side_effects,
     clippy::as_conversions,
-    clippy::impl_trait_in_params,
     clippy::min_ident_chars,
-    clippy::mod_module_files,
     reason = "TODO(conventions-sync): fix violations and remove"
 )]
 

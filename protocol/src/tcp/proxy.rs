@@ -553,8 +553,8 @@ fn extract_addrs(session: &Stream) -> (String, String) {
 }
 
 /// Forward with an idle timeout, returning `None` on shutdown or timeout.
-async fn forward_with_timeout(
-    copy_future: impl Future<Output = io::Result<(u64, u64)>>,
+async fn forward_with_timeout<F: Future<Output = io::Result<(u64, u64)>>>(
+    copy_future: F,
     shutdown_rx: &mut watch::Receiver<bool>,
     timeout: Duration,
     upstream_addr: &str,
@@ -565,8 +565,7 @@ async fn forward_with_timeout(
         r = tokio::time::timeout(timeout, copy_future) => if let Ok(inner) = r {
             Some(inner)
         } else {
-            #[expect(clippy::cast_possible_truncation, reason = "millis fit u64")]
-            let timeout_ms = timeout.as_millis() as u64;
+            let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
             warn!(upstream = %upstream_addr, timeout_ms, "TCP session timed out");
             None
         },
@@ -574,8 +573,8 @@ async fn forward_with_timeout(
 }
 
 /// Forward without timeout, returning `None` on shutdown.
-async fn forward_no_timeout(
-    copy_future: impl Future<Output = io::Result<(u64, u64)>>,
+async fn forward_no_timeout<F: Future<Output = io::Result<(u64, u64)>>>(
+    copy_future: F,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> Option<io::Result<(u64, u64)>> {
     tokio::select! {

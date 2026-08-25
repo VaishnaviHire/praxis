@@ -101,6 +101,12 @@ pub type HttpFilterFactory = Arc<dyn Fn(&serde_yaml::Value) -> Result<Box<dyn Ht
 /// Factory function for creating TCP filters from config.
 pub type TcpFilterFactory = Arc<dyn Fn(&serde_yaml::Value) -> Result<Box<dyn TcpFilter>, FilterError> + Send + Sync>;
 
+/// Bare function-pointer factory for a built-in HTTP filter.
+pub(crate) type HttpFilterFactoryFn = fn(&serde_yaml::Value) -> Result<Box<dyn HttpFilter>, FilterError>;
+
+/// Bare function-pointer factory for a built-in TCP filter.
+pub(crate) type TcpFilterFactoryFn = fn(&serde_yaml::Value) -> Result<Box<dyn TcpFilter>, FilterError>;
+
 // -----------------------------------------------------------------------------
 // FilterFactory
 // -----------------------------------------------------------------------------
@@ -139,8 +145,7 @@ impl FilterFactory {
 ///
 /// let _factory: FilterFactory = http_builtin(my_factory);
 /// ```
-#[expect(clippy::type_complexity, reason = "complex function pointer")]
-pub fn http_builtin(f: fn(&serde_yaml::Value) -> Result<Box<dyn HttpFilter>, FilterError>) -> FilterFactory {
+pub fn http_builtin(f: HttpFilterFactoryFn) -> FilterFactory {
     FilterFactory::Http(Arc::new(f))
 }
 
@@ -155,8 +160,7 @@ pub fn http_builtin(f: fn(&serde_yaml::Value) -> Result<Box<dyn HttpFilter>, Fil
 ///
 /// let _factory: FilterFactory = tcp_builtin(my_factory);
 /// ```
-#[expect(clippy::type_complexity, reason = "complex function pointer")]
-pub fn tcp_builtin(f: fn(&serde_yaml::Value) -> Result<Box<dyn TcpFilter>, FilterError>) -> FilterFactory {
+pub fn tcp_builtin(f: TcpFilterFactoryFn) -> FilterFactory {
     FilterFactory::Tcp(Arc::new(f))
 }
 

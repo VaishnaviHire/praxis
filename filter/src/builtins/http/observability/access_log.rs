@@ -222,9 +222,8 @@ impl HttpFilter for AccessLogFilter {
 // -----------------------------------------------------------------------------
 
 /// Truncate a `u128` to `u64`, saturating at `u64::MAX`.
-#[expect(clippy::cast_possible_truncation, reason = "clamped to u64")]
 fn truncate_u128(v: u128) -> u64 {
-    v.min(u128::from(u64::MAX)) as u64
+    u64::try_from(v).unwrap_or(u64::MAX)
 }
 
 // -----------------------------------------------------------------------------

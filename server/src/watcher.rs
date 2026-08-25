@@ -104,17 +104,15 @@ pub(crate) struct WatcherParams {
 ///
 /// The thread runs until the `shutdown` token is cancelled or
 /// the process exits.
-///
-/// # Panics
-///
-/// Panics if the tokio runtime cannot be created.
-#[expect(clippy::expect_used, reason = "fatal if tokio runtime cannot start")]
 pub(crate) fn spawn_config_watcher(params: WatcherParams) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("config watcher tokio runtime");
+        let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(rt) => rt,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to start config watcher runtime; hot reload disabled");
+                return;
+            },
+        };
         rt.block_on(watch_loop(params));
     })
 }

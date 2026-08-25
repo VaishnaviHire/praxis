@@ -294,7 +294,7 @@ fn register_admin_endpoints(
 /// Initialize global connection and memory limits from runtime config.
 fn init_runtime_limits(runtime: &praxis_core::config::RuntimeConfig) {
     if let Some(max) = runtime.max_connections {
-        praxis_protocol::connections::init_global_limit(max as usize);
+        praxis_protocol::connections::init_global_limit(usize::try_from(max).unwrap_or(usize::MAX));
         info!(max_connections = max, "global connection limit enabled");
     }
     if let Some(threshold) = runtime.max_memory_bytes {
@@ -317,16 +317,18 @@ fn init_runtime_limits(runtime: &praxis_core::config::RuntimeConfig) {
 /// reactor is registered on the calling thread and a bare
 /// `tokio::spawn` would panic; background loops get their own thread
 /// and runtime instead.
-#[expect(clippy::expect_used, reason = "fatal")]
 fn spawn_on_dedicated_runtime<F>(runtime_name: &'static str, fut: F)
 where
     F: Future<Output = ()> + Send + 'static,
 {
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect(runtime_name);
+        let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(rt) => rt,
+            Err(e) => {
+                tracing::error!(runtime = runtime_name, error = %e, "failed to start background runtime");
+                return;
+            },
+        };
         rt.block_on(fut);
     });
 }

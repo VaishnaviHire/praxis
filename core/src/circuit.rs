@@ -341,7 +341,7 @@ pub struct PeerKey {
 
 impl PeerKey {
     /// Create a peer key from an address and optional SNI.
-    pub fn new(addr: SocketAddr, sni: impl Into<String>) -> Self {
+    pub fn new<S: Into<String>>(addr: SocketAddr, sni: S) -> Self {
         Self { addr, sni: sni.into() }
     }
 }

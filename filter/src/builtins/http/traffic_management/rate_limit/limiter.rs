@@ -20,9 +20,8 @@ use crate::builtins::http::traffic_management::token_bucket::TokenBucket;
 
 impl RateLimitFilter {
     /// Nanoseconds elapsed since this filter's epoch.
-    #[expect(clippy::cast_possible_truncation, reason = "nanos fit u64")]
     pub(super) fn now_nanos(&self) -> u64 {
-        self.epoch.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64
+        u64::try_from(self.epoch.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
 
     /// Build rate limit headers and compute the retry-after value.
