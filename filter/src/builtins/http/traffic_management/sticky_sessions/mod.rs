@@ -47,8 +47,6 @@ use crate::{
 
 /// Metadata key for the session identifier extracted from the request.
 const META_SESSION_KEY: &str = "sticky_sessions.session_key";
-/// Metadata key for the matched cluster name.
-const META_CLUSTER: &str = "sticky_sessions.cluster";
 /// Maximum allowed session key length (bytes) to prevent memory exhaustion.
 const MAX_SESSION_KEY_LEN: usize = 256;
 
@@ -356,7 +354,6 @@ impl HttpFilter for StickySessionsFilter {
         }
 
         ctx.set_metadata(META_SESSION_KEY, &session_key);
-        ctx.set_metadata(META_CLUSTER, &cluster_name);
 
         Ok(FilterAction::Continue)
     }
