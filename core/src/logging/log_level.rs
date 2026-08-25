@@ -431,7 +431,7 @@ fn spawn_revert_task(state: Arc<LogLevelState>, target: String, duration_secs: u
 mod tests {
     use std::sync::OnceLock;
 
-    use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
+    use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
 
@@ -447,7 +447,10 @@ mod tests {
         Arc::clone(STATE.get_or_init(|| {
             let baseline = "info".to_owned();
             let (filter_layer, reload_handle) = reload::Layer::new(EnvFilter::new(&baseline));
-            drop(tracing_subscriber::registry().with(filter_layer).try_init());
+            // Keep the reloadable layer alive for the whole test run without
+            // installing a global subscriber; init_tracing_installs_global_subscriber
+            // is the sole owner of the process-global subscriber.
+            let _ = Box::leak(Box::new(tracing_subscriber::registry().with(filter_layer)));
             LogLevelState::new(baseline, reload_handle)
         }))
     }
