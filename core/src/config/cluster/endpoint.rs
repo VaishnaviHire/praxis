@@ -86,9 +86,21 @@ struct WeightedEndpointRaw {
     #[serde(default = "default_weight")]
     weight: u32,
 
+    /// Arbitrary key-value metadata for subset-based load balancing.
+    #[serde(default)]
+    metadata: HashMap<String, String>,
+
+    /// Priority tier (0 = primary, 1 = first failover, etc.).
+    #[serde(default)]
+    priority: u32,
+
+    /// Locality zone identifier for zone-aware routing.
+    #[serde(default)]
+    zone: Option<String>,
+
     /// Every key not matched above; must be empty.
     #[serde(flatten)]
-    unknown: std::collections::HashMap<String, serde_yaml::Value>,
+    unknown: HashMap<String, serde_yaml::Value>,
 }
 
 impl TryFrom<EndpointRaw> for Endpoint {
@@ -110,6 +122,9 @@ impl TryFrom<EndpointRaw> for Endpoint {
                 Ok(Self::Weighted {
                     address: w.address,
                     weight: w.weight,
+                    metadata: w.metadata,
+                    priority: w.priority,
+                    zone: w.zone,
                 })
             },
         }

@@ -87,6 +87,15 @@ impl Config {
         validate_cluster_names(&self.clusters)?;
         validate_clusters(&self.clusters, &self.insecure_options)?;
         validate_inline_clusters(&self.filter_chains, &self.insecure_options)?;
+        self.validate_runtime()?;
+        validate_shutdown_timeout(self.shutdown_timeout_secs)?;
+        validate_telemetry(&self.telemetry)?;
+
+        Ok(())
+    }
+
+    /// Validate runtime-section constraints (threads, pools, limits, logging).
+    fn validate_runtime(&self) -> Result<(), ProxyError> {
         validate_upstream_ca_file(self.runtime.upstream_ca_file.as_deref())?;
         validate_runtime_threads(self.runtime.threads)?;
         validate_runtime_max_connections(self.runtime.max_connections)?;
@@ -96,9 +105,6 @@ impl Config {
         validate_subrequest_circuit_breaker(self.runtime.subrequest_circuit_breaker.as_ref())?;
         validate_global_queue_interval(self.runtime.global_queue_interval)?;
         validate_logging(&self.runtime.logging)?;
-        validate_shutdown_timeout(self.shutdown_timeout_secs)?;
-        validate_telemetry(&self.telemetry)?;
-
         Ok(())
     }
 }
