@@ -112,7 +112,7 @@ impl PingoraHttpHandler {
     }
 }
 
-/// Resolve retry safety for a stale (ReusedOnly) upstream connection.
+/// Resolve retry safety for a stale (`ReusedOnly`) upstream connection.
 ///
 /// A pooled connection that closed while idle is not a real attempt, but the
 /// request bytes were already written upstream, so replay must be safe: an
