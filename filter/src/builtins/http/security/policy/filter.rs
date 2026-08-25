@@ -170,6 +170,7 @@ impl PolicyFilter {
             );
         }
         for (kind, factory) in host_factories {
+            tracing::debug!(target: "policy.filter", kind = %kind, "registering host plugin factory");
             mgr.register_factory(kind, factory);
         }
 
