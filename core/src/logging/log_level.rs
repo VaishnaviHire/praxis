@@ -121,6 +121,15 @@ struct LogLevelInner {
     next_generation: u64,
 }
 
+impl LogLevelInner {
+    /// Return the next overlay generation, advancing the counter.
+    fn take_generation(&mut self) -> u64 {
+        let generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1);
+        generation
+    }
+}
+
 // -----------------------------------------------------------------------------
 // LogLevelState
 // -----------------------------------------------------------------------------
@@ -178,11 +187,8 @@ impl LogLevelState {
         let mut guard = self.inner.lock().expect("log level state lock poisoned");
         let previous = guard.overlays.remove(&target);
 
-        let generation = guard.next_generation;
-        guard.next_generation = guard.next_generation.wrapping_add(1);
-
-        let state = Arc::clone(self);
-        let abort_handle = spawn_revert_task(state, target.clone(), duration_secs, generation);
+        let generation = guard.take_generation();
+        let abort_handle = spawn_revert_task(Arc::clone(self), target.clone(), duration_secs, generation);
 
         guard.overlays.insert(
             target.clone(),
