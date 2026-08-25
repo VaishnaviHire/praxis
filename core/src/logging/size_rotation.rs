@@ -42,7 +42,7 @@ struct ActiveFile {
 
 impl SizeRotatingWriter {
     /// Open or create the log file and initialize rotation state.
-    pub(crate) fn open(path: impl Into<PathBuf>, max_bytes: u64, max_files: u32) -> Result<Self, ProxyError> {
+    pub(crate) fn open<P: Into<PathBuf>>(path: P, max_bytes: u64, max_files: u32) -> Result<Self, ProxyError> {
         let path = path.into();
         ensure_parent_dir(&path)?;
         let file = open_append(&path)

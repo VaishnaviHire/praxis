@@ -183,7 +183,7 @@ fn from_hex(byte: u8) -> Option<u8> {
 // -----------------------------------------------------------------------------
 
 /// Build a JSON `400` response.
-fn bad_request(message: impl AsRef<str>) -> Response<Vec<u8>> {
+fn bad_request<S: AsRef<str>>(message: S) -> Response<Vec<u8>> {
     let body = json!({ "error": message.as_ref() });
     json_response(400, body.to_string().as_bytes())
 }
