@@ -15,10 +15,8 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::header::HeaderName;
-use opentelemetry::trace::TraceContextExt as _;
 use serde::Deserialize;
 use tracing::info;
-use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 use crate::{
     BodyAccess, FilterAction, FilterError,
@@ -573,8 +571,8 @@ impl HttpFilter for AccessLogFilter {
             if bodyless {
                 let headers = ctx
                     .get_filter_state::<AccessLogState>()
-                    .and_then(|state| state.response_headers.as_ref());
-                self.maybe_emit(ctx, status, headers);
+                    .and_then(|state| state.response_headers.clone());
+                self.maybe_emit(ctx, status, headers.as_ref());
             }
         }
         Ok(FilterAction::Continue)
@@ -593,8 +591,8 @@ impl HttpFilter for AccessLogFilter {
         if end_of_stream {
             let (status, headers) = ctx
                 .get_filter_state::<AccessLogState>()
-                .map_or((0, None), |state| (state.status, state.response_headers.as_ref()));
-            self.maybe_emit(ctx, status, headers);
+                .map_or((0, None), |state| (state.status, state.response_headers.clone()));
+            self.maybe_emit(ctx, status, headers.as_ref());
         }
         Ok(FilterAction::Continue)
     }
@@ -1547,15 +1545,15 @@ conditions:
         .unwrap();
         let filter = test_filter(&yaml);
         let req = crate::test_utils::make_request(http::Method::GET, "/api/thing");
-        let ctx = crate::test_utils::make_filter_context(&req);
+        let mut ctx = crate::test_utils::make_filter_context(&req);
 
-        let unmatched = capture_logs(|| filter.maybe_emit(&ctx, 200, None));
+        let unmatched = capture_logs(|| filter.maybe_emit(&mut ctx, 200, None));
         assert!(
             !unmatched.contains("access"),
             "non-matching status must not emit: {unmatched:?}"
         );
 
-        let matched = capture_logs(|| filter.maybe_emit(&ctx, 500, None));
+        let matched = capture_logs(|| filter.maybe_emit(&mut ctx, 500, None));
         assert!(matched.contains("access"), "matching status must emit: {matched:?}");
         assert!(
             matched.contains("record="),
@@ -1571,9 +1569,9 @@ conditions:
         let yaml: serde_yaml::Value = serde_yaml::from_str("fields: [method, path]").unwrap();
         let filter = test_filter(&yaml);
         let req = crate::test_utils::make_request(http::Method::GET, "/x");
-        let ctx = crate::test_utils::make_filter_context(&req);
+        let mut ctx = crate::test_utils::make_filter_context(&req);
 
-        let out = capture_logs(|| filter.maybe_emit(&ctx, 200, None));
+        let out = capture_logs(|| filter.maybe_emit(&mut ctx, 200, None));
         assert!(
             out.contains("record="),
             "small field sets must use the same record shape as large ones: {out:?}"
