@@ -340,7 +340,6 @@ mod writer {
 /// Initialize the layered subscriber with an optional OTLP layer.
 #[cfg(feature = "otel")]
 #[expect(
-    clippy::large_stack_frames,
     clippy::too_many_lines,
     reason = "tracing-subscriber layer composition creates deeply nested generic types; runs once at startup"
 )]
@@ -577,7 +576,7 @@ fn build_http_exporter(
 #[cfg(feature = "otel")]
 fn append_signal_path_if_needed(endpoint: &str) -> String {
     // Parse the endpoint; if invalid, return as-is (the builder will error later)
-    let Ok(mut url) = endpoint.parse::<http::Uri>() else {
+    let Ok(url) = endpoint.parse::<http::Uri>() else {
         return endpoint.to_owned();
     };
 
