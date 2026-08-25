@@ -104,6 +104,9 @@ struct OverlayEntry {
     expires_at: DateTime<Utc>,
     /// Handle used to cancel a superseded or deleted revert task.
     revert_abort: AbortHandle,
+    /// Monotonic id distinguishing this overlay from any later one at the
+    /// same target, so a stale revert task cannot evict a newer replacement.
+    generation: u64,
 }
 
 /// Mutable log-level state guarded by [`LogLevelState::inner`].
@@ -114,6 +117,8 @@ struct LogLevelInner {
     overlays: HashMap<String, OverlayEntry>,
     /// Hot-swap handle for the live `EnvFilter`.
     reload_handle: reload::Handle<EnvFilter, tracing_subscriber::Registry>,
+    /// Monotonic source of [`OverlayEntry::generation`] values.
+    next_generation: u64,
 }
 
 // -----------------------------------------------------------------------------
@@ -138,6 +143,7 @@ impl LogLevelState {
                 baseline_directive,
                 overlays: HashMap::new(),
                 reload_handle,
+                next_generation: 0,
             }),
         })
     }
@@ -172,8 +178,11 @@ impl LogLevelState {
         let mut guard = self.inner.lock().expect("log level state lock poisoned");
         let previous = guard.overlays.remove(&target);
 
+        let generation = guard.next_generation;
+        guard.next_generation = guard.next_generation.wrapping_add(1);
+
         let state = Arc::clone(self);
-        let abort_handle = spawn_revert_task(state, target.clone(), duration_secs);
+        let abort_handle = spawn_revert_task(state, target.clone(), duration_secs, generation);
 
         guard.overlays.insert(
             target.clone(),
@@ -181,6 +190,7 @@ impl LogLevelState {
                 level,
                 expires_at,
                 revert_abort: abort_handle,
+                generation,
             },
         );
 
@@ -276,11 +286,17 @@ impl LogLevelState {
     }
 
     /// Remove one overlay after its revert timer fires (internal).
-    fn revert_target(self: &Arc<Self>, target: &str) {
+    ///
+    /// Reverts only when the overlay currently at `target` is the exact one
+    /// this task was scheduled for (`generation`). A later `PUT` to the same
+    /// target installs a new generation, so a stale timer (whose abort may
+    /// have lost the race against its own wakeup) becomes a no-op instead of
+    /// evicting the newer overlay.
+    fn revert_target(self: &Arc<Self>, target: &str, generation: u64) {
         let Ok(mut guard) = self.inner.lock() else {
             return;
         };
-        if guard.overlays.contains_key(target) {
+        if guard.overlays.get(target).is_some_and(|entry| entry.generation == generation) {
             remove_overlay_locked(&mut guard, target);
             if let Err(error) = reload_locked(&guard) {
                 tracing::error!(%error, %target, "failed to reload env filter after overlay revert");
@@ -413,10 +429,10 @@ fn remove_overlay_locked(guard: &mut LogLevelInner, target: &str) {
 }
 
 /// Spawn a task that reverts one overlay after `duration_secs`.
-fn spawn_revert_task(state: Arc<LogLevelState>, target: String, duration_secs: u64) -> AbortHandle {
+fn spawn_revert_task(state: Arc<LogLevelState>, target: String, duration_secs: u64, generation: u64) -> AbortHandle {
     let handle = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(duration_secs)).await;
-        state.revert_target(&target);
+        state.revert_target(&target, generation);
     });
     handle.abort_handle()
 }
@@ -506,6 +522,47 @@ mod tests {
         assert!(
             snap.overlays.is_empty(),
             "failed PUT must not leave a phantom overlay visible: {snap:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stale_revert_does_not_evict_newer_overlay() {
+        // Fresh state so overlay generations are deterministic (0, then 1).
+        let (filter_layer, reload_handle) = reload::Layer::new(EnvFilter::new("info"));
+        let _ = Box::leak(Box::new(tracing_subscriber::registry().with(filter_layer)));
+        let state = LogLevelState::new("info".to_owned(), reload_handle);
+
+        let put = |level: &str| PutLogLevelRequest {
+            level: level.to_owned(),
+            module: Some("praxis_filter".to_owned()),
+            duration_secs: Some(300),
+        };
+
+        state.apply_put(&put("debug")).expect("first put (generation 0)");
+        state.apply_put(&put("trace")).expect("second put (generation 1)");
+
+        // The first overlay's revert timer firing late (its abort may have lost
+        // the race with its own wakeup) must not evict the newer overlay.
+        state.revert_target("praxis_filter", 0);
+        let snap = state.snapshot();
+        let overlay = snap
+            .overlays
+            .iter()
+            .find(|o| o.module.as_deref() == Some("praxis_filter"));
+        assert!(
+            overlay.is_some_and(|o| o.level == "trace"),
+            "a stale-generation revert must not evict the newer overlay: {snap:?}"
+        );
+
+        // The current-generation revert does remove it.
+        state.revert_target("praxis_filter", 1);
+        assert!(
+            state
+                .snapshot()
+                .overlays
+                .iter()
+                .all(|o| o.module.as_deref() != Some("praxis_filter")),
+            "the current-generation revert should remove the overlay"
         );
     }
 
