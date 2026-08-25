@@ -11,7 +11,7 @@ use praxis_core::{
     connectivity::{ConnectionOptions, Upstream},
     retry::ClusterRetryState,
 };
-use tracing::{debug, error};
+use tracing::debug;
 
 use super::{
     reselector::EndpointReselector,
@@ -123,7 +123,7 @@ pub(super) fn build_cluster_entry(cluster: &Cluster) -> Result<ClusterEntry, Fil
         "cluster registered"
     );
 
-    let tls = build_cached_tls(cluster);
+    let tls = build_cached_tls(cluster)?;
     let authority = build_authority(cluster)?;
     let strategy = Arc::new(build_strategy(&cluster.load_balancer_strategy, endpoints));
     let retry_policy = Arc::new(cluster.retry_policy.clone().unwrap_or_else(RetryPolicy::legacy_default));
@@ -138,22 +138,21 @@ pub(super) fn build_cluster_entry(cluster: &Cluster) -> Result<ClusterEntry, Fil
     })
 }
 
-/// Pre-cache TLS material for a cluster, logging on failure.
-fn build_cached_tls(cluster: &Cluster) -> Option<CachedClusterTls> {
-    cluster
-        .tls
-        .as_ref()
-        .and_then(|t| match CachedClusterTls::try_from_config(t) {
-            Ok(cached) => Some(cached),
-            Err(e) => {
-                error!(
-                    cluster = %cluster.name,
-                    error = %e,
-                    "failed to cache TLS certificates; TLS disabled for this cluster"
-                );
-                None
-            },
-        })
+/// Pre-cache TLS material for a cluster, failing closed on unreadable material.
+///
+/// Returns an error instead of silently disabling TLS, so a misconfigured or
+/// unreadable certificate cannot cause traffic to fall back to plaintext.
+fn build_cached_tls(cluster: &Cluster) -> Result<Option<CachedClusterTls>, FilterError> {
+    let Some(t) = cluster.tls.as_ref() else {
+        return Ok(None);
+    };
+    CachedClusterTls::try_from_config(t).map(Some).map_err(|e| {
+        format!(
+            "cluster '{}': TLS material is unreadable, refusing to fall back to plaintext: {e}",
+            cluster.name,
+        )
+        .into()
+    })
 }
 
 /// Pre-parse the authority override as a [`HeaderValue`].
