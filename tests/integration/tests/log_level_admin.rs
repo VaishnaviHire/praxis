@@ -1,7 +1,58 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Praxis Contributors
 
-//! Integration tests for `/api/log-level` admin API (#798).
+//! Integration tests for the `/api/log-level` admin API (#798).
+//!
+//! This test installs a process-global tracing subscriber (via
+//! `praxis::init_tracing`) to exercise the runtime log-level reload handle.
+//! Only one `set_global_default` can win per process, so it runs as its own
+//! test binary instead of inside the shared `suite` process, where it would
+//! race the OTLP exporter test (which also installs a global subscriber when
+//! the `otel` feature is enabled) and intermittently panic with "a global
+//! default trace dispatcher has already been set".
+
+#![allow(
+    clippy::allow_attributes_without_reason,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::clone_on_ref_ptr,
+    clippy::cognitive_complexity,
+    clippy::default_trait_access,
+    clippy::disallowed_methods,
+    clippy::doc_markdown,
+    clippy::doc_nested_refdefs,
+    clippy::expect_used,
+    clippy::format_push_string,
+    clippy::indexing_slicing,
+    clippy::iter_over_hash_type,
+    clippy::items_after_statements,
+    clippy::len_zero,
+    clippy::manual_is_multiple_of,
+    clippy::manual_let_else,
+    clippy::map_unwrap_or,
+    clippy::map_with_unused_argument_over_ranges,
+    clippy::min_ident_chars,
+    clippy::needless_raw_string_hashes,
+    clippy::needless_raw_strings,
+    clippy::panic,
+    clippy::print_stderr,
+    clippy::redundant_closure_for_method_calls,
+    clippy::shadow_unrelated,
+    clippy::single_char_lifetime_names,
+    clippy::string_add,
+    clippy::struct_field_names,
+    clippy::tests_outside_test_module,
+    clippy::too_many_lines,
+    clippy::unwrap_used,
+    clippy::used_underscore_binding,
+    clippy::useless_format,
+    clippy::wildcard_enum_match_arm,
+    reason = "test code"
+)]
 
 use praxis_core::config::Config;
 use praxis_test_utils::{free_port, http_delete, http_get, http_put_json, wait_for_tcp};
