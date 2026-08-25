@@ -38,7 +38,11 @@ struct ProxyError {
     clippy::too_many_lines,
     reason = "linear error classification inlines each response-writing branch and adds structured error fields"
 )]
-pub(super) async fn execute(session: &mut Session, e: &pingora_core::Error, ctx: &mut PingoraRequestCtx) -> FailToProxy {
+pub(super) async fn execute(
+    session: &mut Session,
+    e: &pingora_core::Error,
+    ctx: &mut PingoraRequestCtx,
+) -> FailToProxy {
     let etype = e.etype().clone();
     let pending_rejection = ctx.pending_rejection.take();
     let formatter = ctx.extensions.get::<ErrorResponseFormatterHandle>();
