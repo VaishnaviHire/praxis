@@ -89,6 +89,8 @@ pub(super) fn classify_error(e: &pingora_core::Error) -> RetryOutcome {
         ErrorType::ConnectError
         | ErrorType::ConnectTimedout
         | ErrorType::ConnectRefused
+        | ErrorType::ConnectNoRoute
+        | ErrorType::ConnectProxyFailure
         | ErrorType::TLSHandshakeFailure
         | ErrorType::TLSHandshakeTimedout => RetryOutcome::ConnectFailure,
         ErrorType::ConnectionClosed => RetryOutcome::Reset,

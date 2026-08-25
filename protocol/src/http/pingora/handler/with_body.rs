@@ -257,10 +257,12 @@ impl ProxyHttp for PingoraHttpHandler {
         ctx: &mut Self::CTX,
         client_reused: bool,
     ) -> Box<pingora_core::Error> {
-        // Never retry once response bytes reached the client: a second
+        // Never retry once a final response reached the client: a second
         // attempt cannot rewrite the response line, so its body would be
-        // spliced after whatever was already sent.
-        if session.response_written().is_some() {
+        // spliced after whatever was already sent. A non-final 1xx (e.g.
+        // 100 Continue) does not commit the final response, so it must not
+        // block a retry; mirror fail_to_proxy's final-response predicate.
+        if session.response_written().is_some_and(fail_to_proxy::is_final_response) {
             let mut e = e;
             e.set_retry(false);
             return e;

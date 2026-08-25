@@ -241,7 +241,7 @@ fn final_response_written(session: &Session) -> bool {
 }
 
 /// Whether a response header blocks a later final error response.
-fn is_final_response(header: &pingora_http::ResponseHeader) -> bool {
+pub(super) fn is_final_response(header: &pingora_http::ResponseHeader) -> bool {
     !header.status.is_informational() || header.status == http::StatusCode::SWITCHING_PROTOCOLS
 }
 
