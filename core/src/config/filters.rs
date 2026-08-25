@@ -203,11 +203,13 @@ pub struct FilterEntry {
 
     /// Filter-specific configuration passed to the factory function.
     ///
-    /// `#[serde(flatten)]` collects all YAML keys not handled by
-    /// the named fields above (`filter`, `branch_chains`,
-    /// `conditions`, `name`, `response_conditions`, `failure_mode`).
-    /// A misspelled known field (e.g., `failuremode`) is silently
-    /// absorbed here; [`warn_config_typos`] detects near-matches.
+    /// Populated on deserialize by the hand-written [`Deserialize`] impl
+    /// below, which collects every YAML key not handled by the named fields
+    /// above (`filter`, `branch_chains`, `conditions`, `name`,
+    /// `response_conditions`, `failure_mode`). `#[serde(flatten)]` is retained
+    /// only so serialization round-trips those keys back out. A misspelled
+    /// known field (e.g., `failuremode`) is silently absorbed here;
+    /// [`warn_config_typos`] detects near-matches.
     ///
     /// [`warn_config_typos`]: FilterEntry::warn_config_typos
     #[serde(flatten)]
