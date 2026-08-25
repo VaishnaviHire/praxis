@@ -630,20 +630,25 @@ fn record_response_span_fields(
         ctx.request_span.record("upstream.cluster", cluster.as_ref());
     }
 
-    if !ctx.upstream_exchange_span.is_disabled() {
-        // Prefer the upstream's own status (captured before any response-phase
-        // rewrite) for the upstream-exchange span; fall back to the written
-        // response when the upstream status was not captured.
-        if let Some(status) = ctx
-            .upstream_response_status
-            .or_else(|| response.map(|resp| resp.status.as_u16()))
-        {
-            ctx.upstream_exchange_span
-                .record("http.response.status_code", status);
-        }
-        ctx.upstream_exchange_span
-            .record("http.response.body.size", ctx.response_body_bytes);
+    record_upstream_exchange_span(ctx, response);
+}
+
+/// Record the upstream-exchange child span's response fields.
+fn record_upstream_exchange_span(ctx: &PingoraRequestCtx, response: Option<&pingora_http::ResponseHeader>) {
+    if ctx.upstream_exchange_span.is_disabled() {
+        return;
     }
+    // Prefer the upstream's own status (captured before any response-phase
+    // rewrite); fall back to the written response when it was not captured.
+    if let Some(status) = ctx
+        .upstream_response_status
+        .or_else(|| response.map(|resp| resp.status.as_u16()))
+    {
+        ctx.upstream_exchange_span
+            .record("http.response.status_code", status);
+    }
+    ctx.upstream_exchange_span
+        .record("http.response.body.size", ctx.response_body_bytes);
 }
 
 /// Build [`HttpServerOptions`] with h2c enabled.
