@@ -27,7 +27,7 @@ use crate::{
 #[test]
 fn new_creates_clusters() {
     let clusters = vec![test_cluster("web", &["127.0.0.1:8080"])];
-    let lb = LoadBalancerFilter::new(&clusters).unwrap();
+    let lb = LoadBalancerFilter::new(&clusters);
     assert!(lb.clusters.contains_key("web"), "cluster 'web' should be registered");
 }
 
@@ -90,7 +90,7 @@ fn new_multiple_clusters() {
         test_cluster("web", &["127.0.0.1:8080"]),
         test_cluster("api", &["127.0.0.1:9090"]),
     ];
-    let lb = LoadBalancerFilter::new(&clusters).unwrap();
+    let lb = LoadBalancerFilter::new(&clusters);
     assert_eq!(lb.clusters.len(), 2, "both clusters should be registered");
 }
 
@@ -100,7 +100,7 @@ fn load_balancer_clusters_reports_configured_clusters() {
         test_cluster("web", &["127.0.0.1:8080"]),
         test_cluster("api", &["127.0.0.1:9090"]),
     ];
-    let lb = LoadBalancerFilter::new(&clusters).unwrap();
+    let lb = LoadBalancerFilter::new(&clusters);
     let mut cluster_names = lb.load_balancer_clusters();
     cluster_names.sort();
     assert_eq!(
@@ -112,7 +112,7 @@ fn load_balancer_clusters_reports_configured_clusters() {
 
 #[test]
 fn empty_load_balancer_reports_no_clusters() {
-    let lb = LoadBalancerFilter::new(&[]).unwrap();
+    let lb = LoadBalancerFilter::new(&[]);
     assert!(
         lb.load_balancer_clusters().is_empty(),
         "empty load balancer should report no clusters"
@@ -121,7 +121,7 @@ fn empty_load_balancer_reports_no_clusters() {
 
 #[tokio::test]
 async fn on_request_sets_upstream_round_robin() {
-    let lb = LoadBalancerFilter::new(&[test_cluster("web", &["127.0.0.1:8080"])]).unwrap();
+    let lb = LoadBalancerFilter::new(&[test_cluster("web", &["127.0.0.1:8080"])]);
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
     ctx.cluster = Some(Arc::from("web"));
@@ -141,7 +141,7 @@ async fn on_request_sets_upstream_least_connections() {
         &["127.0.0.1:8080", "127.0.0.1:8081"],
         LoadBalancerStrategy::Simple(SimpleStrategy::LeastConnections),
     );
-    let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+    let lb = LoadBalancerFilter::new(&[cluster]);
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
     ctx.cluster = Some(Arc::from("web"));
@@ -162,7 +162,7 @@ async fn on_request_sets_upstream_consistent_hash() {
             header: None,
         })),
     );
-    let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+    let lb = LoadBalancerFilter::new(&[cluster]);
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
     ctx.cluster = Some(Arc::from("web"));
@@ -181,7 +181,7 @@ async fn on_response_releases_least_connections_counter() {
         &["127.0.0.1:8080"],
         LoadBalancerStrategy::Simple(SimpleStrategy::LeastConnections),
     );
-    let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+    let lb = LoadBalancerFilter::new(&[cluster]);
 
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
@@ -211,7 +211,7 @@ async fn on_response_releases_least_connections_counter() {
 
 #[tokio::test]
 async fn on_request_errors_when_no_cluster() {
-    let lb = LoadBalancerFilter::new(&[test_cluster("web", &["127.0.0.1:8080"])]).unwrap();
+    let lb = LoadBalancerFilter::new(&[test_cluster("web", &["127.0.0.1:8080"])]);
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
     let result = lb.on_request(&mut ctx).await;
@@ -224,7 +224,7 @@ async fn on_request_errors_when_no_cluster() {
 
 #[tokio::test]
 async fn on_request_errors_for_unknown_cluster() {
-    let lb = LoadBalancerFilter::new(&[test_cluster("web", &["127.0.0.1:8080"])]).unwrap();
+    let lb = LoadBalancerFilter::new(&[test_cluster("web", &["127.0.0.1:8080"])]);
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
     ctx.cluster = Some(Arc::from("nonexistent"));
@@ -318,7 +318,7 @@ async fn weighted_endpoints_expand_proportionally() {
         ],
     );
 
-    let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+    let lb = LoadBalancerFilter::new(&[cluster]);
 
     let mut counts = HashMap::new();
     for _ in 0..4 {
@@ -351,7 +351,7 @@ async fn sni_fallback_to_host_header_when_sni_none() {
         tls: Some(praxis_core::config::ClusterTls::default()),
         ..Cluster::with_defaults("no-sni", vec!["10.0.0.1:443".into()])
     };
-    let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+    let lb = LoadBalancerFilter::new(&[cluster]);
 
     let mut req = crate::test_utils::make_request(http::Method::GET, "/");
     req.headers
@@ -375,7 +375,7 @@ async fn sni_fallback_is_none_when_no_host_header() {
         tls: Some(praxis_core::config::ClusterTls::default()),
         ..Cluster::with_defaults("no-sni", vec!["10.0.0.1:443".into()])
     };
-    let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+    let lb = LoadBalancerFilter::new(&[cluster]);
 
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
@@ -399,7 +399,7 @@ async fn explicit_sni_overrides_host_header() {
         }),
         ..Cluster::with_defaults("explicit-sni", vec!["10.0.0.1:443".into()])
     };
-    let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+    let lb = LoadBalancerFilter::new(&[cluster]);
 
     let mut req = crate::test_utils::make_request(http::Method::GET, "/");
     req.headers
@@ -558,7 +558,7 @@ async fn tls_and_sni_wired_from_cluster() {
         }),
         ..Cluster::with_defaults("secure", vec!["10.0.0.1:443".into()])
     };
-    let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+    let lb = LoadBalancerFilter::new(&[cluster]);
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
     ctx.cluster = Some(Arc::from("secure"));
@@ -579,7 +579,7 @@ async fn tls_and_sni_wired_from_cluster() {
 
 #[tokio::test]
 async fn on_request_errors_when_cluster_has_no_endpoints() {
-    let lb = LoadBalancerFilter::new(&[test_cluster("empty", &[])]).unwrap();
+    let lb = LoadBalancerFilter::new(&[test_cluster("empty", &[])]);
     let req = crate::test_utils::make_request(http::Method::GET, "/");
     let mut ctx = crate::test_utils::make_filter_context(&req);
     ctx.cluster = Some(Arc::from("empty"));

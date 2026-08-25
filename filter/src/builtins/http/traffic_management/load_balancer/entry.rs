@@ -11,7 +11,7 @@ use praxis_core::{
     connectivity::{ConnectionOptions, Upstream},
     retry::ClusterRetryState,
 };
-use tracing::debug;
+use tracing::{debug, error};
 
 use super::{
     reselector::EndpointReselector,
