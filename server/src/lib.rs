@@ -17,16 +17,13 @@
 //! the Pingora runtime.
 //!
 //! Responsibilities:
-//! - Configuration loading and config-path resolution
-//!   ([`load_config`], [`resolve_config_path`]).
-//! - Registry assembly with built-in and auto-discovered external
-//!   filters ([`build_full_registry`]); external filter crates are
-//!   discovered at build time via `[package.metadata.praxis-filters]`.
-//! - Pipeline resolution: named chains are concatenated into per-listener
-//!   [`FilterPipeline`]s at startup ([`resolve_pipelines`]).
-//! - Running the server ([`run_server`], [`run_server_with_registry`])
-//!   and the file-watching hot-reload path that rebuilds and atomically
-//!   swaps pipelines when the config file changes.
+//! - Configuration loading and config-path resolution ([`load_config`], [`resolve_config_path`]).
+//! - Registry assembly with built-in and auto-discovered external filters ([`build_full_registry`]); external filter
+//!   crates are discovered at build time via `[package.metadata.praxis-filters]`.
+//! - Pipeline resolution: named chains are concatenated into per-listener [`FilterPipeline`]s at startup
+//!   ([`resolve_pipelines`]).
+//! - Running the server ([`run_server`], [`run_server_with_registry`]) and the file-watching hot-reload path that
+//!   rebuilds and atomically swaps pipelines when the config file changes.
 //!
 //! [`FilterPipeline`]: praxis_filter::FilterPipeline
 

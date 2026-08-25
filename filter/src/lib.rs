@@ -28,19 +28,15 @@
 //! performed by the [`RouterFilter`]).
 //!
 //! Key entry types:
-//! - [`HttpFilter`] and [`TcpFilter`]: the traits every built-in and
-//!   external filter implements, each with a `from_config` factory.
-//! - [`FilterRegistry`]: maps filter names to factories and builds
-//!   filters from config; extend it with the [`register_filters!`]
-//!   macro.
-//! - [`FilterPipeline`]: the resolved, ordered chain executed per
-//!   request, including conditional branch chains.
-//! - [`FilterResultSet`]: filters record results here without knowing
-//!   about branches; the pipeline executor reads them to evaluate
-//!   branch conditions and dispatch.
-//! - [`BodyAccess`] / [`BodyMode`]: body access and buffering, so
-//!   streaming filters can process chunks without buffering whole
-//!   bodies.
+//! - [`HttpFilter`] and [`TcpFilter`]: the traits every built-in and external filter implements, each with a
+//!   `from_config` factory.
+//! - [`FilterRegistry`]: maps filter names to factories and builds filters from config; extend it with the
+//!   [`register_filters!`] macro.
+//! - [`FilterPipeline`]: the resolved, ordered chain executed per request, including conditional branch chains.
+//! - [`FilterResultSet`]: filters record results here without knowing about branches; the pipeline executor reads them
+//!   to evaluate branch conditions and dispatch.
+//! - [`BodyAccess`] / [`BodyMode`]: body access and buffering, so streaming filters can process chunks without
+//!   buffering whole bodies.
 //!
 //! Built-in filters live under [`builtins`], organized by protocol and
 //! category.

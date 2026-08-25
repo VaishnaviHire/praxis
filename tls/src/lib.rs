@@ -19,14 +19,12 @@
 //! representation.
 //!
 //! Responsibilities:
-//! - TLS configuration types for listeners and upstream clusters
-//!   ([`ListenerTls`], [`ClusterTls`], [`CertKeyPair`], [`CaConfig`],
-//!   [`TlsVersion`], [`CipherSuiteId`], [`ClientCertMode`]).
+//! - TLS configuration types for listeners and upstream clusters ([`ListenerTls`], [`ClusterTls`], [`CertKeyPair`],
+//!   [`CaConfig`], [`TlsVersion`], [`CipherSuiteId`], [`ClientCertMode`]).
 //! - SNI resolution, including wildcard matching ([`sni`], [`sni_name`]).
-//! - Certificate and key loading with cached materials ([`setup`],
-//!   [`CachedClusterTls`], [`CachedCaCerts`], [`CachedClientCert`]).
-//! - Peer identity extracted from client certificates
-//!   ([`TlsPeerIdentity`]).
+//! - Certificate and key loading with cached materials ([`setup`], [`CachedClusterTls`], [`CachedCaCerts`],
+//!   [`CachedClientCert`]).
+//! - Peer identity extracted from client certificates ([`TlsPeerIdentity`]).
 //!
 //! Certificate hot-reload support (the [`reload`] and [`watcher`]
 //! modules) is gated behind the `hot-reload` feature.

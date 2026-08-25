@@ -25,13 +25,10 @@
 //!
 //! Responsibilities:
 //! - YAML configuration parsing and validation with serde ([`config`]).
-//! - Error types shared across the workspace ([`errors`], re-exported
-//!   as [`ProxyError`]).
-//! - Health state for active health checking ([`health`]) and the
-//!   key-value store trait and registry ([`kv`]).
-//! - The Pingora-backed server factory and runtime options
-//!   ([`PingoraServerRuntime`], [`RuntimeOptions`]) plus tracing setup
-//!   ([`TracingGuard`], [`logging`]).
+//! - Error types shared across the workspace ([`errors`], re-exported as [`ProxyError`]).
+//! - Health state for active health checking ([`health`]) and the key-value store trait and registry ([`kv`]).
+//! - The Pingora-backed server factory and runtime options ([`PingoraServerRuntime`], [`RuntimeOptions`]) plus tracing
+//!   setup ([`TracingGuard`], [`logging`]).
 //!
 //! Configuration types validate at load time, upholding the invariant
 //! that higher layers never re-check structural validity of a [`config`]
