@@ -20,6 +20,10 @@ fn sticky_sessions_config_parses() {
             ("127.0.0.1:3001", port_a),
             ("127.0.0.1:3002", port_b),
             ("127.0.0.1:3003", port_c),
+            // Remap the other two declared listeners to free ports so the proxy
+            // does not bind the literal 8081/8082 (an EADDRINUSE flake).
+            ("127.0.0.1:8081", free_port()),
+            ("127.0.0.1:8082", free_port()),
         ]),
     );
     let _proxy = start_proxy(&config);

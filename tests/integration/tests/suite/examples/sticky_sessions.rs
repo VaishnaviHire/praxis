@@ -27,6 +27,11 @@ fn sticky_sessions_cookie_pins_to_same_backend() {
             ("127.0.0.1:3001", port_a),
             ("127.0.0.1:3002", port_b),
             ("127.0.0.1:3003", port_c),
+            // The example config declares three listeners; remap the two this
+            // test does not exercise to free ports so the proxy does not bind
+            // the literal 8081/8082 (an EADDRINUSE flake under concurrency).
+            ("127.0.0.1:8081", free_port()),
+            ("127.0.0.1:8082", free_port()),
         ]),
     );
     let proxy = start_proxy(&config);
