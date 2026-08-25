@@ -29,7 +29,7 @@
 //! - HTTP protocol implementations and Pingora adapters ([`http`]).
 //! - Raw TCP/L4 forwarding ([`tcp`]).
 //! - Active health-check probes and admin/observability endpoints.
-//! - TLS listener setup ([`tls_setup`]) and keeping certificate hot-reload watchers alive for the process lifetime
+//! - TLS listener setup (the `tls_setup` module) and keeping certificate hot-reload watchers alive for the process lifetime
 //!   ([`CertWatcherShutdowns`]).
 //!
 //! Boundary with Pingora: Pingora owns request-smuggling prevention,
