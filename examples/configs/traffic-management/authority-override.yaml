@@ -34,3 +34,6 @@ filter_chains:
               - "localhost:9000"
             http:
               authority: "api.example.com"
+
+insecure_options:
+  allow_private_endpoints: true # example proxies to local backends

@@ -43,3 +43,6 @@ filter_chains:
                 zone: "us-east-1b"
               - address: "127.0.0.1:3004"
                 zone: "us-west-2a"
+
+insecure_options:
+  allow_private_endpoints: true # example proxies to local backends
