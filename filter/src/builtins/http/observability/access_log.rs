@@ -308,13 +308,16 @@ impl AccessLogFilter {
 
     /// Returns `true` for responses that Pingora delivers without a body phase.
     fn is_bodyless(status: http::StatusCode, req_method: &http::Method) -> bool {
-        status.as_u16() < 200
-            || status == http::StatusCode::NO_CONTENT
-            || status == http::StatusCode::NOT_MODIFIED
-            || req_method == http::Method::HEAD
+        bodyless_response(status, req_method)
     }
 
     fn maybe_emit(&self, ctx: &mut HttpFilterContext<'_>, status: u16, response_headers: Option<&http::HeaderMap>) {
+        // Emit at most once per request: the bodyless on_response path and the
+        // on_response_body end-of-stream path can both reach here, and the
+        // protocol-layer fallback already relies on this marker.
+        if access_record_already_emitted(ctx) {
+            return;
+        }
         // Sample the duration once so the emit-time condition and the logged
         // value can never disagree around the min_duration_ms boundary.
         let duration_ms = truncate_u128(ctx.request_start.elapsed().as_millis());
