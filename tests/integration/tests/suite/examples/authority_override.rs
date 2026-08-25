@@ -80,6 +80,8 @@ fn two_clusters_authority_isolation() {
     let proxy_port = free_port();
     let yaml = format!(
         r#"
+insecure_options:
+  allow_private_endpoints: true
 listeners:
   - name: default
     address: "127.0.0.1:{proxy_port}"
