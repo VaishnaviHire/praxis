@@ -644,8 +644,7 @@ fn record_upstream_exchange_span(ctx: &PingoraRequestCtx, response: Option<&ping
         .upstream_response_status
         .or_else(|| response.map(|resp| resp.status.as_u16()))
     {
-        ctx.upstream_exchange_span
-            .record("http.response.status_code", status);
+        ctx.upstream_exchange_span.record("http.response.status_code", status);
     }
     ctx.upstream_exchange_span
         .record("http.response.body.size", ctx.response_body_bytes);

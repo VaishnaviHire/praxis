@@ -302,7 +302,11 @@ impl LogLevelState {
         let Ok(mut guard) = self.inner.lock() else {
             return;
         };
-        if guard.overlays.get(target).is_some_and(|entry| entry.generation == generation) {
+        if guard
+            .overlays
+            .get(target)
+            .is_some_and(|entry| entry.generation == generation)
+        {
             remove_overlay_locked(&mut guard, target);
             if let Err(error) = reload_locked(&guard) {
                 tracing::error!(%error, %target, "failed to reload env filter after overlay revert");
