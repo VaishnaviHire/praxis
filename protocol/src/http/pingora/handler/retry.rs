@@ -2,6 +2,12 @@
 // Copyright (c) 2024 Praxis Contributors
 
 //! Policy-aware retry decision engine.
+//!
+//! Retry logic lives on the Praxis side of the Pingora boundary: given
+//! an upstream failure outcome, this engine decides whether to retry and
+//! how long to wait, applying the configured [`RetryPolicy`] (retriable
+//! conditions and backoff) against per-cluster [`ClusterRetryState`] so
+//! that retries cannot amplify upstream load without bound.
 
 use std::time::Duration;
 

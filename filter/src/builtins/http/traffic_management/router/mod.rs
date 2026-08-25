@@ -2,6 +2,14 @@
 // Copyright (c) 2024 Praxis Contributors
 
 //! Path-prefix and host-header routing filter.
+//!
+//! The router performs runtime routing: for each request it selects an
+//! upstream cluster by matching path prefix, host, and headers. This
+//! decides *where* a request goes, distinct from pipelining, which
+//! decides *what* processing it receives. In the classify-route-branch
+//! pattern, classifier filters promote facts to internal `x-praxis-*`
+//! headers and the router matches those headers, alongside path and
+//! host, to choose a cluster.
 
 mod config;
 mod json_alias;
