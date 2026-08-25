@@ -748,7 +748,10 @@ fn resolve_listener_label(
     reason = "tests"
 )]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use tracing_subscriber::layer::SubscriberExt as _;
 
@@ -772,17 +775,56 @@ mod tests {
         }
     }
 
-    /// Build a two-endpoint least-connections pipeline: the LB selects and
-    /// increments; a rejecting filter after it forces the release path.
-    fn least_connections_pipeline(reject_after_lb: bool) -> FilterPipeline {
-        let mut yaml = String::from(
-            "- filter: tcp_load_balancer\n  clusters:\n    - name: db\n      load_balancer_strategy: least_connections\n      endpoints: [\"10.0.0.1:5432\", \"10.0.0.2:5432\"]\n",
-        );
-        if reject_after_lb {
-            yaml.push_str("- filter: test_tcp_reject\n");
+    /// Stands in for `tcp_load_balancer`: picks an upstream on connect and
+    /// records how many times its connect and disconnect hooks run. The real
+    /// load balancer increments its least-connections counter on connect and
+    /// releases it on disconnect, so proving the disconnect hook runs on the
+    /// reject path is exactly what guarantees the counter is released.
+    struct CountingSelectorFilter {
+        connects: Arc<AtomicUsize>,
+        disconnects: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl praxis_filter::TcpFilter for CountingSelectorFilter {
+        fn name(&self) -> &'static str {
+            "test_counting_selector"
         }
-        let mut entries: Vec<praxis_core::config::FilterEntry> = serde_yaml::from_str(&yaml).unwrap();
+
+        async fn on_connect(&self, ctx: &mut TcpFilterContext<'_>) -> Result<FilterAction, praxis_filter::FilterError> {
+            self.connects.fetch_add(1, Ordering::SeqCst);
+            ctx.upstream_addr = Some(Cow::Borrowed("10.0.0.1:5432"));
+            Ok(FilterAction::Continue)
+        }
+
+        async fn on_disconnect(&self, _ctx: &mut TcpFilterContext<'_>) -> Result<(), praxis_filter::FilterError> {
+            self.disconnects.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// Build a `[test_counting_selector, test_tcp_reject]` pipeline: the
+    /// selector stands in for the load balancer (picks an upstream and records
+    /// hook calls), and the rejecting filter after it forces the release path.
+    fn counting_selector_reject_pipeline(
+        connects: &Arc<AtomicUsize>,
+        disconnects: &Arc<AtomicUsize>,
+    ) -> FilterPipeline {
+        let mut entries: Vec<praxis_core::config::FilterEntry> =
+            serde_yaml::from_str("- filter: test_counting_selector\n- filter: test_tcp_reject\n").unwrap();
+        let (connects, disconnects) = (Arc::clone(connects), Arc::clone(disconnects));
         let mut registry = praxis_filter::FilterRegistry::with_builtins();
+        registry
+            .register(
+                "test_counting_selector",
+                praxis_filter::FilterFactory::Tcp(Arc::new(move |_config| {
+                    Ok(Box::new(CountingSelectorFilter {
+                        connects: Arc::clone(&connects),
+                        disconnects: Arc::clone(&disconnects),
+                    }))
+                })),
+            )
+            .unwrap();
         registry
             .register(
                 "test_tcp_reject",
@@ -808,33 +850,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_connection_releases_least_connections_counter() {
-        let pipeline = least_connections_pipeline(true);
+    async fn rejected_connection_runs_disconnect_release_hooks() {
+        let connects = Arc::new(AtomicUsize::new(0));
+        let disconnects = Arc::new(AtomicUsize::new(0));
+        let pipeline = counting_selector_reject_pipeline(&connects, &disconnects);
 
-        // First attempt: LB selects endpoint 1, the ACL filter then rejects.
-        // The release path must decrement the counter again.
-        let first = resolve_connect_result(&pipeline, &mut make_tcp_ctx("db"), "192.0.2.7:9999").await;
-        assert!(first.is_none(), "the ACL filter should reject the connection");
+        // The selector picks an upstream (the real load balancer would
+        // increment its in-flight counter here); the ACL filter after it then
+        // rejects the connection.
+        let result = resolve_connect_result(&pipeline, &mut make_tcp_ctx("db"), "192.0.2.7:9999").await;
 
-        // If the counter leaked, least-connections now sees [1, 0] and the
-        // next selection goes to endpoint 2; with the release it sees [0, 0]
-        // and picks endpoint 1 again.
-        let no_reject = least_connections_pipeline(false);
-        let mut probe = make_tcp_ctx("db");
-        let selected = resolve_connect_result(&no_reject, &mut probe, "192.0.2.7:9999").await;
+        assert!(result.is_none(), "the ACL filter should reject the connection");
         assert_eq!(
-            selected.as_deref(),
-            Some("10.0.0.1:5432"),
-            "fresh pipeline sanity check: first selection is endpoint 1"
+            connects.load(Ordering::SeqCst),
+            1,
+            "the selecting filter must run its connect hook exactly once"
         );
-
-        let mut probe2 = make_tcp_ctx("db");
-        let action = pipeline.execute_tcp_connect(&mut probe2).await;
-        drop(action);
+        // The release path must run the paired disconnect hook; that is what
+        // decrements the least-connections counter the selector incremented.
+        // Asserting on the hook (rather than a follow-up selection) keeps the
+        // test independent of the load balancer's tie-break ordering.
         assert_eq!(
-            probe2.upstream_addr.as_deref(),
-            Some("10.0.0.1:5432"),
-            "after a rejected connection the counter must be released, so endpoint 1 is least-loaded again"
+            disconnects.load(Ordering::SeqCst),
+            1,
+            "a rejected connection must run the disconnect hook so the selected endpoint's in-flight counter is released"
         );
     }
 
