@@ -113,6 +113,7 @@ async fn run_response_pipeline(
         filter_state,
         executed_indices,
         body_done,
+        attempted_endpoints,
     ) = {
         let mut fctx = ctx.filter_context_for(pipeline, Some(resp)).ok_or_else(|| {
             pingora_core::Error::explain(
@@ -132,6 +133,7 @@ async fn run_response_pipeline(
             fctx.filter_state,
             fctx.executed_filter_indices,
             fctx.body_done_indices,
+            fctx.attempted_endpoints,
         )
     };
     ctx.cluster = cluster;
@@ -142,6 +144,7 @@ async fn run_response_pipeline(
     ctx.filter_state = filter_state;
     ctx.cached_executed_filter_indices = executed_indices;
     ctx.cached_body_done_indices = body_done;
+    ctx.attempted_endpoints = attempted_endpoints;
     Ok((r, headers_modified))
 }
 

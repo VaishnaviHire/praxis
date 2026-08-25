@@ -252,26 +252,32 @@ fn handle_connect_failure(ctx: &mut PingoraRequestCtx, e: Box<pingora_core::Erro
         retry::RetryDecision::Retry { backoff } => {
             ctx.retries += 1;
             ctx.pending_backoff = Some(backoff);
-            ctx.reselect_on_retry = true;
+            // Legacy (unconfigured) policies keep the historical
+            // retry-same-endpoint behavior; only operator-configured
+            // policies opt into endpoint reselection.
+            ctx.reselect_on_retry = policy.configured;
             if let Some(upstream) = ctx.upstream_for_retry.as_ref() {
                 let addr = Arc::clone(&upstream.address);
                 if !ctx.attempted_endpoints.iter().any(|e| e.as_ref() == addr.as_ref()) {
                     ctx.attempted_endpoints.push(addr);
                 }
             }
-            // Release the failed endpoint's in-flight counter before clearing,
-            // preventing phantom +1 leaks on LeastConnections/P2C strategies.
-            if let Some(upstream) = ctx.upstream_for_retry.as_ref()
-                && let Some(reselector) = ctx.endpoint_reselector.as_ref()
-            {
-                reselector.release(&upstream.address);
+            // Under reselection, release the failed endpoint's in-flight
+            // counter and clear the saved upstream so upstream_peer picks an
+            // alternate host. Legacy same-endpoint retries keep the saved
+            // upstream (and its counter) for the next attempt.
+            if policy.configured {
+                if let Some(upstream) = ctx.upstream_for_retry.as_ref()
+                    && let Some(reselector) = ctx.endpoint_reselector.as_ref()
+                {
+                    reselector.release(&upstream.address);
+                }
+                ctx.upstream_for_retry = None;
             }
             let upstream_address = ctx
                 .upstream_for_retry
                 .as_ref()
-                .map_or_else(|| "unknown".to_owned(), |u| u.address.to_string());
-            // Clear so upstream_peer re-selects an alternate host.
-            ctx.upstream_for_retry = None;
+                .map_or("unknown", |u| u.address.as_ref());
             debug!(
                 retries = ctx.retries,
                 max = policy.effective_max_retries(),
@@ -321,21 +327,28 @@ fn maybe_retry_response(ctx: &mut PingoraRequestCtx, status: u16) -> Option<Box<
         retry::RetryDecision::Retry { backoff } => {
             ctx.retries += 1;
             ctx.pending_backoff = Some(backoff);
-            ctx.reselect_on_retry = true;
+            // Legacy (unconfigured) policies keep the historical
+            // retry-same-endpoint behavior; only operator-configured
+            // policies opt into endpoint reselection.
+            ctx.reselect_on_retry = policy.configured;
             if let Some(upstream) = ctx.upstream_for_retry.as_ref() {
                 let addr = Arc::clone(&upstream.address);
                 if !ctx.attempted_endpoints.iter().any(|e| e.as_ref() == addr.as_ref()) {
                     ctx.attempted_endpoints.push(addr);
                 }
             }
-            // Release the failed endpoint's in-flight counter before clearing,
-            // preventing phantom +1 leaks on LeastConnections/P2C strategies.
-            if let Some(upstream) = ctx.upstream_for_retry.as_ref()
-                && let Some(reselector) = ctx.endpoint_reselector.as_ref()
-            {
-                reselector.release(&upstream.address);
+            // Under reselection, release the failed endpoint's in-flight
+            // counter and clear the saved upstream so upstream_peer picks an
+            // alternate host. Legacy same-endpoint retries keep the saved
+            // upstream (and its counter) for the next attempt.
+            if policy.configured {
+                if let Some(upstream) = ctx.upstream_for_retry.as_ref()
+                    && let Some(reselector) = ctx.endpoint_reselector.as_ref()
+                {
+                    reselector.release(&upstream.address);
+                }
+                ctx.upstream_for_retry = None;
             }
-            ctx.upstream_for_retry = None;
             debug!(
                 status,
                 retries = ctx.retries,
@@ -735,6 +748,8 @@ struct BodyFilterOutput {
     executed_filter_indices: Vec<bool>,
     /// Per-filter body-done tracking indices.
     body_done_indices: Vec<bool>,
+    /// Endpoints already attempted for this request (retry exclusion set).
+    attempted_endpoints: Vec<Arc<str>>,
 }
 
 impl BodyFilterOutput {
@@ -749,6 +764,7 @@ impl BodyFilterOutput {
             filter_state: std::mem::take(&mut fctx.filter_state),
             executed_filter_indices: std::mem::take(&mut fctx.executed_filter_indices),
             body_done_indices: std::mem::take(&mut fctx.body_done_indices),
+            attempted_endpoints: std::mem::take(&mut fctx.attempted_endpoints),
         }
     }
 
@@ -761,6 +777,7 @@ impl BodyFilterOutput {
         ctx.filter_state = self.filter_state;
         ctx.cached_executed_filter_indices = self.executed_filter_indices;
         ctx.cached_body_done_indices = self.body_done_indices;
+        ctx.attempted_endpoints = self.attempted_endpoints;
     }
 }
 
@@ -892,6 +909,7 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
         ctx.retry_policy = Some(Arc::new(praxis_core::config::RetryPolicy {
+            configured: true,
             retriable_conditions: vec![praxis_core::config::RetriableCondition::Status5xx],
             ..praxis_core::config::RetryPolicy::legacy_default()
         }));
@@ -1381,6 +1399,7 @@ mod tests {
                 tls: None,
             }),
             extensions,
+            attempted_endpoints: Vec::new(),
             filter_metadata: HashMap::from([("key".to_owned(), "val".to_owned())]),
             filter_state,
             executed_filter_indices: vec![true, false],

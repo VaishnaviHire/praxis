@@ -62,8 +62,9 @@ If all endpoints are unhealthy, the filter enters panic mode and routes to all e
 | `clusters[].retry_policy.per_try_timeout_ms` | integer | no | Independent timeout for a single upstream attempt, in milliseconds. |
 | `clusters[].retry_policy.request_timeout_ms` | integer | no | Overall request deadline across all attempts, in milliseconds. When unset, the overall-timeout guard is skipped. |
 | `clusters[].retry_policy.backoff` | BackoffConfig | no | Exponential backoff between attempts. |
-| `clusters[].retry_policy.backoff.base_interval_ms` | integer | yes | Exponential base interval in milliseconds. |
-| `clusters[].retry_policy.backoff.max_interval_ms` | integer | yes | Maximum capped interval in milliseconds. |
+| `clusters[].retry_policy.backoff.base_interval_ms` | integer | yes | Base delay in milliseconds for the first retry. |
+| `clusters[].retry_policy.backoff.max_interval_ms` | integer | yes | Cap on the exponential delay in milliseconds. |
+| `clusters[].retry_policy.configured` | bool | no | Whether this policy came from operator configuration rather than the built-in legacy default. Endpoint reselection on retry is enabled only for configured policies; the legacy default preserves the historical retry-same-endpoint semantics. |
 | `clusters[].retry_policy.retry_budget` | RetryBudgetConfig | no | Token-bucket retry budget. |
 | `clusters[].retry_policy.retry_budget.percent` | BudgetPercent | yes | Maximum retries as a percentage of active requests (0.0..=100.0). |
 | `clusters[].retry_policy.retry_budget.min_retries_per_second` | integer | no | Floor on tokens per second even at low traffic. |

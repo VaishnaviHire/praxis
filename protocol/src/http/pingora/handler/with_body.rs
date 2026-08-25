@@ -207,13 +207,20 @@ impl ProxyHttp for PingoraHttpHandler {
 
     fn fail_to_connect(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         _peer: &HttpPeer,
         ctx: &mut Self::CTX,
         e: Box<pingora_core::Error>,
     ) -> Box<pingora_core::Error> {
         let span = ctx.request_span.clone();
         let _entered = span.enter();
+        // A truncated replay buffer means a retry would resend a partial
+        // request body — refuse rather than corrupt the request upstream.
+        if session.as_mut().retry_buffer_truncated() {
+            let mut e = e;
+            e.set_retry(false);
+            return e;
+        }
         handle_connect_failure(ctx, e)
     }
 
@@ -225,6 +232,17 @@ impl ProxyHttp for PingoraHttpHandler {
         ctx: &mut Self::CTX,
         client_reused: bool,
     ) -> Box<pingora_core::Error> {
+        // Never retry once response bytes reached the client: a second
+        // attempt cannot rewrite the response line, so its body would be
+        // spliced after whatever was already sent.
+        if session.response_written().is_some() {
+            let mut e = e;
+            e.set_retry(false);
+            return e;
+        }
+        // A truncated replay buffer means a retry would resend a partial
+        // request body — silent request corruption.
+        let truncated = session.as_mut().retry_buffer_truncated();
         // Preserve an explicit retry decision from the response-status path
         // (already validated by the policy engine).
         if matches!(e.retry, pingora_core::RetryType::Decided(true)) {
@@ -252,6 +270,11 @@ impl ProxyHttp for PingoraHttpHandler {
             return e;
         }
         let e = e.more_context(format!("Peer: {peer}"));
+        if truncated {
+            let mut e = e;
+            e.set_retry(false);
+            return e;
+        }
         // Mid-proxy errors (reset, refused stream, etc.) go through the same
         // policy engine as connect failures — Pingora's decide_reuse must not
         // bypass idempotency / budget / max_retries guards.

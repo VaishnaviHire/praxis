@@ -41,8 +41,8 @@ pub use chain_ref::ChainRef;
 pub use cluster::{
     BackoffConfig, BudgetPercent, Cluster, ClusterHttpOptions, ConsistentHashOpts, DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_BODY_LIMIT_BYTES, Endpoint, HashFunction, HealthCheckConfig, HealthCheckType, HttpStatusCode,
-    LoadBalancerStrategy, MAX_RETRY_BODY_LIMIT_BYTES, MaglevOpts, ParameterisedStrategy, PriorityOpts,
-    RetriableCondition, RetryBodyLimit, RetryBudgetConfig, RetryPolicy, RingHashOpts, SimpleStrategy,
+    LoadBalancerStrategy, MAX_EFFECTIVE_RETRIES, MAX_RETRY_BODY_LIMIT_BYTES, MaglevOpts, ParameterisedStrategy,
+    PriorityOpts, RetriableCondition, RetryBodyLimit, RetryBudgetConfig, RetryPolicy, RingHashOpts, SimpleStrategy,
     SubsetFallbackPolicy, SubsetOpts, ZoneAwareOpts,
 };
 pub use condition::{Condition, ConditionMatch, ResponseCondition, ResponseConditionMatch};

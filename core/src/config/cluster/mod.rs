@@ -18,7 +18,8 @@ pub use load_balancer_strategy::{
 };
 pub use retry_policy::{
     BackoffConfig, BudgetPercent, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BODY_LIMIT_BYTES, HttpStatusCode,
-    MAX_RETRY_BODY_LIMIT_BYTES, RetriableCondition, RetryBodyLimit, RetryBudgetConfig, RetryPolicy,
+    MAX_EFFECTIVE_RETRIES, MAX_RETRY_BODY_LIMIT_BYTES, RetriableCondition, RetryBodyLimit, RetryBudgetConfig,
+    RetryPolicy,
 };
 use serde::{Deserialize, Serialize};
 
