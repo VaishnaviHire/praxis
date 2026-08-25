@@ -208,6 +208,14 @@ pub struct RateLimitFilter {
     /// Pre-formatted burst value for the `X-RateLimit-Limit` header.
     pub(self) burst_string: String,
 
+    /// Pre-built `X-RateLimit-*` header names, so the response path inserts
+    /// them without re-validating the constant names on every response.
+    pub(self) header_limit: http::header::HeaderName,
+    /// Pre-built `X-RateLimit-Remaining` header name.
+    pub(self) header_remaining: http::header::HeaderName,
+    /// Pre-built `X-RateLimit-Reset` header name.
+    pub(self) header_reset: http::header::HeaderName,
+
     /// Monotonic clock reference; all timestamps are offsets from this.
     pub(self) epoch: Instant,
 }
@@ -269,6 +277,12 @@ impl RateLimitFilter {
             rate: cfg.rate,
             burst,
             burst_string,
+            // Lowercase literals: HeaderName::from_static panics on uppercase,
+            // and HeaderMap stores names lowercased anyway, matching the wire
+            // output of the previous from_bytes(HEADER_RATELIMIT_*) path.
+            header_limit: http::header::HeaderName::from_static("x-ratelimit-limit"),
+            header_remaining: http::header::HeaderName::from_static("x-ratelimit-remaining"),
+            header_reset: http::header::HeaderName::from_static("x-ratelimit-reset"),
             epoch: Instant::now(),
         }))
     }
@@ -301,14 +315,16 @@ impl HttpFilter for RateLimitFilter {
 
     async fn on_response(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
         let remaining = self.current_remaining(ctx.client_addr);
-        let (headers, _retry_secs) = self.rate_limit_headers(remaining, ctx.time_source);
+        let (remaining_str, reset_str, _retry_secs) = self.rate_limit_values(remaining, ctx.time_source);
 
         if let Some(ref mut resp) = ctx.response_header {
-            for (name, value) in &headers {
-                if let Ok(hv) = value.parse()
-                    && let Ok(hn) = http::header::HeaderName::from_bytes(name.as_bytes())
-                {
-                    resp.headers.insert(hn, hv);
+            for (name, value) in [
+                (&self.header_limit, self.burst_string.as_str()),
+                (&self.header_remaining, remaining_str.as_str()),
+                (&self.header_reset, reset_str.as_str()),
+            ] {
+                if let Ok(hv) = value.parse() {
+                    resp.headers.insert(name, hv);
                     ctx.response_headers_modified = true;
                 }
             }

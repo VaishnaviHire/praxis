@@ -183,7 +183,6 @@ jobs:
             "Bash(gh pr diff *)"
             "Bash(gh api *)"
             "Bash(gh repo view *)"
-            --dangerously-skip-permissions
             --max-budget-usd 5
         env:
           GH_REPO: ${{ github.repository }}

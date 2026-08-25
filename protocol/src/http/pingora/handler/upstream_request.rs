@@ -772,6 +772,28 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_upgrade_headers_strip_all() {
+        // Two separate `Upgrade` headers (`websocket` then `h2c`) must not be
+        // treated as a WebSocket upgrade: reading only the first value would
+        // preserve the whole multi-valued header and smuggle the h2c token.
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        let _ws = req.append_header("upgrade".to_owned(), "websocket".to_owned());
+        let _h2c = req.append_header("upgrade".to_owned(), "h2c".to_owned());
+        let _conn = req.insert_header("connection".to_owned(), "Upgrade".to_owned());
+
+        strip_hop_by_hop(&mut req, true);
+
+        assert!(
+            req.headers.get("upgrade").is_none(),
+            "duplicate Upgrade headers must all be stripped to prevent h2c smuggling"
+        );
+        assert!(
+            req.headers.get("connection").is_none(),
+            "connection must be stripped when Upgrade is not a single websocket value"
+        );
+    }
+
+    #[test]
     fn websocket_case_insensitive() {
         let mut req = make_request(&[("upgrade", "WEBSOCKET"), ("connection", "Upgrade")]);
 

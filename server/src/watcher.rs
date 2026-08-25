@@ -291,7 +291,7 @@ fn update_reload_backoff(ok: bool, consecutive_failures: &mut u32, last_failure:
     reason = "orchestration function"
 )]
 fn handle_reload(
-    config_path: &PathBuf,
+    config_path: &std::path::Path,
     referenced_files: &[PathBuf],
     current_config: &mut Config,
     content_hash: &mut u64,
@@ -304,7 +304,7 @@ fn handle_reload(
     subrequest_client: &praxis_core::subrequest::SubRequestClient,
     log_level: Option<&Arc<praxis_core::logging::LogLevelState>>,
 ) -> bool {
-    let content = match std::fs::read_to_string(config_path) {
+    let content = match praxis_core::config::read_config_file(config_path) {
         Ok(c) => c,
         Err(e) => {
             error!(

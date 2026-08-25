@@ -53,7 +53,10 @@ pub(super) async fn execute(
     super::upstream_response::strip_hop_by_hop_response(upstream_response, is_upgrade_response);
     upstream_response.strip_reserved_internal();
     let mut resp = response_header_from_pingora(upstream_response);
-    let name_fingerprint_before = header_name_fingerprint(&resp.headers);
+    // An empty pipeline cannot reorder headers, so the before/after
+    // fingerprint comparison is unnecessary — skip hashing the whole header
+    // map on every response for listeners with no filters.
+    let name_fingerprint_before = (!pipeline.is_empty()).then(|| header_name_fingerprint(&resp.headers));
     ctx.connection_upgraded = is_upgrade_response;
     ctx.upstream_response_status = Some(upstream_response.status.as_u16());
     let is_bodyless = ctx
@@ -74,8 +77,8 @@ pub(super) async fn execute(
     // header count, so the count alone cannot decide whether the direct
     // write-back is safe. Re-fingerprint and treat any change to the name
     // sequence as a modification, independent of what filters self-reported.
-    let headers_modified =
-        filter_flagged_modification || header_name_fingerprint(&resp.headers) != name_fingerprint_before;
+    let headers_modified = filter_flagged_modification
+        || name_fingerprint_before.is_some_and(|before| header_name_fingerprint(&resp.headers) != before);
     let should_snapshot_response_header = pipeline.body_capabilities().any_response_body_condition
         && matches!(
             &result,
