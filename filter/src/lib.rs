@@ -47,7 +47,8 @@ pub use builtins::{
     EndpointSelectorFilter, GuardrailsAction, GuardrailsFilter, LoadBalancerFilter, PiiKind, RateLimitMode,
     RedirectStatus, RouterFilter, RuleTargetKind, SessionStore, SessionStoreRegistry, StickySessionsFilter,
     access_record_already_emitted, bodyless_response, emit_access_record, has_dot_dot_traversal,
-    http::payload_processing::compression_config::CompressionConfig, mark_access_record_emitted, normalize_rewritten_path,
+    http::payload_processing::compression_config::CompressionConfig, mark_access_record_emitted,
+    normalize_rewritten_path,
 };
 #[cfg(feature = "policy-engine")]
 pub use builtins::{PolicyFilter, PolicyPluginFactoryFn, register_policy_plugin_factory};

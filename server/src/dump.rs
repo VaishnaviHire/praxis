@@ -718,13 +718,17 @@ filter_chains:
         let mapping = value.as_mapping().unwrap();
         for field in ["api_key", "client_secret", "signing_key"] {
             assert_eq!(
-                mapping.get(serde_yaml::Value::String(field.to_owned())).and_then(|v| v.as_str()),
+                mapping
+                    .get(serde_yaml::Value::String(field.to_owned()))
+                    .and_then(|v| v.as_str()),
                 Some("[REDACTED]"),
                 "{field} must be redacted"
             );
         }
         assert_eq!(
-            mapping.get(serde_yaml::Value::String("keep".to_owned())).and_then(|v| v.as_str()),
+            mapping
+                .get(serde_yaml::Value::String("keep".to_owned()))
+                .and_then(|v| v.as_str()),
             Some("visible"),
             "non-sensitive field must not be redacted"
         );
@@ -746,12 +750,20 @@ filter_chains:
             .as_sequence()
             .unwrap();
         assert_eq!(
-            seq[0].as_mapping().unwrap().get(serde_yaml::Value::String("value".to_owned())).and_then(|v| v.as_str()),
+            seq[0]
+                .as_mapping()
+                .unwrap()
+                .get(serde_yaml::Value::String("value".to_owned()))
+                .and_then(|v| v.as_str()),
             Some("[REDACTED]"),
             "Authorization header value must be redacted (case-insensitive match)"
         );
         assert_eq!(
-            seq[1].as_mapping().unwrap().get(serde_yaml::Value::String("value".to_owned())).and_then(|v| v.as_str()),
+            seq[1]
+                .as_mapping()
+                .unwrap()
+                .get(serde_yaml::Value::String("value".to_owned()))
+                .and_then(|v| v.as_str()),
             Some("keep-me"),
             "non-credential header value must not be redacted"
         );

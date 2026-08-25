@@ -61,7 +61,9 @@ pub(crate) fn check_file_size(path: &Path) -> Result<(), ProxyError> {
     // follows symlinks, so a symlink to a regular file still passes.
     if !meta.is_file() {
         let display = path.display();
-        return Err(ProxyError::Config(format!("config path {display} is not a regular file")));
+        return Err(ProxyError::Config(format!(
+            "config path {display} is not a regular file"
+        )));
     }
 
     let len = meta.len();
@@ -93,10 +95,12 @@ pub fn read_config_file(path: &Path) -> Result<String, ProxyError> {
         ProxyError::Config(format!("failed to read {display}: {e}"))
     })?;
     let mut content = String::new();
-    file.take(MAX_YAML_READ_BYTES).read_to_string(&mut content).map_err(|e| {
-        let display = path.display();
-        ProxyError::Config(format!("failed to read {display}: {e}"))
-    })?;
+    file.take(MAX_YAML_READ_BYTES)
+        .read_to_string(&mut content)
+        .map_err(|e| {
+            let display = path.display();
+            ProxyError::Config(format!("failed to read {display}: {e}"))
+        })?;
     Ok(content)
 }
 

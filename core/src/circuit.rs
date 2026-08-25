@@ -434,7 +434,11 @@ impl CircuitBreakerRegistry {
         // entries actually removed.
         candidates
             .iter()
-            .filter(|key| self.breakers.remove_if(key, |_, cb| cb.is_idle(idle_threshold)).is_some())
+            .filter(|key| {
+                self.breakers
+                    .remove_if(key, |_, cb| cb.is_idle(idle_threshold))
+                    .is_some()
+            })
             .count()
     }
 

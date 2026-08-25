@@ -280,10 +280,7 @@ impl ClientCertVerifier for ReloadableClientVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        self.inner
-            .load()
-            .verifier
-            .verify_tls12_signature(message, cert, dss)
+        self.inner.load().verifier.verify_tls12_signature(message, cert, dss)
     }
 
     fn verify_tls13_signature(
@@ -292,10 +289,7 @@ impl ClientCertVerifier for ReloadableClientVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        self.inner
-            .load()
-            .verifier
-            .verify_tls13_signature(message, cert, dss)
+        self.inner.load().verifier.verify_tls13_signature(message, cert, dss)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
