@@ -36,8 +36,8 @@ Longest prefix wins. Routes without `host` match any host. Header restrictions u
 | `routes[].retry_policy.per_try_timeout_ms` | integer | no | Independent timeout for a single upstream attempt, in milliseconds. |
 | `routes[].retry_policy.request_timeout_ms` | integer | no | Overall request deadline across all attempts, in milliseconds. When unset, the overall-timeout guard is skipped. |
 | `routes[].retry_policy.backoff` | BackoffConfig | no | Exponential backoff between attempts. |
-| `routes[].retry_policy.backoff.base_interval_ms` | integer | yes | Base delay in milliseconds for the first retry. |
-| `routes[].retry_policy.backoff.max_interval_ms` | integer | yes | Cap on the exponential delay in milliseconds. |
+| `routes[].retry_policy.backoff.base_interval_ms` | integer | yes | Exponential base interval in milliseconds. |
+| `routes[].retry_policy.backoff.max_interval_ms` | integer | yes | Maximum capped interval in milliseconds. |
 | `routes[].retry_policy.configured` | bool | no | Whether this policy came from operator configuration rather than the built-in legacy default. Endpoint reselection on retry is enabled only for configured policies; the legacy default preserves the historical retry-same-endpoint semantics. |
 | `routes[].retry_policy.retry_budget` | RetryBudgetConfig | no | Token-bucket retry budget. |
 | `routes[].retry_policy.retry_budget.percent` | BudgetPercent | yes | Maximum retries as a percentage of active requests (0.0..=100.0). |
