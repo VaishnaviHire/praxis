@@ -151,7 +151,7 @@ page.
 | [round-robin.yaml](configs/traffic-management/round-robin.yaml) | Default strategy |
 | [session-affinity.yaml](configs/traffic-management/session-affinity.yaml) | Hashes a request header to pin a user's requests to one backend |
 | [static-response.yaml](configs/traffic-management/static-response.yaml) | Returns a fixed response without contacting any upstream |
-| [sticky-sessions.yaml](configs/traffic-management/sticky-sessions.yaml) | Pins clients to a specific backend using a proxy-managed session cookie |
+| [sticky-sessions.yaml](configs/traffic-management/sticky-sessions.yaml) | Pins clients to a specific backend across requests |
 | [subset-lb.yaml](configs/traffic-management/subset-lb.yaml) | Filters endpoints by metadata labels and applies an inner strategy within the matching subset |
 | [timeout.yaml](configs/traffic-management/timeout.yaml) | Returns 504 if the upstream takes longer than timeout_ms to respond |
 | [weighted-load-balancing.yaml](configs/traffic-management/weighted-load-balancing.yaml) | Traffic split proportional to per-endpoint weights |
