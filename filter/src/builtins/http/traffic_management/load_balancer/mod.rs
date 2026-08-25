@@ -190,6 +190,13 @@ impl HttpFilter for LoadBalancerFilter {
             if health.is_none() || pinned_index.is_some() {
                 debug!(cluster = %cluster_name, upstream = %pinned_addr, "using pinned endpoint from session affinity");
                 ctx.selected_endpoint_index = pinned_index;
+                // Known limitation: a pinned request is served directly without
+                // a retry policy, retry budget, or endpoint reselector, so it is
+                // not retried or failed over on a transient connect failure, and
+                // its load is not tracked by counter-based strategies (strategy
+                // .select is bypassed to honor affinity). Health-check-detected
+                // outages are handled upstream by the session-affinity filter,
+                // which does not pin to a down endpoint.
                 ctx.upstream = Some(entry.build_upstream(pinned_addr, ctx));
                 return Ok(FilterAction::Continue);
             }
