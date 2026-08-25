@@ -18,6 +18,32 @@
 )]
 
 //! Filter pipeline engine for Praxis.
+//!
+//! `praxis-filter` sits between `protocol` and `core` in the crate
+//! dependency flow `server -> protocol -> filter -> core -> tls`. It
+//! turns the validated configuration from [`praxis_core`] into an
+//! executable request/response processing pipeline that the protocol
+//! adapters drive. This is where "what processing a request receives"
+//! is defined, as opposed to "where a request goes" (runtime routing
+//! performed by the [`RouterFilter`]).
+//!
+//! Key entry types:
+//! - [`HttpFilter`] and [`TcpFilter`]: the traits every built-in and
+//!   external filter implements, each with a `from_config` factory.
+//! - [`FilterRegistry`]: maps filter names to factories and builds
+//!   filters from config; extend it with the [`register_filters!`]
+//!   macro.
+//! - [`FilterPipeline`]: the resolved, ordered chain executed per
+//!   request, including conditional branch chains.
+//! - [`FilterResultSet`]: filters record results here without knowing
+//!   about branches; the pipeline executor reads them to evaluate
+//!   branch conditions and dispatch.
+//! - [`BodyAccess`] / [`BodyMode`]: body access and buffering, so
+//!   streaming filters can process chunks without buffering whole
+//!   bodies.
+//!
+//! Built-in filters live under [`builtins`], organized by protocol and
+//! category.
 
 mod actions;
 mod any_filter;
