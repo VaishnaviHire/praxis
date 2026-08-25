@@ -112,6 +112,31 @@ impl PingoraHttpHandler {
     }
 }
 
+/// Resolve retry safety for a stale (ReusedOnly) upstream connection.
+///
+/// A pooled connection that closed while idle is not a real attempt, but the
+/// request bytes were already written upstream, so replay must be safe: an
+/// idempotent method (or explicit opt-in) and an intact buffered body.
+fn resolve_reused_only_retry(
+    ctx: &PingoraRequestCtx,
+    session: &Session,
+    client_reused: bool,
+    mut e: Box<pingora_core::Error>,
+) -> Box<pingora_core::Error> {
+    let policy = ctx
+        .retry_policy
+        .clone()
+        .unwrap_or_else(|| Arc::new(praxis_core::config::RetryPolicy::legacy_default()));
+    let replay_safe = client_reused
+        && !session.as_ref().retry_buffer_truncated()
+        && (ctx.request_is_idempotent || policy.allow_non_idempotent());
+    if !replay_safe {
+        debug!("clearing reused-connection retry: replay is not safe for this request");
+    }
+    e.set_retry(replay_safe);
+    e
+}
+
 #[async_trait]
 impl ProxyHttp for PingoraHttpHandler {
     type CTX = PingoraRequestCtx;
@@ -248,26 +273,11 @@ impl ProxyHttp for PingoraHttpHandler {
         if matches!(e.retry, pingora_core::RetryType::Decided(true)) {
             return e;
         }
-        // Stale-connection errors (ReusedOnly) skip the retry budget — a
-        // pooled connection closed while idle is not a real attempt — but
-        // they still occur after request bytes were written upstream, so
-        // replay must respect the retry-safety invariant: idempotent method
-        // (or an explicit opt-in) and an intact buffered body.
+        // Stale-connection (ReusedOnly) errors skip the retry budget but still
+        // require replay safety; see resolve_reused_only_retry.
         // See docs/architecture/http-correctness.md.
         if matches!(e.retry, pingora_core::RetryType::ReusedOnly) {
-            let policy = ctx
-                .retry_policy
-                .clone()
-                .unwrap_or_else(|| Arc::new(praxis_core::config::RetryPolicy::legacy_default()));
-            let replay_safe = client_reused
-                && !session.as_ref().retry_buffer_truncated()
-                && (ctx.request_is_idempotent || policy.allow_non_idempotent());
-            if !replay_safe {
-                debug!("clearing reused-connection retry: replay is not safe for this request");
-            }
-            let mut e = e;
-            e.set_retry(replay_safe);
-            return e;
+            return resolve_reused_only_retry(ctx, session, client_reused, e);
         }
         let e = e.more_context(format!("Peer: {peer}"));
         if truncated {
