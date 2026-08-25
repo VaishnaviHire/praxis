@@ -55,7 +55,7 @@ LINT_EXTRA_CMDS := typos taplo shellcheck actionlint
 	test-schema test-integration test-conformance \
 	test-security test-security-suite test-resilience \
 	bench \
-	lint lint-extra generate-filter-docs fmt doc audit semver publish-dry-run \
+	lint lint-extra generate-filter-docs fmt doc audit semver publish-dry-run publish \
 	mutants \
 	coverage coverage-check \
 	fuzz fuzz-build \
@@ -348,6 +348,16 @@ publish-dry-run:
 	done
 	cargo publish -p praxis-proxy-tls --dry-run
 
+# Real crates.io publish, in dependency order. Requires a crates.io token
+# in CARGO_REGISTRY_TOKEN (set from the RUST_CRATES_PUBLISH_TOKEN secret in
+# CI). `cargo publish` blocks until each crate is available in the index
+# before the next one publishes.
+publish:
+	@for crate in $(PUBLISH_CRATES); do \
+		echo "publishing $$crate" ; \
+		cargo publish -p "$$crate" ; \
+	done
+
 coverage:
 	cargo llvm-cov --workspace --html --output-dir target/coverage \
 		--exclude benchmarks \
@@ -424,6 +434,7 @@ help:
 	@echo "  semver               cargo semver-checks"
 	@echo "  mutants              mutation testing (cargo-mutants)"
 	@echo "  publish-dry-run      validate crate packaging for crates.io"
+	@echo "  publish              publish release crates to crates.io"
 	@echo "  coverage             HTML coverage report"
 	@echo "  coverage-check       fail if line coverage < 96%%"
 	@echo ""
