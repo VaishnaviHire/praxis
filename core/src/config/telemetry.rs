@@ -248,7 +248,10 @@ impl TelemetryConfig {
 /// the key is absent.
 fn extract_resource_attribute_from_env(key: &str) -> Option<String> {
     let attrs = std::env::var(OTEL_RESOURCE_ATTRIBUTES_ENV_VAR).ok()?;
-    extract_resource_attribute(&attrs, key)
+    // Drop empty values (e.g. `service.version=`) so an empty env attribute
+    // does not flow into the OTel Resource, matching the config-side
+    // validation and the OTEL_SERVICE_NAME empty-filter in resolve().
+    extract_resource_attribute(&attrs, key).filter(|s| !s.trim().is_empty())
 }
 
 /// Extract a single attribute value from an `OTel` resource-attributes string.
