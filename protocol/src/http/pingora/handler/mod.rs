@@ -1730,6 +1730,7 @@ mod tests {
             address: Arc::from("10.0.0.1:8080"),
             connection: Arc::new(ConnectionOptions::default()),
             tls: None,
+            authority: None,
         });
         let e = handle_connect_failure(&mut ctx, make_error());
         assert!(e.retry(), "should retry with upstream address present");
@@ -1758,6 +1759,7 @@ mod tests {
             address: Arc::from("10.0.0.2:443"),
             connection: Arc::new(ConnectionOptions::default()),
             tls: None,
+            authority: None,
         });
         let e = handle_connect_failure(&mut ctx, make_error());
         assert!(
@@ -1775,6 +1777,7 @@ mod tests {
             address: Arc::from("10.0.0.3:8080"),
             connection: Arc::new(ConnectionOptions::default()),
             tls: None,
+            authority: None,
         });
         let e = handle_connect_failure(&mut ctx, make_error());
         assert!(!e.retry(), "should not retry large body even with upstream address");

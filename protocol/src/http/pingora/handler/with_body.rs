@@ -390,7 +390,7 @@ impl ProxyHttp for PingoraHttpHandler {
             record_passive_health(&pipeline, e, ctx);
             release_retry_state(ctx);
             logging_cleanup(&pipeline, ctx).await;
-            maybe_emit_fallback_access_log(&pipeline, written_status, ctx);
+            super::maybe_emit_fallback_access_log(&pipeline, written_status, ctx);
         }
         .instrument(span)
         .await;

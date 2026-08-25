@@ -50,7 +50,7 @@ fn bench_load_balancer(c: &mut Criterion) {
     for (label, strategy) in &strategies {
         for &pool_size in &[3, 10, 50] {
             let cluster = make_cluster(strategy.clone(), pool_size);
-            let lb = LoadBalancerFilter::new(&[cluster]).unwrap();
+            let lb = LoadBalancerFilter::new(&[cluster]);
 
             group.bench_with_input(BenchmarkId::new(*label, pool_size), &lb, |b, lb| {
                 b.to_async(&rt).iter_batched(
