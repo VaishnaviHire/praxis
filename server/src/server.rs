@@ -105,10 +105,6 @@ pub fn run_server(config: Config, config_path: Option<PathBuf>, log_level: Optio
 ///
 /// [`register_filters!`]: praxis_filter::register_filters
 #[expect(clippy::allow_attributes, reason = "lint is platform/config-dependent")]
-#[expect(
-    clippy::too_many_lines,
-    reason = "server bootstrap wires listeners, admin, and watcher"
-)]
 #[allow(clippy::needless_pass_by_value, reason = "server owns config")]
 pub fn run_server_with_registry(
     config: Config,

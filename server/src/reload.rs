@@ -1126,6 +1126,7 @@ filter_chains:
             &registry,
             &old_health,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
         )
         .unwrap();
@@ -1144,7 +1145,9 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
+            None,
         )
         .unwrap();
 
@@ -1211,6 +1214,7 @@ filter_chains:
             &registry,
             &stale_health,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
         )
         .unwrap();
@@ -1230,7 +1234,9 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
+            None,
         )
         .unwrap();
 
@@ -1248,7 +1254,9 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
+            None,
         )
         .unwrap();
 
@@ -1269,6 +1277,7 @@ filter_chains:
             &registry,
             &old_health,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
         )
         .unwrap();
@@ -1292,7 +1301,9 @@ filter_chains:
             &meta,
             &shutdown,
             &empty_kv_stores(),
+            &empty_session_stores(),
             &empty_subrequest_client(),
+            None,
         )
         .unwrap();
 
