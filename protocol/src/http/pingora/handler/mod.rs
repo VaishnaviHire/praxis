@@ -587,9 +587,9 @@ fn record_response_span_attributes(session: &Session, ctx: &PingoraRequestCtx) {
     if ctx.request_span.is_disabled() {
         return;
     }
-    let status = session.response_written().map(|resp| resp.status);
-    let method = session.req_header().method.as_str();
     let response = session.response_written();
+    let status = response.map(|resp| resp.status);
+    let method = session.req_header().method.as_str();
     record_response_span_fields(status, method, response, ctx);
 }
 
@@ -610,7 +610,9 @@ fn record_response_span_fields(
         }
         if status.is_server_error() {
             ctx.request_span.record("otel.status_code", "ERROR");
-            ctx.request_span.record("error.type", status.to_string().as_str());
+            // OTel semconv: error.type for an HTTP status is the numeric code
+            // as a string, not StatusCode's "{code} {reason}" Display form.
+            ctx.request_span.record("error.type", code.to_string().as_str());
         }
     }
 
@@ -629,9 +631,15 @@ fn record_response_span_fields(
     }
 
     if !ctx.upstream_exchange_span.is_disabled() {
-        if let Some(resp) = response {
+        // Prefer the upstream's own status (captured before any response-phase
+        // rewrite) for the upstream-exchange span; fall back to the written
+        // response when the upstream status was not captured.
+        if let Some(status) = ctx
+            .upstream_response_status
+            .or_else(|| response.map(|resp| resp.status.as_u16()))
+        {
             ctx.upstream_exchange_span
-                .record("http.response.status_code", resp.status.as_u16());
+                .record("http.response.status_code", status);
         }
         ctx.upstream_exchange_span
             .record("http.response.body.size", ctx.response_body_bytes);
