@@ -3,15 +3,13 @@
 
 # `trace_context`
 
-Propagates W3C Trace Context headers (`traceparent`, `tracestate`).
+Propagates W3C Trace Context and `x-request-id` correlation.
 
 ## Configuration Notes
 
-On each request: 1. Parses the incoming `traceparent` header (if present and valid) 2. Joins the existing trace or generates a new trace ID 3. Generates a new span ID for the proxy hop 4. Injects the updated `traceparent` into the upstream request 5. Forwards the `tracestate` header (if present and traceparent was valid) 6. Strips the `tracestate` header when traceparent is absent or invalid
+Per W3C Trace Context section 3.3.1.1, `tracestate` is forwarded only when inbound `traceparent` is valid.
 
-Per W3C Trace Context section 3.3.1.1, `tracestate` MUST NOT be forwarded when `traceparent` is absent or invalid.
-
-Malformed `traceparent` headers are silently ignored and treated as absent, per the W3C specification.
+Request ID resolution uses this precedence: a pending value from an earlier `request_id` filter, then the inbound `x-request-id` header, then a newly generated ID. If both a pending value and inbound value exist and differ, the pending value is used so the `request_id` filter remains authoritative.
 
 Currently accepts no fields; reserved for future options such as trusted-header policies or sampling flag overrides.
 
