@@ -110,9 +110,14 @@ fn configure_pipeline(
     if !health_registry.is_empty() {
         pipeline.set_health_registry(Arc::clone(health_registry));
     }
-    if !kv_stores.is_empty() {
-        pipeline.set_kv_stores(kv_stores.clone());
-    }
+    // Always inject the process-wide KV registry (even while empty): the
+    // registry is a shared Arc handle, and filters create their stores in it
+    // on demand at request time via `ctx.kv_stores`. Gating on `is_empty()`
+    // left the registry unreachable forever (nothing ever populates it before
+    // build), so `ctx.kv_stores` was always `None` — disabling the entire KV
+    // extension surface and the admin KV API, and making `basic_auth` in
+    // `kv_store` mode deny every request.
+    pipeline.set_kv_stores(kv_stores.clone());
     // Always inject the process-wide registry (even while empty): the sticky
     // sessions filter adopts per-cluster stores into it on demand, which is
     // what lets session bindings survive config reloads.
@@ -214,6 +219,30 @@ mod tests {
         assert!(
             pipelines.get("web").is_some(),
             "pipeline should exist for 'web' listener"
+        );
+    }
+
+    #[test]
+    fn resolve_pipelines_wires_kv_registry_even_when_empty() {
+        // The KV registry starts empty and filters populate it on demand at
+        // request time, so it must be injected into every pipeline regardless
+        // of whether it currently holds any stores. A missing registry makes
+        // ctx.kv_stores None forever, disabling the whole KV surface.
+        let config = valid_config();
+        let registry = FilterRegistry::with_builtins();
+        let pipelines = resolve_pipelines(
+            &config,
+            &registry,
+            &empty_health_registry(),
+            &empty_kv_stores(),
+            &empty_session_stores(),
+            &empty_subrequest_client(),
+        )
+        .unwrap();
+        let pipeline = pipelines.get("web").expect("web pipeline exists").load();
+        assert!(
+            pipeline.kv_stores().is_some(),
+            "the KV registry must be wired into the pipeline even when it holds no stores yet"
         );
     }
 
@@ -601,27 +630,6 @@ filter_chains:
         .unwrap();
         let pipeline = pipelines.get("web").unwrap().load();
         assert!(pipeline.kv_stores().is_some(), "pipeline should have kv_stores set");
-    }
-
-    #[test]
-    fn resolve_pipelines_empty_kv_not_set() {
-        let config = valid_config();
-        let registry = FilterRegistry::with_builtins();
-        let kv = empty_kv_stores();
-        let pipelines = resolve_pipelines(
-            &config,
-            &registry,
-            &empty_health_registry(),
-            &kv,
-            &empty_session_stores(),
-            &empty_subrequest_client(),
-        )
-        .unwrap();
-        let pipeline = pipelines.get("web").unwrap().load();
-        assert!(
-            pipeline.kv_stores().is_none(),
-            "empty kv_stores should not be set on pipeline"
-        );
     }
 
     #[test]
