@@ -31,6 +31,14 @@ use crate::circuit::{CircuitCheck, PeerKey};
 /// headers (the overall deadline is the other bound).
 const MAX_INTERIM_RESPONSES: u32 = 32;
 
+/// Eager buffer capacity cap for buffered response bodies.
+///
+/// Content-Length pre-sizes the collection buffer, but the header is
+/// untrusted: an upstream advertising a huge length while sending
+/// little must not pin limit-sized buffers per in-flight exchange.
+/// Doubling growth covers honest bodies past this cap.
+const EAGER_BODY_CAPACITY: usize = 131_072; // 128 KiB
+
 /// Hardened sub-request executor wrapping a shared connector.
 ///
 /// Provides a safe, bounded execution API that enforces:
@@ -416,14 +424,12 @@ impl SubRequestClient {
         let read_timeout = exchange.peer.options.read_timeout;
         exchange.session.set_read_timeout(None);
 
-        // Compute stream deadline from max_stream_duration.
+        // Compute stream deadline from max_stream_duration. One clock
+        // read serves both the deadline and the stream start below.
+        let handoff_now = tokio::time::Instant::now();
         let stream_deadline = limits
             .max_stream_duration
-            .map(|d| {
-                tokio::time::Instant::now()
-                    .checked_add(d)
-                    .ok_or(SubRequestError::DeadlineExceeded)
-            })
+            .map(|d| handoff_now.checked_add(d).ok_or(SubRequestError::DeadlineExceeded))
             .transpose()?;
 
         let body = SubResponseBody {
@@ -437,7 +443,7 @@ impl SubRequestClient {
             max_total_bytes: limits.max_total_bytes,
             received_bytes: 0,
             chunk_count: 0,
-            stream_started_at: tokio::time::Instant::now(),
+            stream_started_at: handoff_now,
             done: false,
         };
 
@@ -514,13 +520,16 @@ impl SubRequestClient {
         }
 
         // Size the buffer from Content-Length when present, clamped to
-        // the limit so an untrusted length can never over-allocate; the
-        // ResponseTooLarge check below stays authoritative.
+        // the limit so an untrusted length can never over-allocate, and
+        // to a modest eager cap so an upstream advertising a huge
+        // length while sending little cannot pin limit-sized buffers
+        // per in-flight exchange. Doubling growth covers honest large
+        // bodies; the ResponseTooLarge check below stays authoritative.
         let advertised = resp_headers
             .get(http::header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<usize>().ok())
-            .map_or(0, |len| len.min(effective_limit));
+            .map_or(0, |len| len.min(effective_limit).min(EAGER_BODY_CAPACITY));
         let body_result: Result<Bytes, SubRequestError> = tokio::time::timeout(remaining, async {
             let mut body_buf = Vec::with_capacity(advertised);
             while !session.response_done() {

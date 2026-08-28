@@ -473,6 +473,12 @@ impl CircuitBreakerRegistry {
     /// Attempt to acquire a circuit token for a peer. Creates the
     /// breaker on first access.
     pub fn try_acquire(&self, peer: PeerKey) -> CircuitCheck {
+        // Steady state: the breaker already exists — probe under the
+        // shard read lock rather than holding `entry()`'s write lock
+        // across the whole acquisition critical section.
+        if let Some(cb) = self.breakers.get(&peer) {
+            return cb.try_acquire();
+        }
         self.breakers
             .entry(peer)
             .or_insert_with(|| CircuitBreaker::new(self.config.clone()))
