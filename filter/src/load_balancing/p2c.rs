@@ -55,11 +55,19 @@ impl PowerOfTwoChoices {
     /// Create a P2C selector from a weighted endpoint list.
     pub(crate) fn new(endpoints: Vec<WeightedEndpoint>) -> Self {
         let counters = endpoints.iter().map(|_| AtomicUsize::new(0)).collect();
-        let index_by_addr = endpoints
+        let index_by_addr: HashMap<Arc<str>, usize> = endpoints
             .iter()
             .enumerate()
             .map(|(pos, ep)| (Arc::clone(&ep.address), pos))
             .collect();
+        // Config validation rejects duplicate endpoint addresses; a
+        // programmatic caller bypassing it would silently leak counters
+        // (release() only ever decrements the last duplicate's slot).
+        debug_assert_eq!(
+            index_by_addr.len(),
+            endpoints.len(),
+            "endpoint addresses must be unique for positional load counters"
+        );
         Self {
             counters,
             index_by_addr,

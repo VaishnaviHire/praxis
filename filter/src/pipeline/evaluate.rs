@@ -139,11 +139,10 @@ fn retain_filter_results(ctx: &mut HttpFilterContext<'_>) {
         return;
     }
     if let Some(retained) = ctx.extensions.get_mut::<crate::results::RetainedFilterResults>() {
-        retained.0.extend(
-            ctx.filter_results
-                .iter()
-                .map(|(name, results)| (*name, results.clone())),
-        );
+        // Every caller clears `filter_results` right after this, so the
+        // sets can be moved rather than cloned; the follow-up clear
+        // becomes a no-op.
+        retained.0.extend(ctx.filter_results.drain());
     }
 }
 
