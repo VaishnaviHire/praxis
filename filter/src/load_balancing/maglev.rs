@@ -111,9 +111,11 @@ impl Maglev {
         accept: impl Fn(&WeightedEndpoint) -> bool,
     ) -> Option<Arc<str>> {
         let len = self.table.len();
-        // Stack-backed for the common small-cluster case: avoids a
-        // per-request heap allocation on the selection hot path.
-        let mut visited: smallvec::SmallVec<[bool; 32]> = smallvec::smallvec![false; self.endpoints.len()];
+        // Built lazily on the first rejected slot (the ring-hash
+        // precedent): the dominant healthy-first-slot case must not pay
+        // a per-request memset — or, past the inline capacity, a heap
+        // allocation — for a set it never reads.
+        let mut visited: Option<smallvec::SmallVec<[bool; 32]>> = None;
         let mut remaining = self.endpoints.len();
         for offset in 0..len {
             let owner = self.table[(start + offset) % len] as usize;
@@ -121,6 +123,7 @@ impl Maglev {
             if !is_excluded(&ep.address, exclude) && accept(ep) {
                 return Some(Arc::clone(&ep.address));
             }
+            let visited = visited.get_or_insert_with(|| smallvec::smallvec![false; self.endpoints.len()]);
             if !visited[owner] {
                 visited[owner] = true;
                 remaining -= 1;
