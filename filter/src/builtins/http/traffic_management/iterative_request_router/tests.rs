@@ -89,6 +89,31 @@ steps:
 }
 
 #[test]
+fn rejects_zero_max_response_bytes() {
+    let yaml: serde_yaml::Value = serde_yaml::from_str(
+        "
+initial_step: step1
+max_response_bytes: 0
+steps:
+  - name: step1
+    filters:
+      - filter: static_response
+        status: 200
+    on_result:
+      - default: true
+        done: true
+",
+    )
+    .unwrap();
+    let cfg: IterativeRequestRouterConfig = parse_filter_config("iterative_request_router", &yaml).unwrap();
+    let err = config::validate(&cfg).unwrap_err();
+    assert!(
+        err.to_string().contains("max_response_bytes must be > 0"),
+        "a zero response-byte limit 500s every non-empty response and must be rejected: {err}"
+    );
+}
+
+#[test]
 fn rejects_zero_step_timeout() {
     let yaml: serde_yaml::Value = serde_yaml::from_str(
         "

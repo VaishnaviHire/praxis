@@ -223,6 +223,12 @@ pub(crate) fn validate(cfg: &IterativeRequestRouterConfig) -> Result<(), FilterE
             .into());
     }
 
+    if cfg.max_response_bytes == 0 {
+        return Err("iterative_request_router: max_response_bytes must be > 0"
+            .to_owned()
+            .into());
+    }
+
     if let Some(0) = cfg.step_timeout_ms {
         return Err("iterative_request_router: step_timeout_ms must be > 0".to_owned().into());
     }
