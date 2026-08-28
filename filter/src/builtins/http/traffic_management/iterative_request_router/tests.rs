@@ -89,6 +89,31 @@ steps:
 }
 
 #[test]
+fn rejects_zero_step_timeout() {
+    let yaml: serde_yaml::Value = serde_yaml::from_str(
+        "
+initial_step: step1
+step_timeout_ms: 0
+steps:
+  - name: step1
+    filters:
+      - filter: static_response
+        status: 200
+    on_result:
+      - default: true
+        done: true
+",
+    )
+    .unwrap();
+    let cfg: IterativeRequestRouterConfig = parse_filter_config("iterative_request_router", &yaml).unwrap();
+    let err = config::validate(&cfg).unwrap_err();
+    assert!(
+        err.to_string().contains("step_timeout_ms must be > 0"),
+        "a zero step timeout fails every step and must be rejected: {err}"
+    );
+}
+
+#[test]
 fn rejects_empty_steps() {
     let yaml: serde_yaml::Value = serde_yaml::from_str(
         "

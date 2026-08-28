@@ -223,6 +223,18 @@ pub(crate) fn validate(cfg: &IterativeRequestRouterConfig) -> Result<(), FilterE
             .into());
     }
 
+    if let Some(0) = cfg.step_timeout_ms {
+        return Err("iterative_request_router: step_timeout_ms must be > 0".to_owned().into());
+    }
+    if let Some(v) = cfg.step_timeout_ms
+        && v > MAX_TIMEOUT_MS
+    {
+        return Err(format!(
+            "iterative_request_router: step_timeout_ms must be <= {MAX_TIMEOUT_MS}, got {v}"
+        )
+        .into());
+    }
+
     if cfg.steps.is_empty() {
         return Err("iterative_request_router: at least one step required".to_owned().into());
     }
