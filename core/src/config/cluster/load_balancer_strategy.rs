@@ -12,7 +12,18 @@ use serde::{Deserialize, Serialize};
 // -----------------------------------------------------------------------------
 
 /// Load-balancing algorithm used by a cluster.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+///
+/// Serializes untagged (a bare string for [`Simple`], a single-key
+/// mapping for [`Parameterised`]). Deserialization is a manual dispatch
+/// on the YAML shape rather than `#[serde(untagged)]`: an untagged enum
+/// discards the inner variant's error, so a typo like
+/// `{ring_hash: {virtual_node: 5}}` would report only "data did not match
+/// any variant" instead of naming the unknown field. Dispatching by shape
+/// lets the inner `deny_unknown_fields` diagnostic propagate.
+///
+/// [`Simple`]: LoadBalancerStrategy::Simple
+/// [`Parameterised`]: LoadBalancerStrategy::Parameterised
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum LoadBalancerStrategy {
     /// Plain-string strategies: `"round_robin"` or `"least_connections"`.
@@ -20,6 +31,96 @@ pub enum LoadBalancerStrategy {
 
     /// Consistent-hash strategy with an optional hash-key header.
     Parameterised(ParameterisedStrategy),
+}
+
+impl<'de> Deserialize<'de> for LoadBalancerStrategy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+
+        let value = serde_yaml::Value::deserialize(deserializer)?;
+        match value {
+            serde_yaml::Value::String(_) => SimpleStrategy::deserialize(value)
+                .map(Self::Simple)
+                .map_err(D::Error::custom),
+            serde_yaml::Value::Mapping(map) => deserialize_single_key_mapping::<D>(map),
+            // The untagged `Serialize` impl emits parameterised variants as
+            // a YAML tag (`!ring_hash`); accept that form so a value can
+            // round-trip through serialization (config dumps, diffs).
+            serde_yaml::Value::Tagged(tagged) => {
+                let key = tagged.tag.to_string();
+                let key = key.strip_prefix('!').unwrap_or(&key);
+                dispatch_parameterised::<D>(key, tagged.value).map(Self::Parameterised)
+            },
+            _ => Err(D::Error::custom(
+                "load_balancer_strategy must be a strategy name (e.g. round_robin) \
+                 or a single-key mapping (e.g. {ring_hash: {...}})",
+            )),
+        }
+    }
+}
+
+/// Deserialize the `{strategy_name: opts}` single-key mapping form.
+fn deserialize_single_key_mapping<'de, D>(map: serde_yaml::Mapping) -> Result<LoadBalancerStrategy, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+
+    let mut entries = map.into_iter();
+    let (key, opts) = entries
+        .next()
+        .ok_or_else(|| D::Error::custom("load_balancer_strategy mapping must name exactly one strategy"))?;
+    if entries.next().is_some() {
+        return Err(D::Error::custom(
+            "load_balancer_strategy mapping must name exactly one strategy",
+        ));
+    }
+    let key = key
+        .as_str()
+        .ok_or_else(|| D::Error::custom("load_balancer_strategy key must be a string"))?;
+    // A simple (parameterless) strategy may also appear in the
+    // single-key map form (`least_connections: ~`); accept it
+    // when the value is null, matching the previous behavior.
+    if let Ok(simple) = serde_yaml::from_str::<SimpleStrategy>(key) {
+        if opts.is_null() {
+            return Ok(LoadBalancerStrategy::Simple(simple));
+        }
+        return Err(D::Error::custom(format!(
+            "load_balancer_strategy '{key}' takes no options"
+        )));
+    }
+    dispatch_parameterised::<D>(key, opts).map(LoadBalancerStrategy::Parameterised)
+}
+
+/// Deserialize a parameterised strategy's options by strategy key.
+///
+/// Dispatching by hand (rather than re-deserializing the externally-tagged
+/// [`ParameterisedStrategy`] from a `Value`, which serde_yaml cannot do)
+/// preserves each opts struct's `deny_unknown_fields` diagnostics.
+fn dispatch_parameterised<'de, D>(key: &str, opts: serde_yaml::Value) -> Result<ParameterisedStrategy, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+
+    let param = match key {
+        "consistent_hash" => ConsistentHashOpts::deserialize(opts).map(ParameterisedStrategy::ConsistentHash),
+        "maglev" => MaglevOpts::deserialize(opts).map(ParameterisedStrategy::Maglev),
+        "ring_hash" => RingHashOpts::deserialize(opts).map(ParameterisedStrategy::RingHash),
+        "subset" => SubsetOpts::deserialize(opts).map(ParameterisedStrategy::Subset),
+        "zone_aware" => ZoneAwareOpts::deserialize(opts).map(ParameterisedStrategy::ZoneAware),
+        "priority" => PriorityOpts::deserialize(opts).map(ParameterisedStrategy::Priority),
+        other => {
+            return Err(D::Error::custom(format!(
+                "unknown load_balancer_strategy '{other}' (expected one of: consistent_hash, \
+                 maglev, ring_hash, subset, zone_aware, priority)"
+            )));
+        },
+    };
+    param.map_err(D::Error::custom)
 }
 
 impl Default for LoadBalancerStrategy {
@@ -495,5 +596,57 @@ priority:
             })),
             "should parse priority with defaults"
         );
+    }
+
+    #[test]
+    fn unknown_strategy_option_names_the_bad_key() {
+        // A typo'd option key must be rejected by name, not swallowed by
+        // the untagged wrapper into a generic "did not match any variant".
+        let yaml = "ring_hash:\n  virtual_node: 5\n";
+        let err = serde_yaml::from_str::<LoadBalancerStrategy>(yaml).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("virtual_node"),
+            "the diagnostic must name the unknown field: {msg}"
+        );
+        assert!(
+            !msg.contains("did not match any variant"),
+            "the untagged fallback message must not leak through: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_strategy_name_is_rejected() {
+        let err = serde_yaml::from_str::<LoadBalancerStrategy>("no_such_strategy: {}\n").unwrap_err();
+        assert!(err.to_string().contains("unknown variant") || err.to_string().contains("no_such_strategy"));
+    }
+
+    #[test]
+    fn simple_string_strategy_still_parses() {
+        let strategy: LoadBalancerStrategy = serde_yaml::from_str("least_connections\n").unwrap();
+        assert_eq!(strategy, LoadBalancerStrategy::Simple(SimpleStrategy::LeastConnections));
+    }
+
+    #[test]
+    fn simple_strategy_in_map_form_still_parses() {
+        // The single-key null-map form (as used by example configs) stays valid.
+        let strategy: LoadBalancerStrategy = serde_yaml::from_str("least_connections: ~\n").unwrap();
+        assert_eq!(strategy, LoadBalancerStrategy::Simple(SimpleStrategy::LeastConnections));
+    }
+
+    #[test]
+    fn simple_strategy_map_form_rejects_options() {
+        let err = serde_yaml::from_str::<LoadBalancerStrategy>("least_connections:\n  foo: bar\n").unwrap_err();
+        assert!(err.to_string().contains("takes no options"), "got: {err}");
+    }
+
+    #[test]
+    fn strategy_round_trips_through_serialize() {
+        for yaml in ["round_robin\n", "p2c\n", "consistent_hash:\n  header: x-key\n"] {
+            let parsed: LoadBalancerStrategy = serde_yaml::from_str(yaml).unwrap();
+            let reserialized = serde_yaml::to_string(&parsed).unwrap();
+            let reparsed: LoadBalancerStrategy = serde_yaml::from_str(&reserialized).unwrap();
+            assert_eq!(parsed, reparsed, "round-trip mismatch for {yaml:?}");
+        }
     }
 }
