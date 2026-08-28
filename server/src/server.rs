@@ -393,7 +393,14 @@ fn spawn_health_check_tasks(
     }
 
     let shutdown = health_shutdown.lock().expect("health shutdown lock").clone();
-    let clusters = config.clusters.clone();
+    // The runner probes only health-checked clusters; routing-only
+    // cluster trees need not be cloned into the health thread.
+    let clusters: Vec<praxis_core::config::Cluster> = config
+        .clusters
+        .iter()
+        .filter(|c| c.health_check.is_some())
+        .cloned()
+        .collect();
 
     spawn_on_dedicated_runtime("health check runtime", async move {
         praxis_protocol::http::pingora::health::runner::spawn_health_checks(&clusters, &registry, &shutdown);

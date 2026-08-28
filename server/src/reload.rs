@@ -131,17 +131,17 @@ pub(crate) fn reload_pipelines(
     // old registry is no longer reachable through them.
     carry_over_health_state(live, old_config, new_config, &health_registry);
 
-    let mut swapped = Vec::new();
-    let mut skipped = Vec::new();
+    let mut swapped: Vec<&str> = Vec::new();
+    let mut skipped: Vec<&str> = Vec::new();
 
     for name in new_pipelines.listener_names() {
         if let Some(new_slot) = new_pipelines.get(name) {
             let new_arc = new_slot.load_full();
             if live.get(name).is_some() {
                 live.swap(name, new_arc);
-                swapped.push(name.to_owned());
+                swapped.push(name);
             } else {
-                skipped.push(name.to_owned());
+                skipped.push(name);
             }
         }
     }
@@ -264,11 +264,15 @@ fn respawn_health_checks(
     health_registry: &HealthRegistry,
     health_shutdown: &Arc<Mutex<CancellationToken>>,
 ) {
-    let old_token = {
+    // One critical section swaps in the fresh token and hands back both
+    // generations; re-locking below just to read the new token again
+    // was a needless second round-trip (reloads are serialized on the
+    // watcher thread, so nothing can interleave).
+    let (old_token, new_token) = {
         let mut guard = health_shutdown.lock().expect("health shutdown lock poisoned");
         let old = guard.clone();
         *guard = CancellationToken::new();
-        old
+        (old, guard.clone())
     };
     old_token.cancel();
 
@@ -282,9 +286,16 @@ fn respawn_health_checks(
         return;
     }
 
-    let clusters = config.clusters.clone();
+    // The runner probes only health-checked clusters (and only those in
+    // the registry); cloning every routing-only cluster tree pinned it
+    // in the health thread for the reload generation's lifetime.
+    let clusters: Vec<praxis_core::config::Cluster> = config
+        .clusters
+        .iter()
+        .filter(|c| c.health_check.is_some())
+        .cloned()
+        .collect();
     let registry = Arc::clone(health_registry);
-    let new_token = health_shutdown.lock().expect("health shutdown lock poisoned").clone();
 
     spawn_health_check_thread(clusters, registry, new_token);
 }

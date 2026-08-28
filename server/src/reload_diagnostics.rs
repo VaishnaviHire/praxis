@@ -14,10 +14,12 @@ use tracing::{info, warn};
 /// Compare old and new configs, logging warnings for changes that
 /// require a process restart to take effect.
 pub(crate) fn log_restart_required_changes(old: &Config, new: &Config) {
-    detect_listener_topology_changes(old, new);
-    detect_protocol_changes(old, new);
-    detect_compression_additions(old, new);
-    detect_tls_toggles(old, new);
+    // One shared name index serves all four listener detectors.
+    let old_by_name = listeners_by_name(old);
+    detect_listener_topology_changes_with(old, new, &old_by_name);
+    detect_protocol_changes_with(new, &old_by_name);
+    detect_compression_additions_with(old, new, &old_by_name);
+    detect_tls_toggles_with(new, &old_by_name);
     detect_subrequest_max_connections_change(old, new);
     detect_subrequest_circuit_breaker_change(old, new);
     detect_startup_only_runtime_changes(old, new);
@@ -30,12 +32,15 @@ pub(crate) fn log_restart_required_changes(old: &Config, new: &Config) {
 /// Each detector scans `new.listeners` and pairs by name; a linear
 /// `find` per listener would make every detector quadratic in
 /// listener count on each reload.
-fn listeners_by_name(config: &Config) -> std::collections::HashMap<&str, &praxis_core::config::Listener> {
+fn listeners_by_name(config: &Config) -> ListenersByName<'_> {
     config.listeners.iter().map(|l| (l.name.as_str(), l)).collect()
 }
 
+/// Index type shared by the restart-required listener detectors.
+type ListenersByName<'cfg> = std::collections::HashMap<&'cfg str, &'cfg praxis_core::config::Listener>;
+
 /// Detect listener additions, removals, and address rebinds.
-pub(crate) fn detect_listener_topology_changes(old: &Config, new: &Config) {
+fn detect_listener_topology_changes_with(old: &Config, new: &Config, old_by_name: &ListenersByName<'_>) {
     let old_names: std::collections::HashSet<&str> = old.listeners.iter().map(|l| l.name.as_str()).collect();
     let new_names: std::collections::HashSet<&str> = new.listeners.iter().map(|l| l.name.as_str()).collect();
 
@@ -52,7 +57,6 @@ pub(crate) fn detect_listener_topology_changes(old: &Config, new: &Config) {
         );
     }
 
-    let old_by_name = listeners_by_name(old);
     for new_l in &new.listeners {
         if let Some(old_l) = old_by_name.get(new_l.name.as_str())
             && old_l.address != new_l.address
@@ -68,8 +72,7 @@ pub(crate) fn detect_listener_topology_changes(old: &Config, new: &Config) {
 }
 
 /// Detect protocol changes (e.g. HTTP to TCP).
-pub(crate) fn detect_protocol_changes(old: &Config, new: &Config) {
-    let old_by_name = listeners_by_name(old);
+fn detect_protocol_changes_with(new: &Config, old_by_name: &ListenersByName<'_>) {
     for new_l in &new.listeners {
         if let Some(old_l) = old_by_name.get(new_l.name.as_str())
             && old_l.protocol != new_l.protocol
@@ -85,11 +88,16 @@ pub(crate) fn detect_protocol_changes(old: &Config, new: &Config) {
 }
 
 /// Detect compression being added to a previously uncompressed listener.
+#[cfg(test)]
 pub(crate) fn detect_compression_additions(old: &Config, new: &Config) {
+    detect_compression_additions_with(old, new, &listeners_by_name(old));
+}
+
+/// [`detect_compression_additions`] over a prebuilt name index.
+fn detect_compression_additions_with(old: &Config, new: &Config, old_by_name: &ListenersByName<'_>) {
     let old_chains_with_compression = find_chains_with_compression(old);
     let new_chains_with_compression = find_chains_with_compression(new);
 
-    let old_by_name = listeners_by_name(old);
     for new_l in &new.listeners {
         if let Some(old_l) = old_by_name.get(new_l.name.as_str()) {
             let old_had_compression = old_l
@@ -123,8 +131,13 @@ pub(crate) fn find_chains_with_compression(config: &Config) -> std::collections:
 }
 
 /// Detect TLS enable/disable toggles and in-block TLS changes.
+#[cfg(test)]
 pub(crate) fn detect_tls_toggles(old: &Config, new: &Config) {
-    let old_by_name = listeners_by_name(old);
+    detect_tls_toggles_with(new, &listeners_by_name(old));
+}
+
+/// [`detect_tls_toggles`] over a prebuilt name index.
+fn detect_tls_toggles_with(new: &Config, old_by_name: &ListenersByName<'_>) {
     for new_l in &new.listeners {
         if let Some(old_l) = old_by_name.get(new_l.name.as_str()) {
             match (&old_l.tls, &new_l.tls) {
