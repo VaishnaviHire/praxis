@@ -32,6 +32,26 @@ pub enum CircuitState {
     HalfOpen,
 }
 
+impl CircuitState {
+    /// Encode for the lock-free state cache.
+    const fn to_cache(self) -> u8 {
+        match self {
+            Self::Closed => 0,
+            Self::Open => 1,
+            Self::HalfOpen => 2,
+        }
+    }
+
+    /// Decode from the lock-free state cache.
+    const fn from_cache(value: u8) -> Self {
+        match value {
+            1 => Self::Open,
+            2 => Self::HalfOpen,
+            _ => Self::Closed,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CircuitCheck / CircuitToken
 // ---------------------------------------------------------------------------
@@ -94,6 +114,10 @@ pub struct CircuitBreaker {
     inner: Mutex<CircuitInner>,
     /// Shared configuration.
     config: CircuitBreakerConfig,
+    /// Lock-free mirror of `inner.state`, written inside every mutating
+    /// critical section, so per-request state peeks (`state()`, the
+    /// `precheck` Closed fast path) do not take the mutex.
+    state_cache: std::sync::atomic::AtomicU8,
 }
 
 /// Mutable interior state.
@@ -121,9 +145,9 @@ struct CircuitInner {
 impl CircuitInner {
     /// Issue a token at the current generation, marking a request in
     /// flight and refreshing the idle clock.
-    fn issue_token(&mut self) -> CircuitCheck {
+    fn issue_token(&mut self, now: Instant) -> CircuitCheck {
         self.in_flight = self.in_flight.saturating_add(1);
-        self.last_activity = Instant::now();
+        self.last_activity = now;
         CircuitCheck::Allowed(CircuitToken {
             generation: self.generation,
         })
@@ -139,18 +163,21 @@ impl CircuitInner {
 
     /// Bump the generation and transition to `HalfOpen`, issuing a
     /// probe token.
-    fn transition_to_half_open(&mut self) -> CircuitCheck {
+    fn transition_to_half_open(&mut self, now: Instant) -> CircuitCheck {
         self.generation = self.generation.wrapping_add(1);
         self.state = CircuitState::HalfOpen;
-        self.half_opened_at = Some(Instant::now());
-        self.issue_token()
+        self.half_opened_at = Some(now);
+        self.issue_token(now)
     }
 
     /// If the recovery window has elapsed, transition from `Open` to
     /// `HalfOpen` and issue a probe token. Otherwise reject.
-    fn try_open_to_half_open(&mut self, config: &CircuitBreakerConfig) -> CircuitCheck {
-        if self.opened_at.is_some_and(|t| t.elapsed() >= config.recovery_window) {
-            self.transition_to_half_open()
+    fn try_open_to_half_open(&mut self, config: &CircuitBreakerConfig, now: Instant) -> CircuitCheck {
+        if self
+            .opened_at
+            .is_some_and(|t| now.duration_since(t) >= config.recovery_window)
+        {
+            self.transition_to_half_open(now)
         } else {
             CircuitCheck::Rejected
         }
@@ -158,15 +185,15 @@ impl CircuitInner {
 
     /// If the half-open probe has timed out, reset to `Open` and
     /// re-attempt recovery. Otherwise reject (probe still in flight).
-    fn try_reset_stale_probe(&mut self, config: &CircuitBreakerConfig) -> CircuitCheck {
+    fn try_reset_stale_probe(&mut self, config: &CircuitBreakerConfig, now: Instant) -> CircuitCheck {
         if self
             .half_opened_at
-            .is_some_and(|t| t.elapsed() >= config.half_open_timeout)
+            .is_some_and(|t| now.duration_since(t) >= config.half_open_timeout)
         {
             self.state = CircuitState::Open;
-            self.opened_at = Some(Instant::now());
+            self.opened_at = Some(now);
             self.half_opened_at = None;
-            self.try_open_to_half_open(config)
+            self.try_open_to_half_open(config, now)
         } else {
             CircuitCheck::Rejected
         }
@@ -187,6 +214,7 @@ impl CircuitBreaker {
                 generation: 0,
             }),
             config,
+            state_cache: std::sync::atomic::AtomicU8::new(CircuitState::Closed.to_cache()),
         }
     }
 
@@ -202,6 +230,11 @@ impl CircuitBreaker {
     /// Panics if the internal mutex is poisoned.
     #[expect(clippy::expect_used, reason = "poisoned mutex is unrecoverable")]
     pub fn precheck(&self) -> bool {
+        // Closed is the steady state and needs no timestamps: answer it
+        // from the lock-free cache so the common case skips the mutex.
+        if self.cached_state() == CircuitState::Closed {
+            return true;
+        }
         let inner = self.inner.lock().expect("circuit breaker lock poisoned");
         match inner.state {
             CircuitState::Closed => true,
@@ -226,16 +259,19 @@ impl CircuitBreaker {
     /// Panics if the internal mutex is poisoned.
     #[expect(clippy::expect_used, reason = "poisoned mutex is unrecoverable")]
     pub fn try_acquire(&self) -> CircuitCheck {
+        let now = Instant::now();
         let mut inner = self.inner.lock().expect("circuit breaker lock poisoned");
         // Every acquisition attempt is traffic reaching this peer's breaker,
         // rejections included — a rejected stream must keep the breaker from
         // looking idle to the eviction sweep.
-        inner.last_activity = Instant::now();
-        match inner.state {
-            CircuitState::Closed => inner.issue_token(),
-            CircuitState::Open => inner.try_open_to_half_open(&self.config),
-            CircuitState::HalfOpen => inner.try_reset_stale_probe(&self.config),
-        }
+        inner.last_activity = now;
+        let check = match inner.state {
+            CircuitState::Closed => inner.issue_token(now),
+            CircuitState::Open => inner.try_open_to_half_open(&self.config, now),
+            CircuitState::HalfOpen => inner.try_reset_stale_probe(&self.config, now),
+        };
+        self.store_state_cache(&inner);
+        check
     }
 
     /// Record a successful exchange for the given token.
@@ -267,6 +303,7 @@ impl CircuitBreaker {
             },
             CircuitState::Open => {},
         }
+        self.store_state_cache(&inner);
     }
 
     /// Record a failed exchange for the given token.
@@ -280,27 +317,29 @@ impl CircuitBreaker {
     #[expect(clippy::expect_used, reason = "poisoned mutex is unrecoverable")]
     #[expect(clippy::needless_pass_by_value, reason = "consumed to prevent double-recording")]
     pub fn record_failure(&self, token: CircuitToken) {
+        let now = Instant::now();
         let mut inner = self.inner.lock().expect("circuit breaker lock poisoned");
         inner.release_token();
         if token.generation != inner.generation {
             return;
         }
-        inner.last_activity = Instant::now();
+        inner.last_activity = now;
         match inner.state {
             CircuitState::Closed => {
                 inner.consecutive_failures = inner.consecutive_failures.saturating_add(1);
                 if inner.consecutive_failures >= self.config.threshold {
                     inner.state = CircuitState::Open;
-                    inner.opened_at = Some(Instant::now());
+                    inner.opened_at = Some(now);
                 }
             },
             CircuitState::HalfOpen => {
                 inner.state = CircuitState::Open;
-                inner.opened_at = Some(Instant::now());
+                inner.opened_at = Some(now);
                 inner.half_opened_at = None;
             },
             CircuitState::Open => {},
         }
+        self.store_state_cache(&inner);
     }
 
     /// Whether the breaker has no request in flight and has been idle for
@@ -340,14 +379,25 @@ impl CircuitBreaker {
     /// Returns the current state without side effects.
     ///
     /// Used by filter-layer metrics to publish open/closed gauges
-    /// without duplicating the state machine.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned.
-    #[expect(clippy::expect_used, reason = "poisoned mutex is unrecoverable")]
+    /// without duplicating the state machine. Reads the lock-free
+    /// mirror written by every mutating critical section, so gauge
+    /// peeks around `try_acquire`/`record_*` do not triple the
+    /// per-request lock count.
     pub fn state(&self) -> CircuitState {
-        self.inner.lock().expect("circuit breaker lock poisoned").state
+        self.cached_state()
+    }
+
+    /// Read the lock-free state mirror.
+    fn cached_state(&self) -> CircuitState {
+        CircuitState::from_cache(self.state_cache.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    /// Mirror `inner.state` into the lock-free cache; called while the
+    /// mutex is still held so the cache always reflects the most recent
+    /// critical section.
+    fn store_state_cache(&self, inner: &CircuitInner) {
+        self.state_cache
+            .store(inner.state.to_cache(), std::sync::atomic::Ordering::Release);
     }
 }
 
