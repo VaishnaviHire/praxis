@@ -272,9 +272,9 @@ mod tests {
         );
         strategy.select(None, None, &[]);
         if let Strategy::LeastConnections(lc) = &strategy {
-            let before = lc.counters["10.0.0.1:80"].load(Ordering::Relaxed);
+            let before = lc.load_for("10.0.0.1:80");
             strategy.release("10.0.0.1:80");
-            let after = lc.counters["10.0.0.1:80"].load(Ordering::Relaxed);
+            let after = lc.load_for("10.0.0.1:80");
             assert_eq!(
                 after,
                 before.saturating_sub(1),
@@ -343,8 +343,8 @@ mod tests {
         );
         strategy.select(None, None, &[]);
         if let Strategy::PowerOfTwoChoices(p2c) = &strategy {
-            let before = p2c.counters["10.0.0.1:80"].load(Ordering::Relaxed)
-                + p2c.counters["10.0.0.2:80"].load(Ordering::Relaxed);
+            let before = p2c.counter_for("10.0.0.1:80").load(Ordering::Relaxed)
+                + p2c.counter_for("10.0.0.2:80").load(Ordering::Relaxed);
             assert_eq!(before, 1, "one selection should have incremented one counter");
         }
         strategy.release("10.0.0.1:80");

@@ -97,9 +97,10 @@ impl RingHash {
         // Bound the clockwise probe by distinct endpoints, not ring
         // entries: with every endpoint unhealthy, walking the full ring
         // would visit each endpoint's virtual nodes hundreds of times.
-        // Stack-backed for the common small-cluster case: avoids a per-request
-        // heap allocation on the selection hot path.
-        let mut visited: SmallVec<[bool; 32]> = smallvec::smallvec![false; self.endpoints.len()];
+        // The visited set is built lazily on the first failed probe: in
+        // the dominant case the first slot is healthy and clusters past
+        // the 32-endpoint inline capacity never pay its heap allocation.
+        let mut visited: Option<SmallVec<[bool; 32]>> = None;
         let mut remaining = self.endpoints.len();
         for offset in 0..ring_len {
             let idx = (start + offset) % ring_len;
@@ -111,6 +112,7 @@ impl RingHash {
             {
                 return Some(Arc::clone(&ep.address));
             }
+            let visited = visited.get_or_insert_with(|| smallvec::smallvec![false; self.endpoints.len()]);
             if !visited[ep_idx] {
                 visited[ep_idx] = true;
                 remaining -= 1;

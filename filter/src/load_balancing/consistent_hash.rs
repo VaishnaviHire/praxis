@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use praxis_core::health::ClusterHealthState;
+use praxis_core::health::{ClusterHealthState, EndpointHealth};
 
 use super::{endpoint::WeightedEndpoint, hash::fnv1a};
 
@@ -70,23 +70,47 @@ impl ConsistentHash {
         let start = (fnv1a(key) as usize) % len;
 
         if let Some(state) = health {
-            for offset in 0..len {
-                let ring_idx = (start + offset) % len;
-                let ep = &self.endpoints[self.ring[ring_idx]];
-                if is_excluded(&ep.address, exclude) {
-                    continue;
-                }
-                if ep.index < state.endpoints().len() && state.endpoints()[ep.index].is_healthy() {
-                    return Some(Arc::clone(&ep.address));
-                }
+            if let Some(addr) = self.probe(start, exclude, |ep| {
+                ep.index < state.endpoints().len()
+                    && state.endpoints().get(ep.index).is_some_and(EndpointHealth::is_healthy)
+            }) {
+                return Some(addr);
             }
         }
 
+        self.probe(start, exclude, |_| true)
+    }
+
+    /// Walk the ring clockwise from `start` for an endpoint that is not
+    /// excluded and passes `accept`.
+    ///
+    /// Bounded by distinct endpoints rather than ring entries (the
+    /// ring-hash precedent): with every endpoint rejected, walking the
+    /// weight-expanded ring would revisit each endpoint once per unit of
+    /// weight — per request, exactly during a full-cluster outage.
+    #[expect(clippy::indexing_slicing, reason = "ring indices are bounded via modulo")]
+    fn probe(
+        &self,
+        start: usize,
+        exclude: &[Arc<str>],
+        accept: impl Fn(&WeightedEndpoint) -> bool,
+    ) -> Option<Arc<str>> {
+        let len = self.ring.len();
+        // Stack-backed for the common small-cluster case.
+        let mut visited: smallvec::SmallVec<[bool; 32]> = smallvec::smallvec![false; self.endpoints.len()];
+        let mut remaining = self.endpoints.len();
         for offset in 0..len {
-            let ring_idx = (start + offset) % len;
-            let ep = &self.endpoints[self.ring[ring_idx]];
-            if !is_excluded(&ep.address, exclude) {
+            let ep_idx = self.ring[(start + offset) % len];
+            let ep = &self.endpoints[ep_idx];
+            if !is_excluded(&ep.address, exclude) && accept(ep) {
                 return Some(Arc::clone(&ep.address));
+            }
+            if !visited[ep_idx] {
+                visited[ep_idx] = true;
+                remaining -= 1;
+                if remaining == 0 {
+                    break;
+                }
             }
         }
         None
@@ -117,7 +141,7 @@ fn is_excluded(addr: &str, exclude: &[Arc<str>]) -> bool {
     reason = "tests"
 )]
 mod tests {
-    use praxis_core::health::{ClusterHealthEntry, EndpointHealth};
+    use praxis_core::health::ClusterHealthEntry;
 
     use super::*;
 

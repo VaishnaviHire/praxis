@@ -27,8 +27,16 @@ use super::endpoint::WeightedEndpoint;
 /// When weights are also equal, a round-robin counter ensures
 /// even distribution across endpoints with identical load.
 pub(crate) struct LeastConnections {
-    /// Per-endpoint active-request counter.
-    pub(crate) counters: HashMap<Arc<str>, AtomicUsize>,
+    /// Per-endpoint active-request counters, positionally aligned with
+    /// `endpoints` so the selection scan indexes instead of hashing the
+    /// address string once per endpoint per request.
+    counters: Vec<AtomicUsize>,
+
+    /// Address-to-position lookup for [`release`], the only entry point
+    /// keyed by address.
+    ///
+    /// [`release`]: Self::release
+    index_by_addr: HashMap<Arc<str>, usize>,
 
     /// Deduplicated endpoint list with weights and original indices.
     endpoints: Vec<WeightedEndpoint>,
@@ -40,12 +48,15 @@ pub(crate) struct LeastConnections {
 impl LeastConnections {
     /// Create a least-connections selector from a weighted endpoint list.
     pub(crate) fn new(endpoints: Vec<WeightedEndpoint>) -> Self {
-        let counters = endpoints
+        let counters = endpoints.iter().map(|_| AtomicUsize::new(0)).collect();
+        let index_by_addr = endpoints
             .iter()
-            .map(|ep| (Arc::clone(&ep.address), AtomicUsize::new(0)))
+            .enumerate()
+            .map(|(pos, ep)| (Arc::clone(&ep.address), pos))
             .collect();
         Self {
             counters,
+            index_by_addr,
             endpoints,
             rr_counter: AtomicUsize::new(0),
         }
@@ -57,33 +68,42 @@ impl LeastConnections {
     /// Ties are broken by preferring higher-weight endpoints. Uses an
     /// optimistic CAS loop: scans for the minimum, then atomically
     /// increments. On CAS failure, rescans and retries.
-    #[expect(clippy::indexing_slicing, reason = "keyed by endpoints")]
+    #[expect(clippy::indexing_slicing, reason = "positions come from the endpoints scan")]
     pub(crate) fn select(&self, health: Option<&ClusterHealthState>, exclude: &[Arc<str>]) -> Option<Arc<str>> {
         loop {
-            let (addr, load) = self.find_best(health, exclude)?;
-            let counter = &self.counters[&*addr];
+            let (pos, load) = self.find_best(health, exclude)?;
+            let counter = &self.counters[pos];
 
             if counter
                 .compare_exchange_weak(load, load + 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return Some(addr);
+                return Some(Arc::clone(&self.endpoints[pos].address));
             }
         }
     }
 
     /// Decrement the in-flight counter for `addr` after a response.
     pub(crate) fn release(&self, addr: &str) {
-        if let Some(counter) = self.counters.get(addr) {
+        if let Some(counter) = self.index_by_addr.get(addr).and_then(|pos| self.counters.get(*pos)) {
             _ = counter.fetch_update(Ordering::Release, Ordering::Relaxed, |v| Some(v.saturating_sub(1)));
         }
+    }
+
+    /// Current in-flight load for `addr`; test observability.
+    #[cfg(test)]
+    pub(crate) fn load_for(&self, addr: &str) -> usize {
+        self.index_by_addr
+            .get(addr)
+            .and_then(|pos| self.counters.get(*pos))
+            .map_or(0, |counter| counter.load(Ordering::Relaxed))
     }
 
     /// Scan endpoints and return the best candidate address with its
     /// current load. Prefers healthy endpoints when health state is
     /// available; falls back to all endpoints.
     #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-    fn find_best(&self, health: Option<&ClusterHealthState>, exclude: &[Arc<str>]) -> Option<(Arc<str>, usize)> {
+    fn find_best(&self, health: Option<&ClusterHealthState>, exclude: &[Arc<str>]) -> Option<(usize, usize)> {
         let offset = self.rr_counter.fetch_add(1, Ordering::Relaxed);
 
         if let Some(state) = health
@@ -109,24 +129,29 @@ impl LeastConnections {
     /// per-call `Vec` allocation a collected rotated scan would need, while
     /// preserving the exact tie-break: lowest load wins, then highest weight,
     /// then the endpoint earliest in rotation order (rank 0 == `start`).
-    #[expect(clippy::indexing_slicing, reason = "counters is keyed by every endpoint address")]
+    #[expect(clippy::indexing_slicing, reason = "counters is positionally aligned with endpoints")]
     fn select_from_candidates(
         &self,
         keep: impl Fn(&WeightedEndpoint) -> bool,
         offset: usize,
-    ) -> Option<(Arc<str>, usize)> {
+    ) -> Option<(usize, usize)> {
         let len = self.endpoints.iter().filter(|ep| keep(ep)).count();
         if len == 0 {
             return None;
         }
         let start = offset % len;
 
-        // best = (rank, load, weight, address); lower rank is earlier in the
-        // rotation starting at `start`.
-        let mut best: Option<(usize, usize, u32, &Arc<str>)> = None;
-        for (filtered_index, ep) in self.endpoints.iter().filter(|ep| keep(ep)).enumerate() {
+        // best = (rank, load, weight, position); lower rank is earlier in
+        // the rotation starting at `start`.
+        let mut best: Option<(usize, usize, u32, usize)> = None;
+        let mut filtered_index = 0_usize;
+        for (pos, ep) in self.endpoints.iter().enumerate() {
+            if !keep(ep) {
+                continue;
+            }
             let rank = (filtered_index + len - start) % len;
-            let load = self.counters[&*ep.address].load(Ordering::Acquire);
+            filtered_index += 1;
+            let load = self.counters[pos].load(Ordering::Acquire);
             let better = match best {
                 None => true,
                 Some((best_rank, best_load, best_weight, _)) => {
@@ -136,10 +161,10 @@ impl LeastConnections {
                 },
             };
             if better {
-                best = Some((rank, load, ep.weight, &ep.address));
+                best = Some((rank, load, ep.weight, pos));
             }
         }
-        best.map(|(_, load, _, addr)| (Arc::clone(addr), load))
+        best.map(|(_, load, _, pos)| (pos, load))
     }
 }
 
@@ -186,7 +211,7 @@ mod tests {
         lc.release("10.0.0.1:80");
         // After release: A=0, B=1, C=0. Either A or C is valid (both min-load).
         let third = lc.select(None, &[]).unwrap();
-        let load_of_third = lc.counters[&*third].load(Ordering::Relaxed);
+        let load_of_third = lc.load_for(&third);
         assert_eq!(
             load_of_third, 1,
             "third selection should pick an endpoint that was at 0 (now incremented to 1)"
@@ -200,7 +225,7 @@ mod tests {
 
         lc.release("10.0.0.1:80");
         assert_eq!(
-            lc.counters["10.0.0.1:80"].load(Ordering::Relaxed),
+            lc.load_for("10.0.0.1:80"),
             0,
             "release without select should not underflow"
         );
@@ -289,8 +314,8 @@ mod tests {
             h.join().unwrap();
         }
 
-        let c1 = lc.counters["10.0.0.1:80"].load(Ordering::Relaxed);
-        let c2 = lc.counters["10.0.0.2:80"].load(Ordering::Relaxed);
+        let c1 = lc.load_for("10.0.0.1:80");
+        let c2 = lc.load_for("10.0.0.2:80");
         assert_eq!(c1 + c2, total, "total in-flight count must equal total selections");
     }
 
@@ -315,8 +340,8 @@ mod tests {
             h.join().unwrap();
         }
 
-        let c1 = lc.counters["10.0.0.1:80"].load(Ordering::Relaxed);
-        let c2 = lc.counters["10.0.0.2:80"].load(Ordering::Relaxed);
+        let c1 = lc.load_for("10.0.0.1:80");
+        let c2 = lc.load_for("10.0.0.2:80");
         assert_eq!(
             c1 + c2,
             0,

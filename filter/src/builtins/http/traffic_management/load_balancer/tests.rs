@@ -3,11 +3,7 @@
 
 //! Tests for the load balancer filter.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, atomic::Ordering},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use praxis_core::config::{
     Cluster, ConsistentHashOpts, Endpoint, LoadBalancerStrategy, ParameterisedStrategy, SimpleStrategy,
@@ -191,21 +187,13 @@ async fn on_response_releases_least_connections_counter() {
 
     let entry = lb.clusters.get("web").unwrap();
     if let SharedStrategy::LeastConnections(lc) = entry.strategy.inner() {
-        assert_eq!(
-            lc.counters["127.0.0.1:8080"].load(Ordering::Relaxed),
-            1,
-            "counter should be 1 after request"
-        );
+        assert_eq!(lc.load_for("127.0.0.1:8080"), 1, "counter should be 1 after request");
     }
 
     drop(lb.on_response(&mut ctx).await.unwrap());
 
     if let SharedStrategy::LeastConnections(lc) = entry.strategy.inner() {
-        assert_eq!(
-            lc.counters["127.0.0.1:8080"].load(Ordering::Relaxed),
-            0,
-            "counter should be 0 after response"
-        );
+        assert_eq!(lc.load_for("127.0.0.1:8080"), 0, "counter should be 0 after response");
     }
 }
 
