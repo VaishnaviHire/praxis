@@ -198,6 +198,14 @@ fn redact_sensitive_keys(value: &mut serde_yaml::Value) {
 
 /// Redact the `value` entry of a mapping when its sibling `name` entry names a
 /// credential-bearing header (case-insensitive).
+///
+/// A header carries a credential when its name exactly matches a well-known
+/// credential header (e.g. `cookie`, which contains no telltale substring) or
+/// when it contains a sensitive substring (`token`, `secret`, `key`, `auth`,
+/// `password`, `credential`). The substring rule catches the many vendor
+/// header names (`X-Vault-Token`, `X-Functions-Key`, `X-Gitlab-Token`, …) that
+/// a fixed allow-list cannot enumerate. Over-redaction of a benign header is a
+/// harmless dump artifact; leaking a token is not.
 fn redact_credential_header_value(mapping: &mut serde_yaml::Mapping, redacted: &serde_yaml::Value) {
     let name_key = serde_yaml::Value::String("name".to_owned());
     let value_key = serde_yaml::Value::String("value".to_owned());
@@ -205,11 +213,17 @@ fn redact_credential_header_value(mapping: &mut serde_yaml::Mapping, redacted: &
         .get(&name_key)
         .and_then(serde_yaml::Value::as_str)
         .map(str::to_ascii_lowercase)
-        .is_some_and(|name| CREDENTIAL_HEADER_NAMES.contains(&name.as_str()));
+        .is_some_and(|name| {
+            CREDENTIAL_HEADER_NAMES.contains(&name.as_str())
+                || SENSITIVE_HEADER_SUBSTRINGS.iter().any(|frag| name.contains(frag))
+        });
     if is_credential_header && mapping.contains_key(&value_key) {
         mapping.insert(value_key, redacted.clone());
     }
 }
+
+/// Substrings that mark a header name as credential-bearing (case-insensitive).
+const SENSITIVE_HEADER_SUBSTRINGS: &[&str] = &["token", "secret", "key", "auth", "password", "credential"];
 
 /// Field names that should be redacted in config dumps.
 const SENSITIVE_FIELD_NAMES: &[&str] = &[
@@ -581,6 +595,38 @@ insecure_options:
         assert!(
             yaml.contains("header_prefix"),
             "non-sensitive fields must remain: {yaml}"
+        );
+    }
+
+    #[test]
+    fn vendor_credential_header_value_redacted_in_dump() {
+        let config = Config::from_yaml(
+            r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+filter_chains:
+  - name: main
+    filters:
+      - filter: headers
+        request_set:
+          - name: X-Vault-Token
+            value: "s.9f2c1a2b3c4d5e6f"
+          - name: X-Trace-Id
+            value: "trace-123"
+"#,
+        )
+        .unwrap();
+        let dump = build_dump(&config, "test.yaml").unwrap();
+        let yaml = serde_yaml::to_string(&dump).unwrap();
+        assert!(
+            !yaml.contains("s.9f2c1a2b3c4d5e6f"),
+            "a token carried under a vendor header name must be redacted: {yaml}"
+        );
+        assert!(
+            yaml.contains("trace-123"),
+            "a non-credential header value must remain visible: {yaml}"
         );
     }
 
