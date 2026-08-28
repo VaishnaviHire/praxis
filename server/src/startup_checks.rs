@@ -150,32 +150,117 @@ pub(crate) fn enforce_root_check(_config: &Config) {}
 /// blocking legitimate deployments.
 #[cfg(unix)]
 pub(crate) fn warn_insecure_key_permissions(config: &Config) {
-    use std::os::unix::fs::PermissionsExt as _;
-
+    // Listener (server) TLS private keys.
     for listener in &config.listeners {
         if let Some(tls) = &listener.tls {
             for cert in &tls.certificates {
-                let key_path = &cert.key_path;
-                if let Ok(meta) = std::fs::metadata(key_path) {
-                    let mode = meta.permissions().mode();
-                    if mode & 0o077 != 0 {
-                        tracing::warn!(
-                            listener = %listener.name,
-                            path = %key_path,
-                            mode = format!("{:04o}", mode & 0o7777),
-                            "TLS private key file has overly permissive \
-                             permissions; recommend chmod 0600"
-                        );
+                warn_if_key_world_readable("listener", &listener.name, &cert.key_path);
+            }
+        }
+    }
+
+    // Cluster (upstream mTLS client) private keys. These are just as sensitive
+    // as listener keys — a world-readable client-identity key lets any local
+    // user impersonate the proxy to the upstream — but were previously not
+    // checked, so an insecurely-permissioned client key started silently.
+    //
+    // Clusters may be declared top-level (typed) or inline inside a
+    // load-balancer filter (a raw serde_yaml value). Check both: the typed
+    // top-level list, and a recursive walk of every filter entry's config,
+    // which also descends into inline branch chains and step filters.
+    for cluster in &config.clusters {
+        if let Some(tls) = &cluster.tls
+            && let Some(client_cert) = &tls.client_cert
+        {
+            warn_if_key_world_readable("cluster", &cluster.name, &client_cert.key_path);
+        }
+    }
+    for chain in &config.filter_chains {
+        for entry in &chain.filters {
+            warn_client_cert_keys_in_entry(&chain.name, entry);
+        }
+    }
+}
+
+/// Scan one filter entry's config for inline upstream-mTLS client keys,
+/// recursing into inline branch-chain filters.
+///
+/// `branch_chains` is a typed field on [`FilterEntry`], not part of the raw
+/// `config` value, so the YAML walk alone never sees filters declared inside
+/// an inline branch chain. Named branch-chain targets live in the top-level
+/// `filter_chains` list and are covered by the caller's outer loop.
+///
+/// [`FilterEntry`]: praxis_core::config::FilterEntry
+#[cfg(unix)]
+fn warn_client_cert_keys_in_entry(chain: &str, entry: &praxis_core::config::FilterEntry) {
+    warn_client_cert_keys_in_value(chain, &entry.config);
+    if let Some(branch_chains) = &entry.branch_chains {
+        for branch in branch_chains {
+            for chain_ref in &branch.chains {
+                if let praxis_core::config::ChainRef::Inline { filters, .. } = chain_ref {
+                    for nested in filters {
+                        warn_client_cert_keys_in_entry(chain, nested);
                     }
-                } else {
-                    tracing::trace!(
-                        listener = %listener.name,
-                        path = %key_path,
-                        "skipped permission check: could not read file metadata"
-                    );
                 }
             }
         }
+    }
+}
+
+/// Recursively scan a filter-config value for `client_cert: { key_path: ... }`
+/// entries (inline upstream-mTLS client keys) and warn on insecure permissions.
+#[cfg(unix)]
+fn warn_client_cert_keys_in_value(chain: &str, value: &serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::Mapping(map) => {
+            if let Some(serde_yaml::Value::Mapping(client_cert)) =
+                map.get(serde_yaml::Value::String("client_cert".to_owned()))
+                && let Some(serde_yaml::Value::String(key_path)) =
+                    client_cert.get(serde_yaml::Value::String("key_path".to_owned()))
+            {
+                warn_if_key_world_readable("cluster", chain, key_path);
+            }
+            for (_, nested) in map {
+                warn_client_cert_keys_in_value(chain, nested);
+            }
+        },
+        serde_yaml::Value::Sequence(seq) => {
+            for nested in seq {
+                warn_client_cert_keys_in_value(chain, nested);
+            }
+        },
+        serde_yaml::Value::Null
+        | serde_yaml::Value::Bool(_)
+        | serde_yaml::Value::Number(_)
+        | serde_yaml::Value::String(_)
+        | serde_yaml::Value::Tagged(_) => {},
+    }
+}
+
+/// Warn if the private key file at `key_path` is group/world readable or writable.
+#[cfg(unix)]
+fn warn_if_key_world_readable(scope: &str, name: &str, key_path: &str) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    if let Ok(meta) = std::fs::metadata(key_path) {
+        let mode = meta.permissions().mode();
+        if mode & 0o077 != 0 {
+            tracing::warn!(
+                scope,
+                name = %name,
+                path = %key_path,
+                mode = format!("{:04o}", mode & 0o7777),
+                "TLS private key file has overly permissive \
+                 permissions; recommend chmod 0600"
+            );
+        }
+    } else {
+        tracing::trace!(
+            scope,
+            name = %name,
+            path = %key_path,
+            "skipped permission check: could not read file metadata"
+        );
     }
 }
 
@@ -426,6 +511,106 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn warn_key_permissions_flags_permissive_key_in_inline_branch_chain() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let key_path = dir.path().join("branch-client-key.pem");
+        let cert_path = dir.path().join("branch-client-cert.pem");
+        std::fs::write(&key_path, "fake-key").expect("write key");
+        std::fs::write(&cert_path, "fake-cert").expect("write cert");
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+
+        // The client_cert lives on a load_balancer declared inside an INLINE
+        // branch chain — a typed FilterEntry field the raw config walk never
+        // sees. It must warn exactly like a top-level cluster key.
+        let config = Config::from_yaml(&format!(
+            r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+filter_chains:
+  - name: main
+    filters:
+      - filter: headers
+        request_add:
+          - name: X-Stage
+            value: "one"
+        branch_chains:
+          - name: branch_route
+            rejoin: next
+            chains:
+              - name: branch_path
+                filters:
+                  - filter: load_balancer
+                    clusters:
+                      - name: branch-backend
+                        endpoints:
+                          - "127.0.0.1:3100"
+                        tls:
+                          sni: "branch.local"
+                          client_cert:
+                            cert_path: "{cert}"
+                            key_path: "{key}"
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: backend
+      - filter: load_balancer
+        clusters:
+          - name: backend
+            endpoints:
+              - "127.0.0.1:3000"
+insecure_options:
+  allow_private_endpoints: true
+"#,
+            cert = cert_path.display(),
+            key = key_path.display(),
+        ))
+        .expect("inline branch-chain client-cert config should parse");
+        let warnings = capture_warnings(|| super::warn_insecure_key_permissions(&config));
+        assert_eq!(
+            warnings.len(),
+            1,
+            "a permissive client key inside an inline branch chain must warn: {warnings:?}"
+        );
+        assert!(
+            warnings[0].contains("overly permissive"),
+            "warning should mention permissive permissions: {:?}",
+            warnings[0]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn warn_key_permissions_flags_permissive_cluster_client_key() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let key_path = dir.path().join("client-key.pem");
+        let cert_path = dir.path().join("client-cert.pem");
+        std::fs::write(&key_path, "fake-key").expect("write key");
+        std::fs::write(&cert_path, "fake-cert").expect("write cert");
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+
+        let config =
+            config_with_cluster_client_cert(cert_path.to_str().expect("cert"), key_path.to_str().expect("key"));
+        let warnings = capture_warnings(|| super::warn_insecure_key_permissions(&config));
+        assert_eq!(
+            warnings.len(),
+            1,
+            "a permissive upstream mTLS client key should warn just like a listener key: {warnings:?}"
+        );
+        assert!(
+            warnings[0].contains("overly permissive"),
+            "warning should mention permissive permissions: {:?}",
+            warnings[0]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn warn_log_file_permissions_permissive_emits_warning() {
         use std::os::unix::fs::PermissionsExt as _;
 
@@ -573,6 +758,38 @@ insecure_options:
 "#,
         ))
         .expect("test config should parse")
+    }
+
+    #[cfg(unix)]
+    fn config_with_cluster_client_cert(cert_path: &str, key_path: &str) -> Config {
+        Config::from_yaml(&format!(
+            r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+filter_chains:
+  - name: main
+    filters:
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: backend
+      - filter: load_balancer
+        clusters:
+          - name: backend
+            endpoints:
+              - "127.0.0.1:3000"
+            tls:
+              sni: "backend.local"
+              client_cert:
+                cert_path: "{cert_path}"
+                key_path: "{key_path}"
+insecure_options:
+  allow_private_endpoints: true
+"#,
+        ))
+        .expect("cluster client-cert config should parse")
     }
 
     #[cfg(unix)]
