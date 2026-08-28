@@ -8,7 +8,7 @@ use bytes::Bytes;
 
 use super::{
     config::{DEFAULT_MAX_BODY_BYTES, GuardrailsAction, GuardrailsConfig},
-    rule::{CompiledRule, RuleTarget, parse_matcher, parse_target},
+    rule::{CompiledRule, RuleMatcher, RuleTarget, parse_matcher, parse_target},
 };
 use crate::{
     FilterAction, FilterError, FilterResultSet, Rejection,
@@ -67,12 +67,20 @@ use crate::{
 /// let filter = GuardrailsFilter::from_config(&yaml).unwrap();
 /// assert_eq!(filter.name(), "guardrails");
 /// ```
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent pre-computed rule facts, not a state machine"
+)]
 pub struct GuardrailsFilter {
     /// What to do when a rule matches.
     pub(super) action: GuardrailsAction,
 
     /// Whether any rule targets the body (pre-computed at init).
     pub(super) needs_body: bool,
+
+    /// Whether any body rule is a `Contains` match (pre-computed at
+    /// init), so the per-body lowercase decision costs no rule scan.
+    pub(super) has_body_contains: bool,
 
     /// Reject bodies exceeding the inspection buffer limit.
     pub(super) reject_oversized: bool,
@@ -117,6 +125,7 @@ impl GuardrailsFilter {
 
         let mut rules = Vec::with_capacity(cfg.rules.len());
         let mut needs_body = false;
+        let mut has_body_contains = false;
 
         for rule in &cfg.rules {
             let target = parse_target(rule)?;
@@ -124,6 +133,9 @@ impl GuardrailsFilter {
 
             if matches!(target, RuleTarget::Body) {
                 needs_body = true;
+                if matches!(matcher, RuleMatcher::Contains(_)) {
+                    has_body_contains = true;
+                }
             }
 
             rules.push(CompiledRule {
@@ -136,6 +148,7 @@ impl GuardrailsFilter {
         Ok(Box::new(Self {
             action: cfg.action,
             needs_body,
+            has_body_contains,
             reject_oversized: cfg.reject_oversized,
             rules,
         }))
@@ -163,12 +176,7 @@ impl GuardrailsFilter {
     /// re-allocating per rule. Only allocates when at least one
     /// body-targeted `Contains` rule exists.
     fn check_body(&self, body: &str) -> bool {
-        use super::rule::RuleMatcher;
-        let has_body_contains = self
-            .rules
-            .iter()
-            .any(|r| matches!(r.target, RuleTarget::Body) && matches!(r.matcher, RuleMatcher::Contains(_)));
-        let body_lower = has_body_contains.then(|| body.to_lowercase());
+        let body_lower = self.has_body_contains.then(|| body.to_lowercase());
         for rule in &self.rules {
             if !matches!(rule.target, RuleTarget::Body) {
                 continue;

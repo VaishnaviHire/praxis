@@ -926,9 +926,13 @@ fn body_not_pattern(re: &str) -> CompiledRule {
 /// Build a guardrails filter from compiled rules with default reject action.
 fn make_filter(rules: Vec<CompiledRule>) -> GuardrailsFilter {
     let needs_body = rules.iter().any(|r| matches!(r.target, RuleTarget::Body));
+    let has_body_contains = rules
+        .iter()
+        .any(|r| matches!(r.target, RuleTarget::Body) && matches!(r.matcher, RuleMatcher::Contains(_)));
     GuardrailsFilter {
         action: super::config::GuardrailsAction::Reject,
         needs_body,
+        has_body_contains,
         reject_oversized: false,
         rules,
     }
@@ -937,9 +941,13 @@ fn make_filter(rules: Vec<CompiledRule>) -> GuardrailsFilter {
 /// Build a guardrails filter from compiled rules with flag action.
 fn make_flag_filter(rules: Vec<CompiledRule>) -> GuardrailsFilter {
     let needs_body = rules.iter().any(|r| matches!(r.target, RuleTarget::Body));
+    let has_body_contains = rules
+        .iter()
+        .any(|r| matches!(r.target, RuleTarget::Body) && matches!(r.matcher, RuleMatcher::Contains(_)));
     GuardrailsFilter {
         action: super::config::GuardrailsAction::Flag,
         needs_body,
+        has_body_contains,
         reject_oversized: false,
         rules,
     }
@@ -948,9 +956,13 @@ fn make_flag_filter(rules: Vec<CompiledRule>) -> GuardrailsFilter {
 /// Build a guardrails filter with `reject_oversized` enabled.
 fn make_oversized_filter(rules: Vec<CompiledRule>) -> GuardrailsFilter {
     let needs_body = rules.iter().any(|r| matches!(r.target, RuleTarget::Body));
+    let has_body_contains = rules
+        .iter()
+        .any(|r| matches!(r.target, RuleTarget::Body) && matches!(r.matcher, RuleMatcher::Contains(_)));
     GuardrailsFilter {
         action: super::config::GuardrailsAction::Reject,
         needs_body,
+        has_body_contains,
         reject_oversized: true,
         rules,
     }

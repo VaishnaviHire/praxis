@@ -59,14 +59,18 @@ pub(super) fn extract_origin(headers: &HeaderMap) -> Option<String> {
     if let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok())
         && origin != "null"
     {
-        return Some(normalize_origin(origin));
+        return Some(normalize_origin(origin).into_owned());
     }
 
     headers
         .get("referer")
         .and_then(|v| v.to_str().ok())
         .and_then(extract_origin_from_url)
-        .map(|o| normalize_origin(&o))
+        .map(|o| match normalize_origin(&o) {
+            // Already normalized: reuse the extracted String as-is.
+            std::borrow::Cow::Borrowed(_) => o,
+            std::borrow::Cow::Owned(normalized) => normalized,
+        })
 }
 
 /// Parse `scheme://host[:port]` from a full URL.
