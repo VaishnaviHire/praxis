@@ -94,10 +94,29 @@ pub(crate) fn reload_pipelines(
         },
     };
 
+    // Emit this reload's change diagnostics under the OLD logging baseline:
+    // refresh_baseline below applies the new config's env-filter immediately,
+    // and a reload that both requires a restart and lowers verbosity must not
+    // swallow the very warnings telling the operator their change was not
+    // applied.
     log_restart_required_changes(old_config, new_config);
     warn_insecure_option_escalations(old_config, new_config);
     warn_stateful_filter_reset(new_config);
     log_config_change_audit(old_config, new_config);
+
+    // Apply the log-level baseline while a failure can still abort the reload
+    // cleanly. This is the last fallible step; it must run before the
+    // irreversible pipeline swap below so a bad logging baseline does not leave
+    // live traffic already moved onto the new pipelines while the caller sees
+    // Err (which would churn a retry loop that re-swaps every cycle). The
+    // refresh only touches the logging subsystem, and the diagnostics above
+    // are infallible, so ordering it here is safe.
+    if let Some(log_level) = log_level
+        && let Err(error) = log_level.refresh_baseline(new_config)
+    {
+        error!(%error, "config reload failed: log level baseline refresh");
+        return Err(error.into());
+    }
 
     // Copy known-down endpoint state into the new registry BEFORE the
     // swap: afterwards `live` already serves the new pipelines and the
@@ -124,13 +143,6 @@ pub(crate) fn reload_pipelines(
     ));
 
     respawn_health_checks(old_config, new_config, &health_registry, health_shutdown);
-
-    if let Some(log_level) = log_level
-        && let Err(error) = log_level.refresh_baseline(new_config)
-    {
-        error!(%error, "config reload failed: log level baseline refresh");
-        return Err(error.into());
-    }
 
     info!(
         swapped = ?swapped,
