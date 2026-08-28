@@ -215,6 +215,34 @@ pub(crate) fn strip_hop_by_hop_header_map(headers: &mut HeaderMap, static_list: 
     }
 }
 
+/// Remove reserved internal (`x-praxis-*` / `x-ext-*`) headers from a raw
+/// header map.
+///
+/// The upstream-response path strips these via
+/// [`RemoveHeader::strip_reserved_internal`], but a filter-produced terminal or
+/// streaming-terminal response carries an `http::HeaderMap` directly. Without
+/// this the "reserved internal headers must never reach the client" invariant
+/// held on the upstream path but not on the terminal paths.
+pub(crate) fn strip_reserved_internal_header_map(headers: &mut HeaderMap) {
+    let to_remove: Vec<http::HeaderName> = headers
+        .keys()
+        .filter(|name| super::reserved_headers::is_reserved_internal_header(name))
+        .cloned()
+        .collect();
+
+    for name in &to_remove {
+        headers.remove(name);
+    }
+
+    if !to_remove.is_empty() {
+        debug!(
+            count = to_remove.len(),
+            direction = "response",
+            "stripped reserved internal headers from client-bound response"
+        );
+    }
+}
+
 /// Trait abstracting header removal for both request and response types.
 pub(crate) trait RemoveHeader {
     /// direction i.e. request or response
@@ -317,6 +345,30 @@ fn is_essential(name: &str) -> bool {
 #[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_reserved_internal_header_map_removes_reserved_keeps_others() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-praxis-route", http::HeaderValue::from_static("internal-cluster"));
+        headers.insert("x-ext-protocol-foo", http::HeaderValue::from_static("meta"));
+        headers.insert("content-type", http::HeaderValue::from_static("text/plain"));
+
+        strip_reserved_internal_header_map(&mut headers);
+
+        assert!(
+            !headers.contains_key("x-praxis-route"),
+            "reserved x-praxis-* header must be stripped from a terminal response"
+        );
+        assert!(
+            !headers.contains_key("x-ext-protocol-foo"),
+            "reserved x-ext-* header must be stripped from a terminal response"
+        );
+        assert_eq!(
+            headers.get("content-type").map(|v| v.as_bytes()),
+            Some(b"text/plain".as_slice()),
+            "non-reserved headers must be preserved"
+        );
+    }
 
     #[test]
     fn declares_chunked_framing_matches_plain_and_compound() {

@@ -79,6 +79,13 @@ pub(super) async fn execute(
     // sequence as a modification, independent of what filters self-reported.
     let headers_modified = filter_flagged_modification
         || name_fingerprint_before.is_some_and(|before| header_name_fingerprint(&resp.headers) != before);
+    // Upstream-supplied reserved internal headers were stripped before the
+    // pipeline ran, but a response filter can add one afterwards; re-strip so
+    // the "reserved headers never reach the client" invariant holds after the
+    // pipeline too. An empty pipeline cannot add headers, so skip the pass.
+    if !pipeline.is_empty() {
+        hop_by_hop::strip_reserved_internal_header_map(&mut resp.headers);
+    }
     let should_snapshot_response_header = pipeline.body_capabilities().any_response_body_condition
         && matches!(
             &result,

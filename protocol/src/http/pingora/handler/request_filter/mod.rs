@@ -414,6 +414,7 @@ async fn run_terminal_response(
         return;
     }
     super::hop_by_hop::strip_hop_by_hop_header_map(&mut resp.headers, super::hop_by_hop::RESPONSE_HOP_BY_HOP);
+    super::hop_by_hop::strip_reserved_internal_header_map(&mut resp.headers);
     send_terminal_to_session(session, &resp, body).await;
 }
 
@@ -719,6 +720,7 @@ fn prepare_streaming_headers(
     http_version: http::Version,
 ) {
     super::hop_by_hop::strip_hop_by_hop_header_map(&mut resp.headers, super::hop_by_hop::RESPONSE_HOP_BY_HOP);
+    super::hop_by_hop::strip_reserved_internal_header_map(&mut resp.headers);
     if resp.status == http::StatusCode::NO_CONTENT || (!is_head && !is_not_modified) {
         resp.headers.remove(http::header::CONTENT_LENGTH);
     }
