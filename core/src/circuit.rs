@@ -414,13 +414,14 @@ impl CircuitBreaker {
 pub struct PeerKey {
     /// Socket address of the peer.
     addr: SocketAddr,
-    /// TLS SNI, empty when not applicable.
-    sni: String,
+    /// TLS SNI, empty when not applicable. Shared so the clone the
+    /// registry guard retains is a refcount bump, not a re-allocation.
+    sni: std::sync::Arc<str>,
 }
 
 impl PeerKey {
     /// Create a peer key from an address and optional SNI.
-    pub fn new<S: Into<String>>(addr: SocketAddr, sni: S) -> Self {
+    pub fn new<S: Into<std::sync::Arc<str>>>(addr: SocketAddr, sni: S) -> Self {
         Self { addr, sni: sni.into() }
     }
 }
