@@ -86,5 +86,6 @@ mod tcp_edge_cases;
 mod tcp_load_balancer;
 mod tls;
 mod url_rewrite;
+mod via;
 mod websocket;
 mod wildcard_routing;

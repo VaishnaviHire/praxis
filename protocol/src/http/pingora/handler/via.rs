@@ -57,11 +57,18 @@ pub(crate) fn append_request_via(req: &mut pingora_http::RequestHeader, upstream
 
 /// Append a Via entry to a Pingora response header.
 ///
+/// Per [RFC 9110 Section 7.6.3] the `received-protocol` on a response `Via`
+/// records the protocol version over which this proxy received the response,
+/// i.e. the upstream leg (not the downstream client's version). Callers must
+/// pass the upstream response version accordingly.
+///
 /// If a valid UTF-8 `Via` header already exists, appends
 /// comma-separated. Non-UTF-8 values are replaced outright
 /// to avoid producing a malformed header.
-pub(crate) fn append_response_via(resp: &mut pingora_http::ResponseHeader, client_version: Version) {
-    let entry = via_value(client_version);
+///
+/// [RFC 9110 Section 7.6.3]: https://datatracker.ietf.org/doc/html/rfc9110#section-7.6.3
+pub(crate) fn append_response_via(resp: &mut pingora_http::ResponseHeader, upstream_version: Version) {
+    let entry = via_value(upstream_version);
     match resp.headers.get("via").and_then(|v| v.to_str().ok()) {
         Some(existing) if !existing.is_empty() => {
             debug!(existing, new = %entry, "appending to existing response Via");

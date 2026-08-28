@@ -340,8 +340,11 @@ impl ProxyHttp for PingoraHttpHandler {
             .instrument(span)
             .await;
         if result.is_ok() {
-            let client_ver = ctx.client_http_version.unwrap_or(http::Version::HTTP_11);
-            via::append_response_via(upstream_response, client_ver);
+            // RFC 9110 §7.6.3: the response Via received-protocol is the leg this
+            // proxy received the response on — the upstream connection — not the
+            // downstream client's version.
+            let upstream_ver = upstream_response.version;
+            via::append_response_via(upstream_response, upstream_ver);
             adjust_compression(session, upstream_response, pipeline.compression_config());
         }
         result
