@@ -36,6 +36,26 @@ fn via_value(version: Version) -> &'static str {
     }
 }
 
+/// Pre-validated [`http::HeaderValue`] for [`via_value`]'s entry.
+///
+/// Inserting the `&str` directly would re-validate and heap-copy the
+/// value on every forwarded request and response; these statics wrap
+/// the same bytes once at compile time.
+fn via_header_value(entry: &'static str) -> http::HeaderValue {
+    const V09: http::HeaderValue = http::HeaderValue::from_static("0.9 praxis");
+    const V10: http::HeaderValue = http::HeaderValue::from_static("1.0 praxis");
+    const V11: http::HeaderValue = http::HeaderValue::from_static("1.1 praxis");
+    const V2: http::HeaderValue = http::HeaderValue::from_static("2 praxis");
+    const V3: http::HeaderValue = http::HeaderValue::from_static("3 praxis");
+    match entry {
+        "0.9 praxis" => V09,
+        "1.0 praxis" => V10,
+        "2 praxis" => V2,
+        "3 praxis" => V3,
+        _ => V11,
+    }
+}
+
 /// Append a Via entry to a Pingora request header.
 ///
 /// If a valid UTF-8 `Via` header already exists, appends
@@ -50,7 +70,7 @@ pub(crate) fn append_request_via(req: &mut pingora_http::RequestHeader, upstream
         },
         _ => {
             debug!(via = %entry, "adding request Via header");
-            let _insert = req.insert_header("via", entry);
+            let _insert = req.insert_header("via", via_header_value(entry));
         },
     }
 }
@@ -76,7 +96,7 @@ pub(crate) fn append_response_via(resp: &mut pingora_http::ResponseHeader, upstr
         },
         _ => {
             debug!(via = %entry, "adding response Via header");
-            let _insert = resp.insert_header("via", entry);
+            let _insert = resp.insert_header("via", via_header_value(entry));
         },
     }
 }

@@ -126,7 +126,10 @@ pub fn load_http_handler(
         pipeline,
         downstream_read_timeout,
         connection_semaphore,
-        ::metrics::SharedString::from(listener.name.clone()),
+        // `from_shared` keeps the label as a refcounted `Arc<str>`: the
+        // handler clones it per connection, and an owned `String` label
+        // would deep-copy on every clone.
+        ::metrics::SharedString::from_shared(Arc::from(listener.name.as_str())),
     );
     wire_service(server, listener, handler, cert_watcher_shutdowns)?;
     Ok(())
@@ -228,6 +231,17 @@ fn adjust_compression(
     }
 }
 
+/// Shared legacy-default retry policy for requests that carry none.
+///
+/// The retry hooks run on every upstream response and connect failure;
+/// building a fresh `Arc<RetryPolicy>` there would heap-allocate per
+/// event for a value that never changes.
+fn legacy_default_policy() -> Arc<praxis_core::config::RetryPolicy> {
+    static LEGACY_DEFAULT: std::sync::LazyLock<Arc<praxis_core::config::RetryPolicy>> =
+        std::sync::LazyLock::new(|| Arc::new(praxis_core::config::RetryPolicy::legacy_default()));
+    Arc::clone(&LEGACY_DEFAULT)
+}
+
 /// Handle upstream connect failures with the policy-aware retry engine.
 ///
 /// Retries are skipped when the effective forwarded body size exceeds
@@ -241,10 +255,7 @@ fn handle_connect_failure(ctx: &mut PingoraRequestCtx, e: Box<pingora_core::Erro
     }
     metrics::record_upstream_connect_failure(cluster.clone());
 
-    let policy = ctx
-        .retry_policy
-        .clone()
-        .unwrap_or_else(|| Arc::new(praxis_core::config::RetryPolicy::legacy_default()));
+    let policy = ctx.retry_policy.clone().unwrap_or_else(legacy_default_policy);
     let outcome = retry::classify_error(&e);
     let decision = retry::should_retry(ctx, &policy, outcome, ctx.cluster_retry_state.as_deref());
 
@@ -317,10 +328,7 @@ fn handle_connect_failure(ctx: &mut PingoraRequestCtx, e: Box<pingora_core::Erro
 /// and all guards pass; `None` when the response should be forwarded.
 #[expect(clippy::too_many_lines, reason = "sequential guard checks")]
 fn maybe_retry_response(ctx: &mut PingoraRequestCtx, status: u16) -> Option<Box<pingora_core::Error>> {
-    let policy = ctx
-        .retry_policy
-        .clone()
-        .unwrap_or_else(|| Arc::new(praxis_core::config::RetryPolicy::legacy_default()));
+    let policy = ctx.retry_policy.clone().unwrap_or_else(legacy_default_policy);
     let outcome = retry::RetryOutcome::StatusCode(status);
     let decision = retry::should_retry(ctx, &policy, outcome, ctx.cluster_retry_state.as_deref());
     match decision {

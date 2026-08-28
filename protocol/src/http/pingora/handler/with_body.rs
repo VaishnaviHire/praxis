@@ -123,10 +123,7 @@ fn resolve_reused_only_retry(
     client_reused: bool,
     mut e: Box<pingora_core::Error>,
 ) -> Box<pingora_core::Error> {
-    let policy = ctx
-        .retry_policy
-        .clone()
-        .unwrap_or_else(|| Arc::new(praxis_core::config::RetryPolicy::legacy_default()));
+    let policy = ctx.retry_policy.clone().unwrap_or_else(super::legacy_default_policy);
     let replay_safe = client_reused
         && !session.as_ref().retry_buffer_truncated()
         && (ctx.request_is_idempotent || policy.allow_non_idempotent());

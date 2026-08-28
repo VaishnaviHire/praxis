@@ -79,23 +79,27 @@ pub(in crate::http) fn normalize_request_headers(session: &mut Session) -> Optio
 /// times with differing values. Identical duplicates are collapsed.
 fn reject_conflicting_single_value_headers(session: &mut Session) -> Option<Rejection> {
     for header_name in SINGLE_VALUE_HEADERS {
-        let values: Vec<_> = session.req_header().headers.get_all(header_name).iter().collect();
-
-        if values.len() <= 1 {
-            continue;
-        }
-
-        let Some(first) = values.first() else {
+        // Walk the multimap in place: the dominant zero-or-one-value case
+        // must not allocate a Vec per header per request.
+        let mut values = session.req_header().headers.get_all(header_name).iter();
+        let Some(first) = values.next() else {
             continue;
         };
         let first_bytes = first.as_bytes();
-        if values.iter().skip(1).any(|v| v.as_bytes() != first_bytes) {
-            debug!(header = %header_name, "rejecting request with conflicting duplicate header");
-            return Some(Rejection::status(400));
+        let mut saw_duplicate = false;
+        for value in values {
+            saw_duplicate = true;
+            if value.as_bytes() != first_bytes {
+                debug!(header = %header_name, "rejecting request with conflicting duplicate header");
+                return Some(Rejection::status(400));
+            }
+        }
+        if !saw_duplicate {
+            continue;
         }
 
         debug!(header = %header_name, "canonicalizing duplicate identical header");
-        let canonical = (*first).clone();
+        let canonical = first.clone();
         let _remove = session.req_header_mut().remove_header(header_name.as_str());
         let _insert = session.req_header_mut().insert_header(header_name.clone(), canonical);
     }
