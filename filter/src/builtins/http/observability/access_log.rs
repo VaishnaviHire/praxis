@@ -568,23 +568,23 @@ impl HttpFilter for AccessLogFilter {
     }
 
     async fn on_response(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
-        if let Some(resp) = &ctx.response_header {
-            let status = resp.status.as_u16();
-            let bodyless = Self::is_bodyless(resp.status, &ctx.request.method);
+        let Some(resp) = &ctx.response_header else {
+            return Ok(FilterAction::Continue);
+        };
+        let status = resp.status.as_u16();
+        let bodyless = Self::is_bodyless(resp.status, &ctx.request.method);
+        let response_headers = self.needs_response_headers.then(|| resp.headers.clone());
 
-            let response_headers = self.needs_response_headers.then(|| resp.headers.clone());
-            ctx.insert_filter_state(AccessLogState {
-                status,
-                response_headers,
-            });
-
-            if bodyless {
-                let headers = ctx
-                    .get_filter_state::<AccessLogState>()
-                    .and_then(|state| state.response_headers.clone());
-                self.maybe_emit(ctx, status, headers.as_ref());
-            }
+        // Emit from the captured map before storing it: re-reading the
+        // freshly inserted state cloned the header map a second time on
+        // every bodyless response.
+        if bodyless {
+            self.maybe_emit(ctx, status, response_headers.as_ref());
         }
+        ctx.insert_filter_state(AccessLogState {
+            status,
+            response_headers,
+        });
         Ok(FilterAction::Continue)
     }
 
@@ -599,9 +599,11 @@ impl HttpFilter for AccessLogFilter {
         end_of_stream: bool,
     ) -> Result<FilterAction, FilterError> {
         if end_of_stream {
+            // The record is emitted at most once, so the stored map can
+            // be moved out rather than cloned per response.
             let (status, headers) = ctx
-                .get_filter_state::<AccessLogState>()
-                .map_or((0, None), |state| (state.status, state.response_headers.clone()));
+                .get_filter_state_mut::<AccessLogState>()
+                .map_or((0, None), |state| (state.status, state.response_headers.take()));
             self.maybe_emit(ctx, status, headers.as_ref());
         }
         Ok(FilterAction::Continue)

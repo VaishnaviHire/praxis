@@ -960,6 +960,7 @@ fn make_filter(field: &str, header: &str) -> JsonBodyFieldFilter {
     JsonBodyFieldFilter {
         max_body_bytes: crate::body::DEFAULT_JSON_BODY_MAX_BYTES,
         mappings: vec![(field.to_owned(), header.to_owned())],
+        needed: std::iter::once(field.to_owned()).collect(),
     }
 }
 
@@ -971,5 +972,6 @@ fn make_multi_filter(mappings: &[(&str, &str)]) -> JsonBodyFieldFilter {
             .iter()
             .map(|(f, h)| ((*f).to_owned(), (*h).to_owned()))
             .collect(),
+        needed: mappings.iter().map(|(f, _)| (*f).to_owned()).collect(),
     }
 }

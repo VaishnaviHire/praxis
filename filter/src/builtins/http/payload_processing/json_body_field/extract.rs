@@ -32,6 +32,7 @@ use super::super::MAX_DYNAMIC_VALUE_LEN;
 /// or a parse error before all needed fields are found, yields `false`.
 pub(super) fn extract_fields(
     mappings: &[(String, String)],
+    needed: &HashSet<String>,
     bytes: &[u8],
     headers: &mut Vec<(Cow<'static, str>, String)>,
 ) -> bool {
@@ -39,12 +40,11 @@ pub(super) fn extract_fields(
         return false;
     }
 
-    let needed: HashSet<&str> = mappings.iter().map(|(field, _)| field.as_str()).collect();
     let mut found: HashMap<String, String> = HashMap::with_capacity(needed.len());
 
     let mut de = serde_json::Deserializer::from_slice(bytes);
     let seed = RootSeed {
-        needed: &needed,
+        needed,
         found: &mut found,
     };
 
@@ -100,7 +100,7 @@ fn emit_headers(
 /// `DeserializeSeed` entry that dispatches on the JSON root value kind.
 struct RootSeed<'a> {
     /// Field names that still need to be collected.
-    needed: &'a HashSet<&'a str>,
+    needed: &'a HashSet<String>,
     /// Field name → header text collected so far (last-wins on duplicates).
     found: &'a mut HashMap<String, String>,
 }
@@ -122,7 +122,7 @@ impl<'de> DeserializeSeed<'de> for RootSeed<'_> {
 /// Visitor that extracts mapped top-level object fields and ignores other roots.
 struct RootVisitor<'a> {
     /// Field names that still need to be collected.
-    needed: &'a HashSet<&'a str>,
+    needed: &'a HashSet<String>,
     /// Field name → header text collected so far (last-wins on duplicates).
     found: &'a mut HashMap<String, String>,
 }
@@ -251,7 +251,8 @@ mod tests {
     fn extract_one(body: &str) -> (bool, PromotedHeaders) {
         let mappings = vec![("field".to_owned(), "x-field".to_owned())];
         let mut headers = Vec::new();
-        let found = extract_fields(&mappings, body.as_bytes(), &mut headers);
+        let needed: HashSet<String> = mappings.iter().map(|(f, _)| f.clone()).collect();
+        let found = extract_fields(&mappings, &needed, body.as_bytes(), &mut headers);
         (found, headers)
     }
 
@@ -259,7 +260,7 @@ mod tests {
     fn empty_mappings_extract_nothing() {
         let mut headers = Vec::new();
         assert!(
-            !extract_fields(&[], b"{\"a\":1}", &mut headers),
+            !extract_fields(&[], &HashSet::new(), b"{\"a\":1}", &mut headers),
             "no mappings means nothing to promote"
         );
         assert!(headers.is_empty(), "no headers should be emitted");

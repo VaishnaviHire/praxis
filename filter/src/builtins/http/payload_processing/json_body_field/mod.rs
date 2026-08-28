@@ -103,6 +103,13 @@ pub struct JsonBodyFieldFilter {
 
     /// Field-to-header mappings: `(json_field_name, header_name)`.
     pub(crate) mappings: Vec<(String, String)>,
+
+    /// Field names from `mappings`, pre-built for the extraction walk.
+    ///
+    /// The extractor probes this on every JSON key it visits, and the
+    /// hook can run once per buffered chunk; rebuilding the set from
+    /// `mappings` each call allocated per chunk for config-stable data.
+    needed: std::collections::HashSet<String>,
 }
 
 impl JsonBodyFieldFilter {
@@ -137,9 +144,11 @@ impl JsonBodyFieldFilter {
         let cfg: JsonBodyFieldConfig = parse_filter_config("json_body_field", config)?;
         let max_body_bytes = cfg.max_body_bytes;
         let mappings = build_mappings(cfg)?;
+        let needed = mappings.iter().map(|(field, _)| field.clone()).collect();
         Ok(Box::new(Self {
             max_body_bytes,
             mappings,
+            needed,
         }))
     }
 }
@@ -181,7 +190,7 @@ impl HttpFilter for JsonBodyFieldFilter {
             return Ok(FilterAction::Continue);
         };
 
-        if extract_fields(&self.mappings, chunk, &mut ctx.extra_request_headers) {
+        if extract_fields(&self.mappings, &self.needed, chunk, &mut ctx.extra_request_headers) {
             ctx.insert_filter_state(Promoted);
             // BodyDone skips this filter on remaining chunks; Release would
             // still re-enter at EOS and duplicate TrustedHeaderMutation::Add.

@@ -161,8 +161,8 @@ impl ForwardedHeadersFilter {
         write_for_param(&mut value, client_ip);
         let _ok = write!(value, ";proto={proto}");
         if let Some(h) = host {
-            let escaped = quote_forwarded_value(h);
-            let _ok = write!(value, ";host={escaped}");
+            value.push_str(";host=");
+            write_quoted_forwarded_value(&mut value, h);
         }
 
         ctx.extra_request_headers.push((Cow::Borrowed("Forwarded"), value));
@@ -224,8 +224,16 @@ fn write_for_param(out: &mut String, ip: &IpAddr) {
 /// Embedded `\` and `"` are backslash-escaped.
 ///
 /// [RFC 7239 Section 4]: https://datatracker.ietf.org/doc/html/rfc7239#section-4
+#[cfg(test)]
 fn quote_forwarded_value(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
+    write_quoted_forwarded_value(&mut out, value);
+    out
+}
+
+/// [`quote_forwarded_value`], writing straight into the caller's buffer
+/// so the header-build path stages no intermediate String.
+fn write_quoted_forwarded_value(out: &mut String, value: &str) {
     out.push('"');
     for ch in value.chars() {
         if ch == '"' || ch == '\\' {
@@ -234,7 +242,6 @@ fn quote_forwarded_value(value: &str) -> String {
         out.push(ch);
     }
     out.push('"');
-    out
 }
 
 #[async_trait]
