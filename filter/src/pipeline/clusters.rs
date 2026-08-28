@@ -59,18 +59,35 @@ pub(super) fn level_selected_clusters(filters: &[PipelineFilter]) -> HashSet<Str
     filters.iter().flat_map(|pf| pf.filter.selected_clusters()).collect()
 }
 
-/// Cluster names provided by this level's load balancers only (no branch
-/// recursion).
+/// Cluster names provided by load balancers guaranteed to run for every
+/// request that reaches this level.
 ///
-/// A load balancer inside a branch runs only when the branch runs, so it
-/// cannot serve selections made outside that branch; counting it as a
-/// pipeline-wide provider would hide a guaranteed request-time 502 for
-/// non-branch requests.
-pub(super) fn level_lb_clusters(filters: &[PipelineFilter]) -> HashSet<String> {
-    filters
-        .iter()
-        .flat_map(|pf| pf.filter.load_balancer_clusters())
-        .collect()
+/// This is this level's own load balancers plus those inside *unconditional*
+/// branches (`condition: None`) hung off *unconditional* host filters (no
+/// filter conditions), recursively. Such a branch always fires and its filters
+/// run against the same `ctx`, so a load balancer inside it sets `ctx.upstream`
+/// for the enclosing selection exactly like a top-level one — an inlined chain
+/// in all but syntax. A *conditional* branch (or one on a conditional host) is
+/// excluded: it may not run, so its load balancer cannot be relied on to serve
+/// an enclosing selection.
+///
+/// The branch's rejoin target is irrelevant here: whether it rejoins `Next` or
+/// `Terminal`, the branch's own filters still run and set `ctx.upstream` before
+/// control leaves the branch; rejoin only governs which *later* top-level
+/// filters run.
+pub(super) fn reachable_lb_clusters(filters: &[PipelineFilter]) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for pf in filters {
+        out.extend(pf.filter.load_balancer_clusters());
+        if pf.conditions.is_empty() {
+            for branch in &pf.branches {
+                if branch.condition.is_none() {
+                    out.extend(reachable_lb_clusters(&branch.filters));
+                }
+            }
+        }
+    }
+    out
 }
 
 // -----------------------------------------------------------------------------
@@ -182,6 +199,106 @@ mod tests {
         assert!(
             extract_lb_clusters(&filters).is_empty(),
             "empty input should yield empty set"
+        );
+    }
+
+    use std::sync::Arc;
+
+    use praxis_core::config::{Condition, ConditionMatch};
+
+    use crate::pipeline::branch::{RejoinTarget, ResolvedBranch, ResolvedBranchCondition};
+
+    /// Build a host filter carrying one branch (condition controls reachability).
+    fn host_with(condition: Option<ResolvedBranchCondition>, branch_filters: Vec<PipelineFilter>) -> PipelineFilter {
+        let mut host = noop_filter("headers");
+        host.branches = vec![ResolvedBranch {
+            condition,
+            filters: branch_filters,
+            max_iterations: None,
+            name: Arc::from("br"),
+            rejoin: RejoinTarget::Next,
+        }];
+        host
+    }
+
+    fn cond() -> Option<ResolvedBranchCondition> {
+        Some(ResolvedBranchCondition {
+            filter_name: Arc::from("classifier"),
+            key: Arc::from("kind"),
+            value: Arc::from("premium"),
+        })
+    }
+
+    #[test]
+    fn reachable_includes_this_levels_load_balancers() {
+        let filters = vec![lb_filter(&["web", "api"])];
+        let clusters = reachable_lb_clusters(&filters);
+        assert!(clusters.contains("web") && clusters.contains("api"));
+    }
+
+    #[test]
+    fn reachable_folds_unconditional_branch_lb() {
+        // An unconditional branch on an unconditional host always runs, so its
+        // LB is reachable for the enclosing scope.
+        let filters = vec![host_with(None, vec![lb_filter(&["x"])])];
+        assert!(
+            reachable_lb_clusters(&filters).contains("x"),
+            "unconditional branch LB must be reachable"
+        );
+    }
+
+    #[test]
+    fn reachable_excludes_conditional_branch_lb() {
+        // A conditional branch may not fire, so its LB is not reachable.
+        let filters = vec![host_with(cond(), vec![lb_filter(&["x"])])];
+        assert!(
+            !reachable_lb_clusters(&filters).contains("x"),
+            "conditional branch LB must not be reachable"
+        );
+    }
+
+    #[test]
+    fn reachable_excludes_branch_lb_on_conditional_host() {
+        // Even an unconditional branch is unreachable when its host filter is
+        // conditional (the host, and thus the branch, may be skipped).
+        let mut host = noop_filter("headers");
+        host.conditions = vec![Condition::When(ConditionMatch {
+            path: None,
+            path_prefix: Some("/x".to_owned()),
+            methods: None,
+            headers: None,
+        })];
+        host.branches = vec![ResolvedBranch {
+            condition: None,
+            filters: vec![lb_filter(&["x"])],
+            max_iterations: None,
+            name: Arc::from("br"),
+            rejoin: RejoinTarget::Next,
+        }];
+        assert!(
+            !reachable_lb_clusters(&[host]).contains("x"),
+            "a branch on a conditional host must not be reachable"
+        );
+    }
+
+    #[test]
+    fn reachable_folds_nested_unconditional_branches() {
+        let inner = host_with(None, vec![lb_filter(&["deep"])]);
+        let outer = host_with(None, vec![inner]);
+        assert!(
+            reachable_lb_clusters(&[outer]).contains("deep"),
+            "nested unconditional branch LBs must fold up"
+        );
+    }
+
+    #[test]
+    fn reachable_stops_folding_at_conditional_nesting() {
+        // Outer unconditional, inner conditional: the inner LB is unreachable.
+        let inner = host_with(cond(), vec![lb_filter(&["deep"])]);
+        let outer = host_with(None, vec![inner]);
+        assert!(
+            !reachable_lb_clusters(&[outer]).contains("deep"),
+            "a conditional nested branch stops the reachability fold"
         );
     }
 }

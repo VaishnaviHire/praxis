@@ -196,14 +196,16 @@ pub(super) fn check_conflicting_cluster_selectors(filters: &[PipelineFilter], er
 /// Every cluster selected by a pipeline filter must be defined by the
 /// load balancer that will consume `ctx.cluster`.
 pub(super) fn check_misaligned_clusters(filters: &[PipelineFilter], errors: &mut Vec<String>) {
-    // Scope-aware alignment: a load balancer inside a branch runs only when
-    // its branch runs, so it cannot serve a selection made at the top level —
-    // counting it pipeline-wide would hide a guaranteed 502 for non-branch
-    // requests. Top-level demands must be met by top-level load balancers;
-    // demands made inside a branch may be met by that branch's own load
-    // balancers or anything inherited from enclosing scopes.
+    // Reachability-aware alignment: a top-level selection must be served by a
+    // load balancer that is *guaranteed to run* for it. That is this level's
+    // own load balancers plus those inside unconditional branches on
+    // unconditional hosts (which always run and share `ctx`, so they serve an
+    // enclosing selection just like a top-level load balancer — see
+    // `reachable_lb_clusters`). A *conditional* branch's load balancer is
+    // excluded: it may not fire, so relying on it would hide a guaranteed 502
+    // for requests that skip the branch.
     let top_selected = super::clusters::level_selected_clusters(filters);
-    let top_lb = super::clusters::level_lb_clusters(filters);
+    let top_lb = super::clusters::reachable_lb_clusters(filters);
 
     // The empty-LB escape is judged on the WHOLE pipeline: a pipeline with no
     // load balancer anywhere may route by other means (static upstream), but
@@ -241,14 +243,17 @@ pub(super) fn check_misaligned_clusters(filters: &[PipelineFilter], errors: &mut
 /// Check each branch sub-chain's cluster demands against its availability.
 ///
 /// A branch's available load balancers are those inherited from enclosing
-/// scopes plus the load balancers at the branch's OWN level — not its nested
-/// branches' (a nested branch's LB only runs when that nested branch fires,
-/// so counting it here would hide the same guaranteed-502 shape one level
-/// down). Nested branches inherit this level's availability and add their
-/// own when recursed into. The empty-LB escape is pipeline-global
-/// (`any_lb`), matching the top-level check: only a pipeline with no load
-/// balancer anywhere (static upstream) skips demand validation — a branch
-/// whose local availability happens to be empty is still checked.
+/// scopes plus the load balancers *guaranteed to run* within the branch —
+/// its own level plus any unconditional sub-branches on unconditional hosts
+/// (see [`reachable_lb_clusters`]). A *conditional* nested branch's load
+/// balancer is excluded: it only runs when that nested branch fires, so
+/// counting it here would hide the same guaranteed-502 shape one level down.
+/// The empty-LB escape is pipeline-global (`any_lb`), matching the top-level
+/// check: only a pipeline with no load balancer anywhere (static upstream)
+/// skips demand validation — a branch whose local availability happens to be
+/// empty is still checked.
+///
+/// [`reachable_lb_clusters`]: super::clusters::reachable_lb_clusters
 fn check_branch_cluster_demands(
     filters: &[PipelineFilter],
     inherited_lb: &std::collections::HashSet<String>,
@@ -258,7 +263,7 @@ fn check_branch_cluster_demands(
     for pf in filters {
         for branch in &pf.branches {
             let mut available = inherited_lb.clone();
-            available.extend(super::clusters::level_lb_clusters(&branch.filters));
+            available.extend(super::clusters::reachable_lb_clusters(&branch.filters));
 
             let demands = super::clusters::level_selected_clusters(&branch.filters);
             if any_lb {
@@ -971,7 +976,9 @@ mod tests {
         assert!(errors.is_empty(), "aligned clusters should produce no errors");
     }
 
-    /// Build a host filter carrying one Next-rejoin branch with `filters`.
+    /// Build an unconditional host filter carrying one unconditional
+    /// Next-rejoin branch with `filters`. Such a branch always runs and shares
+    /// `ctx`, so its load balancers are reachable for the enclosing scope.
     fn host_with_branch(branch_filters: Vec<PipelineFilter>) -> PipelineFilter {
         let mut host = noop_filter_with_conditions("headers", vec![]);
         host.branches = vec![ResolvedBranch {
@@ -984,11 +991,33 @@ mod tests {
         host
     }
 
+    /// Build an unconditional host filter carrying one *conditional*
+    /// Next-rejoin branch with `filters`. A conditional branch may not fire, so
+    /// its load balancers cannot be relied on to serve an enclosing selection.
+    fn host_with_conditional_branch(branch_filters: Vec<PipelineFilter>) -> PipelineFilter {
+        let mut host = noop_filter_with_conditions("headers", vec![]);
+        host.branches = vec![ResolvedBranch {
+            condition: Some(crate::pipeline::branch::ResolvedBranchCondition {
+                filter_name: Arc::from("classifier"),
+                key: Arc::from("kind"),
+                value: Arc::from("premium"),
+            }),
+            filters: branch_filters,
+            max_iterations: None,
+            name: Arc::from("cond_br"),
+            rejoin: RejoinTarget::Next,
+        }];
+        host
+    }
+
     #[test]
-    fn branch_lb_does_not_satisfy_top_level_selection() {
-        // The branch's LB only runs when the branch runs; a top-level router
-        // selecting its cluster still 502s for non-branch requests, so this
-        // must error.
+    fn unconditional_branch_lb_satisfies_top_level_selection() {
+        // An unconditional branch on an unconditional host always runs and its
+        // filters share `ctx`, so the branch LB sets `ctx.upstream` for the
+        // top-level selection exactly like a top-level LB (verified against the
+        // runtime: evaluate.rs runs branch filters on the shared ctx, and the
+        // trailing lb(other) early-returns once ctx.upstream is set). This
+        // config succeeds at runtime, so it must NOT be rejected at build time.
         let filters = vec![
             selector_filter("router", &["x"]),
             host_with_branch(vec![lb_filter(&["x"])]),
@@ -996,10 +1025,29 @@ mod tests {
         ];
         let mut errors = Vec::new();
         check_misaligned_clusters(&filters, &mut errors);
+        assert!(
+            errors.is_empty(),
+            "an unconditional branch LB is always reachable and satisfies a top-level selection: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn conditional_branch_lb_does_not_satisfy_top_level_selection() {
+        // A CONDITIONAL branch may not fire; when it does not, the top-level
+        // selection of "x" reaches the trailing lb(other), which does not
+        // define "x", and the request 502s. The branch LB therefore cannot be
+        // relied on to satisfy the selection, so this must error.
+        let filters = vec![
+            selector_filter("router", &["x"]),
+            host_with_conditional_branch(vec![lb_filter(&["x"])]),
+            lb_filter(&["other"]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
         assert_eq!(
             errors.len(),
             1,
-            "a branch-scoped LB must not satisfy a top-level selection: {errors:?}"
+            "a conditional branch LB must not satisfy a top-level selection: {errors:?}"
         );
         assert!(
             errors[0].contains('x'),
@@ -1045,29 +1093,46 @@ mod tests {
     }
 
     #[test]
-    fn top_level_selection_with_only_branch_lbs_errors() {
-        // No top-level LB exists at all, but the pipeline is not LB-free:
-        // its only LB lives in a branch, which cannot serve the top-level
-        // selection. The whole-pipeline escape must not skip this.
+    fn top_level_selection_with_only_unconditional_branch_lb_no_error() {
+        // No top-level LB exists, but the only LB lives in an UNCONDITIONAL
+        // branch, which always runs and serves the top-level selection at
+        // runtime. It must NOT error.
         let filters = vec![
             selector_filter("router", &["x"]),
             host_with_branch(vec![lb_filter(&["x"])]),
         ];
         let mut errors = Vec::new();
         check_misaligned_clusters(&filters, &mut errors);
-        assert_eq!(
-            errors.len(),
-            1,
-            "a top-level selection served only by a branch LB must error: {errors:?}"
+        assert!(
+            errors.is_empty(),
+            "an unconditional branch LB serves a top-level selection even with no top-level LB: {errors:?}"
         );
     }
 
     #[test]
-    fn branch_demand_served_only_by_nested_branch_lb_errors() {
-        // The demand sits at branch level but the only LB defining its
-        // cluster is inside a NESTED branch, which only runs when that
-        // nested branch fires — the same guaranteed-502 shape one level
-        // down.
+    fn top_level_selection_with_only_conditional_branch_lb_errors() {
+        // The pipeline's only LB lives in a CONDITIONAL branch that may not
+        // fire; a non-matching request then forwards with no upstream selected
+        // and 502s. The whole-pipeline escape must not skip this.
+        let filters = vec![
+            selector_filter("router", &["x"]),
+            host_with_conditional_branch(vec![lb_filter(&["x"])]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
+        assert_eq!(
+            errors.len(),
+            1,
+            "a top-level selection served only by a conditional branch LB must error: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn branch_demand_served_by_unconditional_nested_branch_lb_no_error() {
+        // The demand sits at branch level and the LB defining its cluster is
+        // inside an UNCONDITIONAL nested branch on an unconditional host. That
+        // nested branch always runs when the outer branch runs, so lb(deep) is
+        // reachable and the request succeeds. It must NOT error.
         let mut nested_host = noop_filter_with_conditions("headers", vec![]);
         nested_host.branches = vec![ResolvedBranch {
             condition: None,
@@ -1082,10 +1147,40 @@ mod tests {
         ];
         let mut errors = Vec::new();
         check_misaligned_clusters(&filters, &mut errors);
+        assert!(
+            errors.is_empty(),
+            "an unconditional nested branch LB is reachable and serves the branch demand: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn branch_demand_served_only_by_conditional_nested_branch_lb_errors() {
+        // The LB defining "deep" is inside a CONDITIONAL nested branch that may
+        // not fire, so the branch-level selection of "deep" can reach
+        // forwarding with no upstream selected. This is the guaranteed-502
+        // shape one level down and must error.
+        let mut nested_host = noop_filter_with_conditions("headers", vec![]);
+        nested_host.branches = vec![ResolvedBranch {
+            condition: Some(crate::pipeline::branch::ResolvedBranchCondition {
+                filter_name: Arc::from("classifier"),
+                key: Arc::from("kind"),
+                value: Arc::from("premium"),
+            }),
+            filters: vec![lb_filter(&["deep"])],
+            max_iterations: None,
+            name: Arc::from("nested_cond"),
+            rejoin: RejoinTarget::Next,
+        }];
+        let filters = vec![
+            host_with_branch(vec![selector_filter("router", &["deep"]), nested_host]),
+            lb_filter(&["web"]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
         assert_eq!(
             errors.len(),
             1,
-            "a branch demand served only by a nested branch's LB must error: {errors:?}"
+            "a branch demand served only by a conditional nested branch LB must error: {errors:?}"
         );
         assert!(
             errors[0].contains("deep"),
@@ -1095,11 +1190,11 @@ mod tests {
     }
 
     #[test]
-    fn nested_branch_lb_without_any_outer_lb_still_errors() {
-        // No LB exists at the top level at all; the pipeline's only LB sits
-        // in a NESTED branch. The empty-LB escape is pipeline-global, so the
-        // branch-level demand must still be validated — and rejected, since
-        // the nested LB only runs when the nested branch fires.
+    fn nested_unconditional_branch_lb_without_outer_lb_no_error() {
+        // The pipeline's only LB sits in an UNCONDITIONAL nested branch and
+        // there is no top-level LB. The nested branch always runs, so lb(deep)
+        // is reachable and the branch selection of "deep" succeeds at runtime.
+        // It must NOT error.
         let mut nested_host = noop_filter_with_conditions("headers", vec![]);
         nested_host.branches = vec![ResolvedBranch {
             condition: None,
@@ -1114,10 +1209,40 @@ mod tests {
         ])];
         let mut errors = Vec::new();
         check_misaligned_clusters(&filters, &mut errors);
+        assert!(
+            errors.is_empty(),
+            "an unconditional nested branch LB is reachable even with no top-level LB: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn nested_conditional_branch_lb_without_outer_lb_still_errors() {
+        // The pipeline's only LB sits in a CONDITIONAL nested branch and there
+        // is no top-level LB. The empty-LB escape is pipeline-global, so the
+        // branch demand is still validated and rejected: the nested LB only
+        // runs when the nested branch fires.
+        let mut nested_host = noop_filter_with_conditions("headers", vec![]);
+        nested_host.branches = vec![ResolvedBranch {
+            condition: Some(crate::pipeline::branch::ResolvedBranchCondition {
+                filter_name: Arc::from("classifier"),
+                key: Arc::from("kind"),
+                value: Arc::from("premium"),
+            }),
+            filters: vec![lb_filter(&["deep"])],
+            max_iterations: None,
+            name: Arc::from("nested_cond"),
+            rejoin: RejoinTarget::Next,
+        }];
+        let filters = vec![host_with_branch(vec![
+            selector_filter("router", &["deep"]),
+            nested_host,
+        ])];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
         assert_eq!(
             errors.len(),
             1,
-            "the pipeline-global escape must not skip a branch demand: {errors:?}"
+            "the pipeline-global escape must not skip a conditional branch demand: {errors:?}"
         );
         assert!(
             errors[0].contains("deep"),
