@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use praxis_core::{config::HashFunction, health::ClusterHealthState};
+use smallvec::SmallVec;
 
 use super::{endpoint::WeightedEndpoint, hash::fnv1a};
 
@@ -96,7 +97,9 @@ impl RingHash {
         // Bound the clockwise probe by distinct endpoints, not ring
         // entries: with every endpoint unhealthy, walking the full ring
         // would visit each endpoint's virtual nodes hundreds of times.
-        let mut visited = vec![false; self.endpoints.len()];
+        // Stack-backed for the common small-cluster case: avoids a per-request
+        // heap allocation on the selection hot path.
+        let mut visited: SmallVec<[bool; 32]> = smallvec::smallvec![false; self.endpoints.len()];
         let mut remaining = self.endpoints.len();
         for offset in 0..ring_len {
             let idx = (start + offset) % ring_len;
