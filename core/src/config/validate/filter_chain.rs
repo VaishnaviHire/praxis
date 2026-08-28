@@ -215,9 +215,6 @@ fn validate_chain_cardinality(chains: &[FilterChainConfig]) -> Result<(), ProxyE
                 chain.filters.len()
             )));
         }
-        for entry in &chain.filters {
-            entry.warn_config_typos();
-        }
     }
     Ok(())
 }

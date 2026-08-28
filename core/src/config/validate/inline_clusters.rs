@@ -84,6 +84,11 @@ pub(super) fn validate_tcp_listener_clusters(
     listeners: &[Listener],
     chains: &[FilterChainConfig],
 ) -> Result<(), ProxyError> {
+    // Chain names are unique (validated elsewhere), so index once
+    // instead of scanning the chain list per listener reference.
+    let chains_by_name: std::collections::HashMap<&str, &FilterChainConfig> =
+        chains.iter().map(|c| (c.name.as_str(), c)).collect();
+
     for listener in listeners {
         if listener.protocol != ProtocolKind::Tcp {
             continue;
@@ -92,21 +97,7 @@ pub(super) fn validate_tcp_listener_clusters(
             continue;
         };
 
-        let mut available: HashSet<String> = HashSet::new();
-        for chain_name in &listener.filter_chains {
-            let Some(chain) = chains.iter().find(|c| &c.name == chain_name) else {
-                continue;
-            };
-            for entry in &chain.filters {
-                if entry.filter_type == "tcp_load_balancer" {
-                    for cluster in extract_clusters(&chain.name, entry)? {
-                        available.insert(cluster.name.to_string());
-                    }
-                }
-            }
-        }
-
-        if !available.contains(cluster_name) {
+        if !listener_defines_tcp_cluster(listener, &chains_by_name, cluster_name)? {
             return Err(ProxyError::Config(format!(
                 "listener '{}': cluster '{cluster_name}' is not defined by any tcp_load_balancer \
                  filter in its chains (a TCP listener's cluster must name an inline \
@@ -116,6 +107,35 @@ pub(super) fn validate_tcp_listener_clusters(
         }
     }
     Ok(())
+}
+
+/// Whether any `tcp_load_balancer` filter in the listener's chains
+/// defines an inline cluster named `cluster_name`.
+///
+/// Short-circuiting on the first match is equivalent to collecting
+/// every name first: `validate_inline_clusters` has already parsed and
+/// validated every inline list by the time this check runs, so
+/// `extract_clusters` cannot surface a new error here.
+fn listener_defines_tcp_cluster(
+    listener: &Listener,
+    chains_by_name: &std::collections::HashMap<&str, &FilterChainConfig>,
+    cluster_name: &str,
+) -> Result<bool, ProxyError> {
+    for chain_name in &listener.filter_chains {
+        let Some(chain) = chains_by_name.get(chain_name.as_str()) else {
+            continue;
+        };
+        for entry in &chain.filters {
+            if entry.filter_type == "tcp_load_balancer"
+                && extract_clusters(&chain.name, entry)?
+                    .iter()
+                    .any(|cluster| cluster.name.as_ref() == cluster_name)
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Deserialize filter entries nested under an `iterative_request_router`
