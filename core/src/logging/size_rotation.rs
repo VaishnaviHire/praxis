@@ -141,6 +141,14 @@ impl Write for SizeRotatingWriter {
             .state
             .lock()
             .map_err(|_e| io::Error::other("size rotation writer lock poisoned"))?;
+        // A prior roll may have left the active handle closed (e.g. a transient
+        // reopen failure after a successful rename). Reopen it here so logging
+        // resumes on a later write instead of failing permanently and silently.
+        if state.file.is_none() {
+            let reopened = open_append(&self.path)?;
+            state.size = reopened.metadata().map_or(0, |m| m.len());
+            state.file = Some(reopened);
+        }
         let file = state
             .file
             .as_mut()
@@ -310,6 +318,29 @@ mod tests {
     }
 
     #[test]
+    fn write_recovers_when_active_handle_was_closed() {
+        // Simulate the state left by a successful roll followed by a failed
+        // reopen: the active handle is None. A later write must reopen and
+        // succeed rather than failing permanently.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proxy.log");
+        let mut writer = SizeRotatingWriter::open(&path, 1_000, 3).unwrap();
+        {
+            let mut state = writer.state.lock().unwrap();
+            state.file = None;
+        }
+        writer
+            .write_all(b"after recovery")
+            .expect("write must reopen the closed handle instead of failing");
+        writer.flush().unwrap();
+        let contents = fs::read_to_string(&path).expect("active log readable");
+        assert!(
+            contents.contains("after recovery"),
+            "a closed active handle must be reopened on the next write, not left broken"
+        );
+    }
+
+    #[test]
     fn continues_logging_when_roll_fails() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("proxy.log");
@@ -318,14 +349,13 @@ mod tests {
         writer.write_all(b"12345678").unwrap();
         assert_eq!(list_rotated_indices(&path), vec![1], "first roll should succeed");
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-
-            let mut perms = fs::metadata(dir.path()).expect("dir metadata").permissions();
-            perms.set_mode(0o555);
-            fs::set_permissions(dir.path(), perms).expect("make log dir read-only");
-        }
+        // Force the next roll to fail in a way root cannot bypass: place a
+        // directory where prune_and_shift expects to delete the oldest archive
+        // (`proxy.log.2`). fs::remove_file on a directory returns EISDIR
+        // regardless of privilege, so perform_roll fails before renaming the
+        // active file. (A read-only parent directory does not work under root,
+        // which ignores directory permission bits.)
+        fs::create_dir(rotated_path(&path, 2)).expect("create blocking directory at .2");
 
         writer
             .write_all(b"abcdefgh")
