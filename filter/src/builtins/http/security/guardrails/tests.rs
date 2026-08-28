@@ -67,6 +67,61 @@ async fn header_contains_rejects_match() {
 }
 
 #[tokio::test]
+async fn header_contains_rejects_non_utf8_near_miss() {
+    // A non-UTF-8 (obs-text) header value must not slip past a blocking rule:
+    // `bad-bot\xFF` was previously dropped by to_str(), failing the rule open
+    // while the upstream reads it as `bad-bot`.
+    let f = make_filter(vec![header_contains("user-agent", "bad-bot")]);
+    let mut req = crate::test_utils::make_request(http::Method::GET, "/");
+    req.headers
+        .insert("user-agent", http::HeaderValue::from_bytes(b"bad-bot\xff").unwrap());
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+
+    let action = f.on_request(&mut ctx).await.unwrap();
+    assert!(
+        matches!(action, FilterAction::Reject(r) if r.status == 403),
+        "a non-UTF-8 near-miss must still be blocked (fail closed)"
+    );
+}
+
+#[tokio::test]
+async fn non_ascii_rule_fails_closed_on_undecodable_header() {
+    // A Latin-1 encoding of a non-ASCII pattern (`bäd` sent as `b\xE4d`)
+    // lossily decodes to `b\u{FFFD}d`, which can never match the pattern —
+    // yet a Latin-1-lenient upstream reads the original. A non-ASCII rule
+    // meeting an undecodable value must fail closed.
+    let f = make_filter(vec![header_contains("user-agent", "b\u{e4}d")]);
+    let mut req = crate::test_utils::make_request(http::Method::GET, "/");
+    req.headers
+        .insert("user-agent", http::HeaderValue::from_bytes(b"b\xe4d").unwrap());
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+
+    let action = f.on_request(&mut ctx).await.unwrap();
+    assert!(
+        matches!(action, FilterAction::Reject(r) if r.status == 403),
+        "an undecodable value checked by a non-ASCII rule must fail closed"
+    );
+}
+
+#[tokio::test]
+async fn ascii_rule_allows_unrelated_undecodable_header() {
+    // ASCII patterns evaluate faithfully over lossily-decoded values (the
+    // replacement character can never synthesize ASCII pattern bytes), so an
+    // unrelated non-UTF-8 value must NOT be rejected — no false positives.
+    let f = make_filter(vec![header_contains("user-agent", "bad-bot")]);
+    let mut req = crate::test_utils::make_request(http::Method::GET, "/");
+    req.headers
+        .insert("user-agent", http::HeaderValue::from_bytes(b"good\xff").unwrap());
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+
+    let action = f.on_request(&mut ctx).await.unwrap();
+    assert!(
+        matches!(action, FilterAction::Continue),
+        "an ASCII rule must not false-positive on an unrelated non-UTF-8 value"
+    );
+}
+
+#[tokio::test]
 async fn header_contains_allows_non_match() {
     let f = make_filter(vec![header_contains("user-agent", "bad-bot")]);
     let mut req = crate::test_utils::make_request(http::Method::GET, "/");
