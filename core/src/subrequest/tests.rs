@@ -297,8 +297,18 @@ fn classify_timeout_io_includes_phase() {
 
 // -- Header sanitization ------------------------------------------------
 
+/// Which of `headers`' names survive the request-direction predicate.
+fn surviving_request_headers(headers: &HeaderMap) -> Vec<String> {
+    let nominated = connection_nominated_tokens(headers);
+    headers
+        .keys()
+        .filter(|name| !is_request_stripped(name, &nominated))
+        .map(|name| name.as_str().to_owned())
+        .collect()
+}
+
 #[test]
-fn strip_hop_by_hop_removes_static_and_connection_nominated() {
+fn request_predicate_strips_static_and_connection_nominated() {
     let mut headers = HeaderMap::new();
     headers.insert("connection", "x-custom, keep-alive".parse().unwrap());
     headers.insert("keep-alive", "timeout=5".parse().unwrap());
@@ -306,27 +316,37 @@ fn strip_hop_by_hop_removes_static_and_connection_nominated() {
     headers.insert("x-safe", "kept".parse().unwrap());
     headers.insert("transfer-encoding", "chunked".parse().unwrap());
 
-    strip_hop_by_hop_headers(&mut headers);
-
-    assert!(!headers.contains_key("connection"));
-    assert!(!headers.contains_key("keep-alive"));
-    assert!(!headers.contains_key("x-custom"));
-    assert!(!headers.contains_key("transfer-encoding"));
-    assert_eq!(headers.get("x-safe").unwrap(), "kept");
+    assert_eq!(
+        surviving_request_headers(&headers),
+        vec!["x-safe".to_owned()],
+        "hop-by-hop, nominated, and framing names must all be stripped"
+    );
 }
 
 #[test]
-fn strip_request_framing_removes_content_length_and_transfer_encoding() {
+fn request_predicate_strips_framing_headers() {
     let mut headers = HeaderMap::new();
     headers.insert(http::header::CONTENT_LENGTH, "42".parse().unwrap());
     headers.insert(http::header::TRANSFER_ENCODING, "chunked".parse().unwrap());
     headers.insert("x-safe", "kept".parse().unwrap());
 
-    strip_request_framing_headers(&mut headers);
+    assert_eq!(
+        surviving_request_headers(&headers),
+        vec!["x-safe".to_owned()],
+        "framing headers the executor re-computes must be stripped"
+    );
+}
 
-    assert!(!headers.contains_key(http::header::CONTENT_LENGTH));
-    assert!(!headers.contains_key(http::header::TRANSFER_ENCODING));
-    assert_eq!(headers.get("x-safe").unwrap(), "kept");
+#[test]
+fn nominated_tokens_match_case_insensitively() {
+    let mut headers = HeaderMap::new();
+    headers.insert("connection", "X-Custom".parse().unwrap());
+    headers.insert("x-custom", "value".parse().unwrap());
+    let nominated = connection_nominated_tokens(&headers);
+    assert!(
+        is_request_stripped(&"x-custom".parse().unwrap(), &nominated),
+        "a nominated name must strip regardless of the token's case"
+    );
 }
 
 // -- Helpers ------------------------------------------------------------
@@ -485,7 +505,7 @@ fn client_default_ceiling_is_absolute_max() {
 // -- Response header sanitization -----------------------------------------
 
 #[test]
-fn response_hop_by_hop_headers_are_stripped() {
+fn response_predicate_strips_hop_by_hop_headers() {
     let mut headers = HeaderMap::new();
     headers.insert("connection", "x-nominated".parse().unwrap());
     headers.insert("transfer-encoding", "chunked".parse().unwrap());
@@ -493,19 +513,23 @@ fn response_hop_by_hop_headers_are_stripped() {
     headers.insert("x-nominated", "internal".parse().unwrap());
     headers.insert("content-type", "application/json".parse().unwrap());
 
-    strip_hop_by_hop_headers(&mut headers);
-
-    assert!(!headers.contains_key("connection"));
-    assert!(!headers.contains_key("transfer-encoding"));
-    assert!(!headers.contains_key("keep-alive"));
-    assert!(!headers.contains_key("x-nominated"));
-    assert_eq!(headers.get("content-type").unwrap(), "application/json");
+    let nominated = connection_nominated_tokens(&headers);
+    let surviving: Vec<&str> = headers
+        .keys()
+        .filter(|name| !is_boundary_stripped(name, &nominated))
+        .map(http::header::HeaderName::as_str)
+        .collect();
+    assert_eq!(
+        surviving,
+        vec!["content-type"],
+        "fixed and nominated hop-by-hop names must be stripped from responses"
+    );
 }
 
 // -- Reserved header sanitization ------------------------------------------
 
 #[test]
-fn strip_reserved_removes_internal_prefixes() {
+fn predicate_strips_reserved_internal_prefixes() {
     let mut headers = HeaderMap::new();
     headers.insert("x-praxis-route", "internal".parse().unwrap());
     headers.insert("x-ext-protocol-model", "gpt-4".parse().unwrap());
@@ -513,24 +537,26 @@ fn strip_reserved_removes_internal_prefixes() {
     headers.insert("x-custom", "kept".parse().unwrap());
     headers.insert("authorization", "Bearer tok".parse().unwrap());
 
-    strip_reserved_headers(&mut headers);
-
-    assert!(!headers.contains_key("x-praxis-route"));
-    assert!(!headers.contains_key("x-ext-protocol-model"));
-    assert!(!headers.contains_key("x-ext-agent-task"));
-    assert_eq!(headers.get("x-custom").unwrap(), "kept");
-    assert_eq!(headers.get("authorization").unwrap(), "Bearer tok");
+    let mut surviving = surviving_request_headers(&headers);
+    surviving.sort();
+    assert_eq!(
+        surviving,
+        vec!["authorization".to_owned(), "x-custom".to_owned()],
+        "reserved internal prefixes must be stripped, unreserved names kept"
+    );
 }
 
 #[test]
-fn strip_reserved_is_no_op_for_safe_headers() {
+fn predicate_keeps_all_safe_headers() {
     let mut headers = HeaderMap::new();
     headers.insert("content-type", "application/json".parse().unwrap());
     headers.insert("x-request-id", "abc".parse().unwrap());
 
-    strip_reserved_headers(&mut headers);
-
-    assert_eq!(headers.len(), 2);
+    assert_eq!(
+        surviving_request_headers(&headers).len(),
+        2,
+        "safe headers must all survive the predicate"
+    );
 }
 
 // -- Connector configured_max_connections ---------------------------------

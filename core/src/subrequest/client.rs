@@ -13,8 +13,8 @@ use super::{
     body::dispose_session_abnormal,
     internals::{
         CircuitGuard, RawExchange, SUBREQUEST_HEADER_DURATION_SECONDS, SubRequestConnector, check_clean_completion,
-        clamp_peer_timeouts, classify_timeout, empty_body_needs_framing, ensure_host_header, min_timeout,
-        record_header_termination, strip_hop_by_hop_headers, strip_request_framing_headers, strip_reserved_headers,
+        clamp_peer_timeouts, classify_timeout, connection_nominated_tokens, empty_body_needs_framing,
+        ensure_host_header, is_boundary_stripped, is_request_stripped, min_timeout, record_header_termination,
     },
     types::{
         FrameworkHeaders, StreamLimits, StreamingSubResponse, SubRequest, SubRequestError, SubResponse, SubResponseBody,
@@ -138,17 +138,24 @@ impl SubRequestClient {
         let mut req_header = pingora_http::RequestHeader::build(request.method.clone(), path, None)
             .map_err(|e| SubRequestError::InvalidRequest(e.to_string()))?;
 
-        let mut sanitized = request.headers.clone();
-        strip_hop_by_hop_headers(&mut sanitized);
-        strip_request_framing_headers(&mut sanitized);
-        strip_reserved_headers(&mut sanitized);
+        // Forward the request headers in one pass — no intermediate map
+        // clone, no repeated removal passes: skip hop-by-hop (fixed and
+        // Connection-nominated), framing (re-computed below), and
+        // reserved internal names as each header streams by. Framework
+        // headers are inserted afterwards with replace semantics, as the
+        // old map-insert had.
+        let nominated = connection_nominated_tokens(&request.headers);
+        for (name, value) in &request.headers {
+            if is_request_stripped(name, &nominated) {
+                continue;
+            }
+            let _append = req_header.append_header(name.clone(), value.clone());
+        }
+        drop(nominated);
         if let Some(fw) = framework_headers {
             for (name, value) in fw.iter() {
-                sanitized.insert(name.clone(), value.clone());
+                let _insert = req_header.insert_header(name.clone(), value.clone());
             }
-        }
-        for (name, value) in &sanitized {
-            let _append = req_header.append_header(name.clone(), value.clone());
         }
         ensure_host_header(&mut req_header, &bounded_peer)?;
         if !request.body.is_empty() || empty_body_needs_framing(&request.method) {
@@ -293,14 +300,19 @@ impl SubRequestClient {
         let resp_header = session
             .response_header()
             .ok_or_else(|| SubRequestError::Io("no response header received".to_owned()))?;
-        let mut resp_headers = HeaderMap::new();
+        // Copy the response headers in one pass, sized up front. The
+        // values are already-validated `HeaderValue`s (pingora's header
+        // map stores the http crate's type), so cloning is a refcount
+        // bump — re-validating every byte through `from_bytes` was pure
+        // waste and its error arm was unreachable.
+        let nominated = connection_nominated_tokens(&resp_header.headers);
+        let mut resp_headers = HeaderMap::with_capacity(resp_header.headers.len());
         for (name, value) in &resp_header.headers {
-            if let Ok(v) = http::header::HeaderValue::from_bytes(value.as_bytes()) {
-                resp_headers.append(name.clone(), v);
+            if is_boundary_stripped(name, &nominated) {
+                continue;
             }
+            resp_headers.append(name.clone(), value.clone());
         }
-        strip_hop_by_hop_headers(&mut resp_headers);
-        strip_reserved_headers(&mut resp_headers);
 
         // -- 7. Return RawExchange --
         histogram!(SUBREQUEST_HEADER_DURATION_SECONDS).record(exchange_started.elapsed().as_secs_f64());
