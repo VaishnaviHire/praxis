@@ -3288,6 +3288,7 @@ dependencies = [
 name = "praxis-proxy-filter"
 version = "0.5.3"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "base64 0.23.1",
  "bytes",
