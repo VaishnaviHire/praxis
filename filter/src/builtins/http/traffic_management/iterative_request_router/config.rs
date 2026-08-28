@@ -85,7 +85,11 @@ pub(crate) struct IterativeRequestRouterConfig {
     /// Named steps, each with filters and transition rules.
     pub(crate) steps: Vec<StepConfig>,
 
-    /// Overall timeout in milliseconds (default 30000).
+    /// Overall timeout in milliseconds (default 30000). This is an
+    /// end-to-end deadline: a streamed final response (e.g. SSE / LLM
+    /// streaming) is also cut when the deadline expires, not only the step
+    /// exchanges — raise it for routes whose streams legitimately outlive
+    /// the default.
     #[serde(default = "default_timeout_ms")]
     pub(crate) timeout_ms: u64,
 }
