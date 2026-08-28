@@ -1034,6 +1034,23 @@ fn batch_first_skips_non_object_items() {
 }
 
 #[test]
+fn escaped_strings_hit_owned_visit_string_arms() {
+    // serde_json yields an owned String (visit_string, not the borrowed
+    // visit_str) when a JSON string carries an escape sequence. Use escaped
+    // jsonrpc/method/id so the *_string visitor arms are exercised.
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    // 2.0 unescapes to an owned "2.0"; method "a\nb"; id "x\ty" -- each
+    // carries an escape so serde_json calls visit_string, not visit_str.
+    let body = br#"{"jsonrpc":"2.0","method":"a\nb","id":"x\ty"}"#;
+    let env = parse_json_rpc_envelope(body, &config)
+        .unwrap()
+        .expect("escaped-string envelope must parse");
+    assert_eq!(env.method.as_deref(), Some("a\nb"), "escaped method captured");
+    assert_eq!(env.id.as_deref(), Some("x\ty"), "escaped id captured");
+    assert_eq!(env.id_kind, JsonRpcIdKind::String, "escaped id is a string id");
+}
+
+#[test]
 fn root_scalars_are_not_json_rpc() {
     // Exercises TopVisitor scalar arms -> RawTop::Other -> handle_non_json_rpc.
     let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
