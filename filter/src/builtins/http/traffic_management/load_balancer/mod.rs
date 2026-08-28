@@ -233,7 +233,14 @@ impl HttpFilter for LoadBalancerFilter {
         ctx.retry_policy = Some(Arc::clone(&policy));
 
         let hash_key = entry.strategy.capture_hash_key(ctx);
-        ctx.endpoint_reselector = Some(Arc::new(entry.reselector_with_policy(hash_key, policy)));
+        // The reselector is stateless config data: share one instance for
+        // the dominant no-hash-key, cluster-default-policy case instead of
+        // allocating a fresh one per request.
+        ctx.endpoint_reselector = Some(if hash_key.is_none() && Arc::ptr_eq(&policy, &entry.retry_policy) {
+            Arc::clone(entry.default_reselector())
+        } else {
+            Arc::new(entry.reselector_with_policy(hash_key, policy))
+        });
         ctx.attempted_endpoints.push(Arc::clone(&addr));
         ctx.upstream = Some(entry.build_upstream(addr, ctx));
 

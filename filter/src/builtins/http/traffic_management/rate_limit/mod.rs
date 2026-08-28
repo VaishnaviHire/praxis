@@ -208,6 +208,10 @@ pub struct RateLimitFilter {
     /// Pre-formatted burst value for the `X-RateLimit-Limit` header.
     pub(self) burst_string: String,
 
+    /// Pre-validated burst value, so the config-stable limit header
+    /// costs a refcount clone per response instead of a re-parse.
+    pub(self) burst_value: http::header::HeaderValue,
+
     /// Pre-built `X-RateLimit-*` header names, so the response path inserts
     /// them without re-validating the constant names on every response.
     pub(self) header_limit: http::header::HeaderName,
@@ -277,6 +281,7 @@ impl RateLimitFilter {
             rate: cfg.rate,
             burst,
             burst_string,
+            burst_value: http::header::HeaderValue::from(u64::from(cfg.burst)),
             // Lowercase literals: HeaderName::from_static panics on uppercase,
             // and HeaderMap stores names lowercased anyway, matching the wire
             // output of the previous from_bytes(HEADER_RATELIMIT_*) path.
@@ -315,19 +320,18 @@ impl HttpFilter for RateLimitFilter {
 
     async fn on_response(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
         let remaining = self.current_remaining(ctx.client_addr);
-        let (remaining_str, reset_str, _retry_secs) = self.rate_limit_values(remaining, ctx.time_source);
+        let (remaining_int, reset_unix, _retry_secs) = self.rate_limit_numbers(remaining, ctx.time_source);
 
         if let Some(ref mut resp) = ctx.response_header {
-            for (name, value) in [
-                (&self.header_limit, self.burst_string.as_str()),
-                (&self.header_remaining, remaining_str.as_str()),
-                (&self.header_reset, reset_str.as_str()),
-            ] {
-                if let Ok(hv) = value.parse() {
-                    resp.headers.insert(name, hv);
-                    ctx.response_headers_modified = true;
-                }
-            }
+            // The limit value is config-stable and pre-validated; the
+            // numeric values convert straight to HeaderValue with no
+            // intermediate String and no re-validation byte scan.
+            resp.headers.insert(&self.header_limit, self.burst_value.clone());
+            resp.headers
+                .insert(&self.header_remaining, http::header::HeaderValue::from(remaining_int));
+            resp.headers
+                .insert(&self.header_reset, http::header::HeaderValue::from(reset_unix));
+            ctx.response_headers_modified = true;
         }
 
         Ok(FilterAction::Continue)

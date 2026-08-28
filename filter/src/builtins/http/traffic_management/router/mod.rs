@@ -408,11 +408,37 @@ fn resolve_routes(routes: Vec<RouterRouteConfig>) -> Vec<ResolvedRoute> {
 }
 
 /// Exact → bare path; Prefix → `path*`.
+///
+/// Labels are interned to `&'static str` so the 2-3 `SharedString` clones
+/// each routed request makes (context propagation, metrics record) are
+/// pointer copies instead of deep String clones.
 fn path_match_metrics_label(path_match: &PathMatch) -> ::metrics::SharedString {
     match path_match {
-        PathMatch::Exact { path } => ::metrics::SharedString::from(path.clone()),
-        PathMatch::Prefix { path_prefix } => ::metrics::SharedString::from(format!("{path_prefix}*")),
+        PathMatch::Exact { path } => ::metrics::SharedString::const_str(intern_route_label(path)),
+        PathMatch::Prefix { path_prefix } => {
+            ::metrics::SharedString::const_str(intern_route_label(&format!("{path_prefix}*")))
+        },
     }
+}
+
+/// Process-global route-label intern table.
+///
+/// Entries deliberately leak: the set is bounded by the distinct route
+/// labels ever configured, and looking up before leaking keeps reloads
+/// of unchanged labels from leaking twice.
+static ROUTE_LABELS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<&'static str>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// Intern `label`, returning a `'static` copy shared across reloads.
+#[expect(clippy::expect_used, reason = "poisoned mutex is unrecoverable")]
+fn intern_route_label(label: &str) -> &'static str {
+    let mut labels = ROUTE_LABELS.lock().expect("route label intern lock poisoned");
+    if let Some(existing) = labels.get(label) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(label.to_owned().into_boxed_str());
+    labels.insert(leaked);
+    leaked
 }
 
 #[async_trait]

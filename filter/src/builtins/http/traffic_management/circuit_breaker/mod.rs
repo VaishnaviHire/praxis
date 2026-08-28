@@ -225,11 +225,14 @@ impl HttpFilter for CircuitBreakerFilter {
     }
 
     async fn on_request(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
-        let Some(cluster_name) = ctx.cluster.as_deref() else {
+        // Clone the Arc, not the string: the token retains the cluster
+        // name, and a refcount bump keys the response-phase lookup
+        // identically.
+        let Some(cluster_name) = ctx.cluster.clone() else {
             return Ok(FilterAction::Continue);
         };
 
-        let Some(breaker) = self.breakers.get(cluster_name) else {
+        let Some(breaker) = self.breakers.get(&*cluster_name) else {
             return Ok(FilterAction::Continue);
         };
 
@@ -237,7 +240,7 @@ impl HttpFilter for CircuitBreakerFilter {
             CircuitCheck::Allowed(token) => {
                 debug!(cluster = %cluster_name, "circuit closed/half-open, allowing request");
                 ctx.insert_filter_state(ActiveCircuitToken {
-                    cluster: Arc::from(cluster_name),
+                    cluster: cluster_name,
                     token,
                 });
                 Ok(FilterAction::Continue)

@@ -54,6 +54,12 @@ pub(super) struct ClusterEntry {
     /// re-allocating the merged policy each time; holding the route
     /// [`Arc`] both keys the cache and pins its address against reuse.
     merged_retry_memo: ArcSwap<Option<(Arc<RetryPolicy>, Arc<RetryPolicy>)>>,
+
+    /// Lazily built reselector for the common case — no hash key, no
+    /// route retry override. The reselector is stateless config data,
+    /// so one shared instance serves every such request instead of a
+    /// fresh allocation per request.
+    default_reselector: std::sync::OnceLock<Arc<EndpointReselector>>,
 }
 
 impl ClusterEntry {
@@ -103,6 +109,13 @@ impl ClusterEntry {
         self.merged_retry_memo
             .store(Arc::new(Some((Arc::clone(route), Arc::clone(&merged)))));
         merged
+    }
+
+    /// The shared reselector for requests with no hash key and the
+    /// cluster's own retry policy (the dominant case).
+    pub(super) fn default_reselector(&self) -> &Arc<EndpointReselector> {
+        self.default_reselector
+            .get_or_init(|| Arc::new(self.reselector_with_policy(None, Arc::clone(&self.retry_policy))))
     }
 
     /// Capture a reselector with an already-merged retry policy.
@@ -164,6 +177,7 @@ pub(super) fn build_cluster_entry(cluster: &Cluster) -> Result<ClusterEntry, Fil
         retry_policy,
         retry_state,
         merged_retry_memo: ArcSwap::from_pointee(None),
+        default_reselector: std::sync::OnceLock::new(),
     })
 }
 

@@ -50,6 +50,30 @@ impl RateLimitFilter {
         (format!("{remaining_int}"), format!("{reset_unix}"), retry_secs)
     }
 
+    /// Numeric form of [`rate_limit_values`], for the hot response path:
+    /// `(remaining, reset_unix, retry_secs)` with no String staging.
+    ///
+    /// [`rate_limit_values`]: Self::rate_limit_values
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "remaining is clamped non-negative and bounded by burst"
+    )]
+    pub(super) fn rate_limit_numbers(
+        &self,
+        remaining: f64,
+        time_source: &dyn praxis_core::time::TimeSource,
+    ) -> (u64, u64, u64) {
+        let retry_secs = if remaining < 1.0 {
+            ((1.0 - remaining) / self.rate).ceil().max(1.0) as u64
+        } else {
+            0
+        };
+        let now_unix = time_source.now().as_secs();
+        let reset_unix = now_unix.saturating_add(retry_secs);
+        (remaining.max(0.0) as u64, reset_unix, retry_secs)
+    }
+
     /// Build rate limit headers and compute the retry-after value.
     ///
     /// Returns the header list and the `Retry-After` seconds. Used by the
