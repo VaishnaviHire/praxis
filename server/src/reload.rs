@@ -197,11 +197,12 @@ fn carry_over_health_state(
         return;
     };
 
+    let old_by_name: std::collections::HashMap<&str, &praxis_core::config::Cluster> =
+        old_config.clusters.iter().map(|c| (c.name.as_ref(), c)).collect();
     let mut carried: usize = 0;
     for cluster in &new_config.clusters {
-        let unchanged_check = old_config.clusters.iter().any(|old_c| {
-            old_c.name == cluster.name
-                && serde_yaml::to_string(&old_c.health_check).ok() == serde_yaml::to_string(&cluster.health_check).ok()
+        let unchanged_check = old_by_name.get(cluster.name.as_ref()).is_some_and(|old_c| {
+            serde_yaml::to_string(&old_c.health_check).ok() == serde_yaml::to_string(&cluster.health_check).ok()
         });
         if !unchanged_check {
             continue;

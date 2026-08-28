@@ -135,7 +135,7 @@ pub fn run_server_with_registry(
             health_registry: Some(health_registry),
             kv_registry: Some(state.kv_stores.clone()),
             pipelines: Some((Arc::clone(&state.pipelines), Arc::clone(&state.listener_meta))),
-            log_level: log_level.clone(),
+            log_level,
             verbose: config.admin.verbose,
         },
         prometheus_recorder,

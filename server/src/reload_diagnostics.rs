@@ -25,6 +25,15 @@ pub(crate) fn log_restart_required_changes(old: &Config, new: &Config) {
     detect_logging_change(old, new);
 }
 
+/// Index a config's listeners by name for O(1) old/new pairing.
+///
+/// Each detector scans `new.listeners` and pairs by name; a linear
+/// `find` per listener would make every detector quadratic in
+/// listener count on each reload.
+fn listeners_by_name(config: &Config) -> std::collections::HashMap<&str, &praxis_core::config::Listener> {
+    config.listeners.iter().map(|l| (l.name.as_str(), l)).collect()
+}
+
 /// Detect listener additions, removals, and address rebinds.
 pub(crate) fn detect_listener_topology_changes(old: &Config, new: &Config) {
     let old_names: std::collections::HashSet<&str> = old.listeners.iter().map(|l| l.name.as_str()).collect();
@@ -43,8 +52,9 @@ pub(crate) fn detect_listener_topology_changes(old: &Config, new: &Config) {
         );
     }
 
+    let old_by_name = listeners_by_name(old);
     for new_l in &new.listeners {
-        if let Some(old_l) = old.listeners.iter().find(|l| l.name == new_l.name)
+        if let Some(old_l) = old_by_name.get(new_l.name.as_str())
             && old_l.address != new_l.address
         {
             warn!(
@@ -59,8 +69,9 @@ pub(crate) fn detect_listener_topology_changes(old: &Config, new: &Config) {
 
 /// Detect protocol changes (e.g. HTTP to TCP).
 pub(crate) fn detect_protocol_changes(old: &Config, new: &Config) {
+    let old_by_name = listeners_by_name(old);
     for new_l in &new.listeners {
-        if let Some(old_l) = old.listeners.iter().find(|l| l.name == new_l.name)
+        if let Some(old_l) = old_by_name.get(new_l.name.as_str())
             && old_l.protocol != new_l.protocol
         {
             warn!(
@@ -78,8 +89,9 @@ pub(crate) fn detect_compression_additions(old: &Config, new: &Config) {
     let old_chains_with_compression = find_chains_with_compression(old);
     let new_chains_with_compression = find_chains_with_compression(new);
 
+    let old_by_name = listeners_by_name(old);
     for new_l in &new.listeners {
-        if let Some(old_l) = old.listeners.iter().find(|l| l.name == new_l.name) {
+        if let Some(old_l) = old_by_name.get(new_l.name.as_str()) {
             let old_had_compression = old_l
                 .filter_chains
                 .iter()
@@ -112,8 +124,9 @@ pub(crate) fn find_chains_with_compression(config: &Config) -> std::collections:
 
 /// Detect TLS enable/disable toggles and in-block TLS changes.
 pub(crate) fn detect_tls_toggles(old: &Config, new: &Config) {
+    let old_by_name = listeners_by_name(old);
     for new_l in &new.listeners {
-        if let Some(old_l) = old.listeners.iter().find(|l| l.name == new_l.name) {
+        if let Some(old_l) = old_by_name.get(new_l.name.as_str()) {
             match (&old_l.tls, &new_l.tls) {
                 (None, Some(_)) => {
                     warn!(

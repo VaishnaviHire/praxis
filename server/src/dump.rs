@@ -133,23 +133,22 @@ fn redact_credential_values(config: &mut serde_yaml::Value) {
     let Some(mapping) = config.as_mapping_mut() else {
         return;
     };
-    let clusters_key = serde_yaml::Value::String("clusters".to_owned());
-    let Some(clusters) = mapping.get_mut(&clusters_key) else {
+    let Some(clusters) = mapping.get_mut("clusters") else {
         return;
     };
     let Some(seq) = clusters.as_sequence_mut() else {
         return;
     };
-    let value_key = serde_yaml::Value::String("value".to_owned());
-    let env_var_key = serde_yaml::Value::String("env_var".to_owned());
+    // Probe with `&str` keys; owned key `Value`s are built only on the
+    // rare hit path where `insert` needs them.
     let redacted = serde_yaml::Value::String("[REDACTED]".to_owned());
     for entry in seq {
         if let Some(entry_map) = entry.as_mapping_mut() {
-            if entry_map.contains_key(&value_key) {
-                entry_map.insert(value_key.clone(), redacted.clone());
+            if entry_map.contains_key("value") {
+                entry_map.insert(serde_yaml::Value::String("value".to_owned()), redacted.clone());
             }
-            if entry_map.contains_key(&env_var_key) {
-                entry_map.insert(env_var_key.clone(), redacted.clone());
+            if entry_map.contains_key("env_var") {
+                entry_map.insert(serde_yaml::Value::String("env_var".to_owned()), redacted.clone());
             }
         }
     }
@@ -168,10 +167,11 @@ fn redact_sensitive_keys(value: &mut serde_yaml::Value) {
         return;
     };
     let redacted = serde_yaml::Value::String("[REDACTED]".to_owned());
+    // Probe with `&str` keys; an owned key `Value` per candidate name per
+    // node would allocate ~14 strings per mapping visited.
     for key_name in SENSITIVE_FIELD_NAMES {
-        let key = serde_yaml::Value::String((*key_name).to_owned());
-        if mapping.contains_key(&key) {
-            mapping.insert(key, redacted.clone());
+        if mapping.contains_key(*key_name) {
+            mapping.insert(serde_yaml::Value::String((*key_name).to_owned()), redacted.clone());
         }
     }
     // Redact the `value` of a `{name, value}` header pair when `name` is a
@@ -207,18 +207,16 @@ fn redact_sensitive_keys(value: &mut serde_yaml::Value) {
 /// a fixed allow-list cannot enumerate. Over-redaction of a benign header is a
 /// harmless dump artifact; leaking a token is not.
 fn redact_credential_header_value(mapping: &mut serde_yaml::Mapping, redacted: &serde_yaml::Value) {
-    let name_key = serde_yaml::Value::String("name".to_owned());
-    let value_key = serde_yaml::Value::String("value".to_owned());
     let is_credential_header = mapping
-        .get(&name_key)
+        .get("name")
         .and_then(serde_yaml::Value::as_str)
         .map(str::to_ascii_lowercase)
         .is_some_and(|name| {
             CREDENTIAL_HEADER_NAMES.contains(&name.as_str())
                 || SENSITIVE_HEADER_SUBSTRINGS.iter().any(|frag| name.contains(frag))
         });
-    if is_credential_header && mapping.contains_key(&value_key) {
-        mapping.insert(value_key, redacted.clone());
+    if is_credential_header && mapping.contains_key("value") {
+        mapping.insert(serde_yaml::Value::String("value".to_owned()), redacted.clone());
     }
 }
 

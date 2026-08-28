@@ -213,10 +213,11 @@ fn warn_client_cert_keys_in_entry(chain: &str, entry: &praxis_core::config::Filt
 fn warn_client_cert_keys_in_value(chain: &str, value: &serde_yaml::Value) {
     match value {
         serde_yaml::Value::Mapping(map) => {
-            if let Some(serde_yaml::Value::Mapping(client_cert)) =
-                map.get(serde_yaml::Value::String("client_cert".to_owned()))
-                && let Some(serde_yaml::Value::String(key_path)) =
-                    client_cert.get(serde_yaml::Value::String("key_path".to_owned()))
+            // `&str` indexes the mapping directly; building owned
+            // `Value::String` keys would allocate twice per YAML node
+            // visited on every reload.
+            if let Some(serde_yaml::Value::Mapping(client_cert)) = map.get("client_cert")
+                && let Some(serde_yaml::Value::String(key_path)) = client_cert.get("key_path")
             {
                 warn_if_key_world_readable("cluster", chain, key_path);
             }

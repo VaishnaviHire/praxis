@@ -144,7 +144,7 @@ async fn watch_loop(params: WatcherParams) {
         watched_directories = watch_dirs.len(),
         "config file watcher started",
     );
-    run_event_loop(&mut rx, &params).await;
+    run_event_loop(&mut rx, params).await;
 }
 
 /// How long remains before another reload attempt is allowed.
@@ -184,8 +184,11 @@ async fn sleep_or_pending(delay: Option<Duration>) {
 
 /// Process filesystem events until shutdown is requested.
 #[expect(clippy::too_many_lines, reason = "startup pre-check and reload orchestration")]
-async fn run_event_loop(rx: &mut mpsc::Receiver<()>, params: &WatcherParams) {
-    let mut current_config = params.initial_config.clone();
+async fn run_event_loop(rx: &mut mpsc::Receiver<()>, params: WatcherParams) {
+    // Move the initial config into the working copy: it has no other
+    // reader, and cloning it would pin a second full config tree in
+    // memory for the watcher's (i.e. the process's) lifetime.
+    let mut current_config = params.initial_config;
     let mut content_hash = params.initial_content_hash;
     let mut consecutive_failures: u32 = 0;
     let mut last_failure: Option<Instant> = None;
@@ -401,7 +404,10 @@ struct PathFilter {
     original: PathBuf,
     /// Documents referenced by the config, in every spelling a platform might
     /// report: as given, made absolute, and canonicalized.
-    referenced: Vec<PathBuf>,
+    ///
+    /// A set rather than a list: `matches` runs in the notify callback on
+    /// every raw event in every watched directory, before debouncing.
+    referenced: std::collections::HashSet<PathBuf>,
 }
 
 impl PathFilter {
@@ -420,22 +426,20 @@ impl PathFilter {
         // Each referenced document is matched in every spelling a platform might
         // report, the same way the main config is: macOS reports canonical paths,
         // Linux reports lexical ones.
-        let mut expanded = Vec::with_capacity(referenced.len() * 3);
+        let mut expanded = std::collections::HashSet::with_capacity(referenced.len() * 3);
         for path in referenced {
-            expanded.push(path.clone());
+            expanded.insert(path.clone());
             if let Ok(c) = std::fs::canonicalize(path) {
-                expanded.push(c);
+                expanded.insert(c);
             }
-            // An absolute path is already covered by the push above; only a
+            // An absolute path is already covered by the insert above; only a
             // relative one needs its cwd-joined spelling.
             if !path.is_absolute()
                 && let Ok(cwd) = std::env::current_dir()
             {
-                expanded.push(cwd.join(path));
+                expanded.insert(cwd.join(path));
             }
         }
-        expanded.sort();
-        expanded.dedup();
 
         Self {
             absolute,
@@ -450,10 +454,7 @@ impl PathFilter {
     fn matches(&self, event: &notify::Event) -> bool {
         self.accept_all
             || event.paths.iter().any(|p| {
-                p == &self.canonical
-                    || p == &self.absolute
-                    || p == &self.original
-                    || self.referenced.iter().any(|r| r == p)
+                p == &self.canonical || p == &self.absolute || p == &self.original || self.referenced.contains(p)
             })
     }
 }
