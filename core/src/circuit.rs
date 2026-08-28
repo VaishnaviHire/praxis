@@ -49,8 +49,14 @@ pub enum CircuitCheck {
 ///
 /// Pass to [`CircuitBreaker::record_success`] or
 /// [`CircuitBreaker::record_failure`] after the exchange completes.
-/// Dropping without recording is a deliberate no-op (used for local
-/// construction errors that are not peer faults).
+///
+/// Every acquired token holds an in-flight slot that only
+/// `record_success`/`record_failure` release. Dropping a token without
+/// recording therefore leaks its in-flight slot for the breaker's
+/// lifetime, which keeps the breaker from ever being evicted; callers
+/// must record an outcome (the sub-request path wraps the token in a
+/// guard that records failure on drop). A no-op drop is acceptable only
+/// where the breaker is discarded in the same step.
 pub struct CircuitToken {
     /// The generation at which this token was issued.
     generation: u64,
@@ -221,6 +227,10 @@ impl CircuitBreaker {
     #[expect(clippy::expect_used, reason = "poisoned mutex is unrecoverable")]
     pub fn try_acquire(&self) -> CircuitCheck {
         let mut inner = self.inner.lock().expect("circuit breaker lock poisoned");
+        // Every acquisition attempt is traffic reaching this peer's breaker,
+        // rejections included — a rejected stream must keep the breaker from
+        // looking idle to the eviction sweep.
+        inner.last_activity = Instant::now();
         match inner.state {
             CircuitState::Closed => inner.issue_token(),
             CircuitState::Open => inner.try_open_to_half_open(&self.config),
@@ -293,8 +303,26 @@ impl CircuitBreaker {
         }
     }
 
-    /// Whether the breaker is `Closed` with no failures, no request
-    /// in flight, and idle for at least `idle_threshold`.
+    /// Whether the breaker has no request in flight and has been idle for
+    /// at least `idle_threshold`, and is therefore safe to evict.
+    ///
+    /// Eviction is keyed on idleness and in-flight count, not on residual
+    /// failures: a breaker with a leftover failure streak, or one left
+    /// `Open`/`HalfOpen` past its recovery window, that has seen no traffic
+    /// for the threshold is safe to drop, because a recreated breaker
+    /// starts `Closed` — the same admission decision an elapsed recovery
+    /// window would produce once traffic resumes. Requiring `Closed` with
+    /// zero failures instead pinned every such breaker forever, so the
+    /// registry grew without bound under upstream DNS churn plus failures.
+    ///
+    /// One state exemption: an `Open` breaker still inside its recovery
+    /// window is never idle. Callers fast-fail on `precheck` without
+    /// reaching `try_acquire`, so an Open breaker rejecting a steady
+    /// request stream records no activity; evicting it mid-window would
+    /// recreate a `Closed` breaker that admits the full stream (not a
+    /// single half-open probe) until the failure threshold re-opens it.
+    /// The `in_flight == 0` guard is retained: an entry with an
+    /// outstanding request must never be evicted.
     ///
     /// # Panics
     ///
@@ -302,10 +330,11 @@ impl CircuitBreaker {
     #[expect(clippy::expect_used, reason = "poisoned mutex is unrecoverable")]
     fn is_idle(&self, idle_threshold: Duration) -> bool {
         let inner = self.inner.lock().expect("circuit breaker lock poisoned");
-        inner.state == CircuitState::Closed
-            && inner.consecutive_failures == 0
-            && inner.in_flight == 0
-            && inner.last_activity.elapsed() >= idle_threshold
+        let open_in_recovery_window = inner.state == CircuitState::Open
+            && inner
+                .opened_at
+                .is_some_and(|t| t.elapsed() < self.config.recovery_window);
+        inner.in_flight == 0 && !open_in_recovery_window && inner.last_activity.elapsed() >= idle_threshold
     }
 
     /// Returns the current state without side effects.
@@ -772,18 +801,57 @@ mod tests {
     }
 
     #[test]
-    fn evict_idle_preserves_active_entries() {
+    fn evict_idle_preserves_recently_active_entries() {
+        // A just-touched breaker is never idle, whatever its state.
         let registry = CircuitBreakerRegistry::new(config(1, 9_999_000, 9_999_000));
         let a = peer("127.0.0.1:8080");
-        let b = peer("127.0.0.1:9090");
         let ta = registry.try_acquire(a.clone());
         record_registry_failure(&registry, &a, ta);
-        let tb = registry.try_acquire(b.clone());
-        record_registry_success(&registry, &b, tb);
-        let evicted = registry.evict_idle(Duration::ZERO);
-        assert_eq!(evicted, 1, "only the healthy idle peer should be evicted");
+        assert!(!registry.precheck(&a), "breaker should be open after the failure");
+
+        let evicted = registry.evict_idle(Duration::from_secs(9_999));
+        assert_eq!(evicted, 0, "a recently-active breaker must be preserved");
         assert_eq!(registry.len(), 1);
-        assert!(!registry.precheck(&a), "open circuit should survive eviction");
+    }
+
+    #[test]
+    fn evict_idle_preserves_open_breaker_inside_recovery_window() {
+        // Callers fast-fail on precheck without reaching try_acquire, so an
+        // Open breaker rejecting a steady stream records no activity. It must
+        // survive its recovery window anyway: evicting it would recreate a
+        // Closed breaker that admits the full stream instead of a single
+        // half-open probe.
+        let registry = CircuitBreakerRegistry::new(config(1, 9_999_000, 9_999_000));
+        let a = peer("127.0.0.1:8080");
+        let ta = registry.try_acquire(a.clone());
+        record_registry_failure(&registry, &a, ta);
+        assert!(!registry.precheck(&a), "breaker should be open after the failure");
+
+        let evicted = registry.evict_idle(Duration::ZERO);
+        assert_eq!(
+            evicted, 0,
+            "an Open breaker inside its recovery window must not be evicted even when idle"
+        );
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn evict_idle_removes_open_breaker_past_recovery_window() {
+        // Once the recovery window has elapsed, an idle Open breaker is safe
+        // to evict: a recreated Closed breaker makes the same admission
+        // decision an elapsed window would (admit and re-count failures), and
+        // keeping it would leak registry entries forever under peer churn.
+        let registry = CircuitBreakerRegistry::new(config(1, 0, 9_999_000));
+        let a = peer("127.0.0.1:8080");
+        let ta = registry.try_acquire(a.clone());
+        record_registry_failure(&registry, &a, ta);
+
+        let evicted = registry.evict_idle(Duration::ZERO);
+        assert_eq!(
+            evicted, 1,
+            "an idle Open breaker past its recovery window is evictable"
+        );
+        assert_eq!(registry.len(), 0);
     }
 
     #[test]
@@ -801,8 +869,14 @@ mod tests {
         assert_eq!(evicted, 0, "an in-flight breaker must not be evicted");
         assert_eq!(registry.len(), 1);
 
+        // With the request completed and no other in-flight request, the
+        // now-idle breaker is evictable regardless of its open state.
         record_registry_failure(&registry, &a, ta);
-        assert_eq!(registry.evict_idle(Duration::ZERO), 0, "open breaker survives");
+        assert_eq!(
+            registry.evict_idle(Duration::ZERO),
+            1,
+            "a completed, idle open breaker is evictable"
+        );
     }
 
     // --- In-flight tracking ---
