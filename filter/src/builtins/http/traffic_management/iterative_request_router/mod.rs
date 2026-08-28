@@ -555,9 +555,19 @@ impl IterativeRequestRouterFilter {
 
                         let streaming_result = match peer {
                             Ok(peer) => {
+                                // Cap the streamed response by the remaining overall
+                                // deadline. Without an absolute lifetime, a slow-drip
+                                // upstream (one byte per idle window) would hold the
+                                // upstream session and its admission permit far past
+                                // timeout_ms, starving further sub-requests.
                                 let limits = StreamLimits {
                                     idle_timeout: STREAMING_IDLE_TIMEOUT,
-                                    max_stream_duration: None,
+                                    max_stream_duration: Some(
+                                        state
+                                            .deadline
+                                            .checked_duration_since(Instant::now())
+                                            .unwrap_or(Duration::ZERO),
+                                    ),
                                     max_total_bytes: None,
                                 };
                                 Box::pin(client.send_streaming(
