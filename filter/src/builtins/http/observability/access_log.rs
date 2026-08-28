@@ -318,6 +318,13 @@ impl AccessLogFilter {
         if access_record_already_emitted(ctx) {
             return;
         }
+        // Skip all per-request record work when the access-log level is
+        // disabled: the info! callsites below would discard the output, but
+        // the duration sampling, condition evaluation, and record formatting
+        // run regardless unless gated here.
+        if !tracing::enabled!(tracing::Level::INFO) {
+            return;
+        }
         // Sample the duration once so the emit-time condition and the logged
         // value can never disagree around the min_duration_ms boundary.
         let duration_ms = truncate_u128(ctx.request_start.elapsed().as_millis());
@@ -1534,6 +1541,28 @@ conditions:
         tracing::subscriber::with_default(subscriber, f);
         let bytes = buffer.0.lock().expect("buffer lock").clone();
         String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    #[test]
+    fn no_record_work_when_info_level_disabled() {
+        // With the access-log level disabled, maybe_emit must return before
+        // building the record. The emitted-marker is the observable proxy: the
+        // old code always marked (after a discarded info!), the guard returns
+        // before marking.
+        let yaml: serde_yaml::Value = serde_yaml::from_str("fields: [method, path, status]").unwrap();
+        let filter = test_filter(&yaml);
+        let req = crate::test_utils::make_request(http::Method::GET, "/api/thing");
+        let mut ctx = crate::test_utils::make_filter_context(&req);
+
+        let subscriber = tracing_subscriber::fmt().with_max_level(tracing::Level::WARN).finish();
+        tracing::subscriber::with_default(subscriber, || {
+            filter.maybe_emit(&mut ctx, 200, None);
+        });
+
+        assert!(
+            !access_record_already_emitted(&ctx),
+            "when info is disabled, maybe_emit must skip all work (no marker set)"
+        );
     }
 
     #[test]
