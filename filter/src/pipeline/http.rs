@@ -90,7 +90,7 @@ impl FilterPipeline {
                 },
                 HeaderFilterOutcome::TerminalResponse(terminal) => {
                     ctx.executed_filter_indices[idx] = true;
-                    return Ok(FilterAction::TerminalResponse(Box::new(terminal)));
+                    return Ok(FilterAction::TerminalResponse(terminal));
                 },
                 HeaderFilterOutcome::StreamingTerminalResponse(terminal) => {
                     ctx.executed_filter_indices[idx] = true;
@@ -214,7 +214,9 @@ impl FilterPipeline {
             if !self.request_body_access_by_idx.get(idx).copied().unwrap_or(true) {
                 continue;
             }
-            let Some(http_filter) = as_request_body_filter(&pf.filter, &pf.conditions, ctx.request) else {
+            let Some(http_filter) =
+                as_request_body_filter(&pf.filter, &pf.conditions, ctx.request, request_phase_tracked)
+            else {
                 continue;
             };
             ctx.current_filter_id = Some(pf.filter_id);

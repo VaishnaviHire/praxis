@@ -47,10 +47,17 @@ pub(super) fn released_or_continue(released: bool) -> FilterAction {
 }
 
 /// Extract an HTTP filter eligible for request body processing.
+///
+/// `conditions_resolved` says the request phase already evaluated this
+/// filter's conditions (a skipped filter is unmarked in
+/// `executed_filter_indices` and filtered out before this call), so the
+/// per-chunk re-walk of path/method/header conditions is skipped; the
+/// untracked pre-read path still evaluates them here.
 pub(super) fn as_request_body_filter<'a>(
     filter: &'a AnyFilter,
     conditions: &[praxis_core::config::Condition],
     request: &crate::context::Request,
+    conditions_resolved: bool,
 ) -> Option<&'a dyn crate::filter::HttpFilter> {
     let http_filter = match filter {
         AnyFilter::Http(f) => f.as_ref(),
@@ -59,7 +66,7 @@ pub(super) fn as_request_body_filter<'a>(
     if http_filter.request_body_access() == BodyAccess::None {
         return None;
     }
-    if !should_execute(conditions, request) {
+    if !conditions_resolved && !should_execute(conditions, request) {
         trace!(filter = http_filter.name(), "body hook skipped by conditions");
         return None;
     }
@@ -182,7 +189,9 @@ pub(super) enum HeaderFilterOutcome {
     Rejected(Rejection),
 
     /// Filter produced a complete terminal response (request phase only).
-    TerminalResponse(crate::actions::TerminalResponse),
+    /// Boxed end-to-end so the ~100-byte payload is neither unboxed here
+    /// nor re-boxed by the caller.
+    TerminalResponse(Box<crate::actions::TerminalResponse>),
 
     /// Filter produced a streaming terminal response (request phase only).
     StreamingTerminalResponse(Box<crate::actions::StreamingTerminalResponse>),
@@ -205,7 +214,7 @@ pub(super) async fn run_request_filter(
     );
     let request_result = async {
         trace!("on_request");
-        if metrics_enabled {
+        let result = if metrics_enabled {
             let start = std::time::Instant::now();
             let result = http_filter.on_request(ctx).await;
             record_filter_duration(
@@ -217,11 +226,14 @@ pub(super) async fn run_request_filter(
             result
         } else {
             http_filter.on_request(ctx).await
-        }
+        };
+        // Recording from inside the instrumented future spares the span
+        // clone (a subscriber clone_span/try_close pair per hook).
+        record_filter_result(&tracing::Span::current(), &result);
+        result
     }
-    .instrument(filter_span.clone())
+    .instrument(filter_span)
     .await;
-    record_filter_result(&filter_span, &request_result);
     match request_result {
         Ok(FilterAction::Continue | FilterAction::Release | FilterAction::BodyDone) => {
             Ok(HeaderFilterOutcome::Continue)
@@ -240,7 +252,7 @@ pub(super) async fn run_request_filter(
                 status = terminal.status,
                 "filter produced terminal response"
             );
-            Ok(HeaderFilterOutcome::TerminalResponse(*terminal))
+            Ok(HeaderFilterOutcome::TerminalResponse(terminal))
         },
         Ok(FilterAction::StreamingTerminalResponse(terminal)) => {
             debug!(
@@ -276,7 +288,7 @@ pub(super) async fn run_request_body_filter(
     );
     let body_result = async {
         trace!("on_request_body");
-        if metrics_enabled {
+        let result = if metrics_enabled {
             let start = std::time::Instant::now();
             let result = http_filter.on_request_body(ctx, body, end_of_stream).await;
             record_filter_duration(
@@ -288,11 +300,12 @@ pub(super) async fn run_request_body_filter(
             result
         } else {
             http_filter.on_request_body(ctx, body, end_of_stream).await
-        }
+        };
+        record_filter_result(&tracing::Span::current(), &result);
+        result
     }
-    .instrument(filter_span.clone())
+    .instrument(filter_span)
     .await;
-    record_filter_result(&filter_span, &body_result);
     dispatch_body_result(body_result, http_filter.name(), "request body", failure_mode)
 }
 
@@ -362,7 +375,7 @@ pub(super) async fn run_response_filter(
     );
     let response_result = async {
         trace!("on_response");
-        if metrics_enabled {
+        let result = if metrics_enabled {
             let start = std::time::Instant::now();
             let result = http_filter.on_response(ctx).await;
             record_filter_duration(
@@ -374,11 +387,12 @@ pub(super) async fn run_response_filter(
             result
         } else {
             http_filter.on_response(ctx).await
-        }
+        };
+        record_filter_result(&tracing::Span::current(), &result);
+        result
     }
-    .instrument(filter_span.clone())
+    .instrument(filter_span)
     .await;
-    record_filter_result(&filter_span, &response_result);
     match response_result {
         Ok(
             FilterAction::Continue
