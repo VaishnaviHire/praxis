@@ -231,8 +231,8 @@ fn quote_forwarded_value(value: &str) -> String {
     out
 }
 
-/// [`quote_forwarded_value`], writing straight into the caller's buffer
-/// so the header-build path stages no intermediate String.
+/// Append `value` to `out` as an RFC 7239 quoted-string, backslash-escaping
+/// embedded `"` and `\`.
 fn write_quoted_forwarded_value(out: &mut String, value: &str) {
     out.push('"');
     for ch in value.chars() {

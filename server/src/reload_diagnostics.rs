@@ -93,7 +93,8 @@ pub(crate) fn detect_compression_additions(old: &Config, new: &Config) {
     detect_compression_additions_with(old, new, &listeners_by_name(old));
 }
 
-/// [`detect_compression_additions`] over a prebuilt name index.
+/// Detect compression added to a previously uncompressed listener, using a
+/// prebuilt index of the old listeners by name.
 fn detect_compression_additions_with(old: &Config, new: &Config, old_by_name: &ListenersByName<'_>) {
     let old_chains_with_compression = find_chains_with_compression(old);
     let new_chains_with_compression = find_chains_with_compression(new);
@@ -136,7 +137,8 @@ pub(crate) fn detect_tls_toggles(old: &Config, new: &Config) {
     detect_tls_toggles_with(new, &listeners_by_name(old));
 }
 
-/// [`detect_tls_toggles`] over a prebuilt name index.
+/// Detect TLS enable/disable toggles and in-block TLS changes, using a
+/// prebuilt index of the old listeners by name.
 fn detect_tls_toggles_with(new: &Config, old_by_name: &ListenersByName<'_>) {
     for new_l in &new.listeners {
         if let Some(old_l) = old_by_name.get(new_l.name.as_str()) {

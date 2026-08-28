@@ -20,14 +20,6 @@ use ppe::praxis_policy_core::cmf::{
 // JSON-RPC id extraction
 // -----------------------------------------------------------------------------
 
-/// Read the JSON-RPC `id` field as a string for use as a CMF
-/// correlation id. JSON-RPC permits string or numeric ids; we
-/// stringify either to a single canonical key. Returns an empty
-/// string when the body is missing or malformed — the correlation
-/// id isn't load-bearing for policy, only for audit linkage.
-///
-/// Delegates to [`json_rpc_id_value`] so the body is parsed by a single
-/// implementation rather than two independent `from_slice` calls.
 /// A JSON-RPC body parsed once per filter phase.
 ///
 /// The request- and response-phase paths each needed the body's `id`
