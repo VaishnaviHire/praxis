@@ -2518,6 +2518,7 @@ async fn streaming_body_maps_unclean_close_to_io_error() {
 }
 
 #[tokio::test]
+#[expect(clippy::too_many_lines, reason = "test setup and validation")]
 async fn interim_1xx_response_is_skipped_not_panicked() {
     use pingora_core::upstreams::peer::HttpPeer;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -2558,6 +2559,9 @@ async fn interim_1xx_response_is_skipped_not_panicked() {
         .expect("interim 1xx must be skipped and the final response returned");
     backend.abort();
 
-    assert_eq!(response.status, 200, "the final status, not the interim 103, must be returned");
+    assert_eq!(
+        response.status, 200,
+        "the final status, not the interim 103, must be returned"
+    );
     assert_eq!(response.body.as_ref(), b"hello", "the final response body must be read");
 }

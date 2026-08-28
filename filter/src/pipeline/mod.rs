@@ -265,7 +265,7 @@ impl FilterPipeline {
     pub fn filters_unsupported_by(&self, listener_protocol: praxis_core::config::ProtocolKind) -> Vec<&'static str> {
         self.filters
             .iter()
-            .filter(|pf| !listener_protocol.supports(&pf.filter.protocol_level()))
+            .filter(|pf| !listener_protocol.supports(pf.filter.protocol_level()))
             .map(|pf| pf.filter.name())
             .collect()
     }

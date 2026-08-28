@@ -54,7 +54,10 @@ impl<'de> Deserialize<'de> for LoadBalancerStrategy {
                 let key = key.strip_prefix('!').unwrap_or(&key);
                 dispatch_parameterised::<D>(key, tagged.value).map(Self::Parameterised)
             },
-            _ => Err(D::Error::custom(
+            serde_yaml::Value::Null
+            | serde_yaml::Value::Bool(_)
+            | serde_yaml::Value::Number(_)
+            | serde_yaml::Value::Sequence(_) => Err(D::Error::custom(
                 "load_balancer_strategy must be a strategy name (e.g. round_robin) \
                  or a single-key mapping (e.g. {ring_hash: {...}})",
             )),
@@ -98,7 +101,7 @@ where
 /// Deserialize a parameterised strategy's options by strategy key.
 ///
 /// Dispatching by hand (rather than re-deserializing the externally-tagged
-/// [`ParameterisedStrategy`] from a `Value`, which serde_yaml cannot do)
+/// [`ParameterisedStrategy`] from a `Value`, which `serde_yaml` cannot do)
 /// preserves each opts struct's `deny_unknown_fields` diagnostics.
 fn dispatch_parameterised<'de, D>(key: &str, opts: serde_yaml::Value) -> Result<ParameterisedStrategy, D::Error>
 where

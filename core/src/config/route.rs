@@ -89,7 +89,7 @@ impl PathMatch {
                     ));
                 }
                 Ok(Self::Exact { path })
-            }
+            },
             (None, Some(path_prefix)) => {
                 // An empty prefix is the documented match-all; any other
                 // non-'/'-prefixed value can never match a request path.
@@ -100,7 +100,7 @@ impl PathMatch {
                     ));
                 }
                 Ok(Self::Prefix { path_prefix })
-            }
+            },
             (Some(_), Some(_)) => Err("route cannot set both 'path' and 'path_prefix' (use exactly one)".to_owned()),
             (None, None) => Err("route requires either 'path' or 'path_prefix'".to_owned()),
         }

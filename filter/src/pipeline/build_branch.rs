@@ -138,6 +138,7 @@ type BranchConfigs = Vec<Option<Vec<BranchChainConfig>>>;
 ///
 /// Branch configs are returned separately so they can be resolved
 /// after the name index is built.
+#[expect(clippy::too_many_lines, reason = "per-entry filter construction is linear")]
 fn build_filters(
     entries: &mut [FilterEntry],
     registry: &FilterRegistry,
@@ -598,7 +599,9 @@ mod tests {
         fn fanout_chain(target: &str, refs: usize, branch: &str) -> Vec<FilterEntry> {
             vec![FilterEntry {
                 branch_chains: Some(vec![BranchChainConfig {
-                    chains: (0..refs).map(|_| ChainRef::Named(target.to_owned())).collect(),
+                    chains: std::iter::repeat_with(|| ChainRef::Named(target.to_owned()))
+                        .take(refs)
+                        .collect(),
                     max_iterations: None,
                     name: branch.to_owned(),
                     on_result: None,

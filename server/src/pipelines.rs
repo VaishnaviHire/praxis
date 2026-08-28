@@ -43,7 +43,11 @@ use praxis_protocol::ListenerPipelines;
 /// resolution error, body limit conflict, or pipeline ordering violation).
 ///
 /// [`FilterPipeline`]: praxis_filter::FilterPipeline
-#[expect(clippy::too_many_arguments, reason = "pipeline wiring passes multiple registries")]
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "pipeline wiring passes multiple registries and validates each listener inline"
+)]
 pub fn resolve_pipelines(
     config: &Config,
     registry: &FilterRegistry,
@@ -264,10 +268,10 @@ filter_chains:
             &empty_session_stores(),
             &empty_subrequest_client(),
         );
-        let err = match result {
-            Ok(_) => panic!("an HTTP filter on a TCP listener must be rejected at build"),
-            Err(e) => e.to_string(),
-        };
+        let err = result
+            .err()
+            .expect("an HTTP filter on a TCP listener must be rejected at build")
+            .to_string();
         assert!(
             err.contains("ip_acl") && err.contains("silently skipped"),
             "the error must name the offending filter: {err}"

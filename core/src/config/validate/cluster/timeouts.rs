@@ -11,6 +11,7 @@ use crate::{config::Cluster, errors::ProxyError};
 // -----------------------------------------------------------------------------
 
 /// Validates timeout bounds and relational consistency.
+#[expect(clippy::too_many_lines, reason = "sequential per-field timeout checks")]
 pub(super) fn validate_timeouts(cluster: &Cluster) -> Result<(), ProxyError> {
     let name = &cluster.name;
 
