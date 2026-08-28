@@ -34,9 +34,20 @@ pub(super) fn validate_endpoints(cluster: &Cluster, insecure_options: &InsecureO
             cluster.endpoints.len()
         )));
     }
+    let mut seen = std::collections::HashSet::with_capacity(cluster.endpoints.len());
     for ep in &cluster.endpoints {
         validate_endpoint_address(ep.address(), &cluster.name)?;
         validate_endpoint_weight(ep.weight(), ep.address(), &cluster.name)?;
+        // A duplicate address collapses the health address->index map (last
+        // wins), so passive health outcomes are misattributed and the address
+        // is never fully drained. Use `weight` to bias traffic, not repetition.
+        if !seen.insert(ep.address()) {
+            return Err(ProxyError::Config(format!(
+                "cluster '{}': endpoint '{}' is listed more than once (use 'weight' to bias traffic)",
+                cluster.name,
+                ep.address()
+            )));
+        }
     }
     validate_endpoint_ssrf(cluster, insecure_options)
 }
@@ -279,6 +290,19 @@ mod tests {
         assert!(
             err.to_string().contains("must not be empty"),
             "empty endpoint address should be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_duplicate_endpoint_addresses() {
+        let clusters = vec![Cluster::with_defaults(
+            "web",
+            vec!["10.0.0.1:80".into(), "10.0.0.2:80".into(), "10.0.0.1:80".into()],
+        )];
+        let err = validate_clusters(&clusters, &InsecureOptions::default()).unwrap_err();
+        assert!(
+            err.to_string().contains("listed more than once"),
+            "a duplicate endpoint address must be rejected: {err}"
         );
     }
 

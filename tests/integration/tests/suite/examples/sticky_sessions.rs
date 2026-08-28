@@ -83,7 +83,11 @@ fn sticky_sessions_header_pins_to_same_backend() {
     let port_b = port_b_guard.port();
     let proxy_port = free_port();
     let header_port = free_port();
+    // learn-app lists two distinct endpoints (3021, 3022); this test does not
+    // exercise them but they must still map to distinct addresses, since a
+    // duplicate endpoint address is rejected by config validation.
     let learn_a = free_port();
+    let learn_b = free_port();
     let config = super::load_example_config(
         "traffic-management/sticky-sessions.yaml",
         proxy_port,
@@ -93,7 +97,7 @@ fn sticky_sessions_header_pins_to_same_backend() {
             ("127.0.0.1:3011", port_a),
             ("127.0.0.1:3012", port_b),
             ("127.0.0.1:3021", learn_a),
-            ("127.0.0.1:3022", learn_a),
+            ("127.0.0.1:3022", learn_b),
         ]),
     );
     let proxy = start_proxy(&config);
