@@ -539,6 +539,12 @@ enum SniPeekResult {
 async fn peek_sni(session: &mut Stream) -> (Option<String>, Vec<u8>) {
     let mut buf = vec![0_u8; PEEK_INITIAL];
     let mut filled = 0;
+    // Engaged after the first incomplete parse: resumes record scanning
+    // where the previous read stopped, so each buffered byte is examined
+    // once. Re-running the stateless parse per read let a client
+    // trickling a fragmented hello in tiny segments force quadratic
+    // re-reassembly work against the peek cap.
+    let mut reassembler: Option<sni::SniReassembler> = None;
 
     loop {
         match session.read(&mut buf[filled..]).await {
@@ -548,7 +554,7 @@ async fn peek_sni(session: &mut Stream) -> (Option<String>, Vec<u8>) {
             },
             Ok(n) => {
                 filled += n;
-                if let PeekAction::Done(sni) = handle_sni_read(&mut buf, filled) {
+                if let PeekAction::Done(sni) = handle_sni_read(&mut buf, filled, &mut reassembler) {
                     return (sni, buf);
                 }
             },
@@ -564,8 +570,8 @@ async fn peek_sni(session: &mut Stream) -> (Option<String>, Vec<u8>) {
 }
 
 /// Process a read chunk during SNI peeking.
-fn handle_sni_read(buf: &mut Vec<u8>, filled: usize) -> PeekAction {
-    match try_parse_sni(buf, filled) {
+fn handle_sni_read(buf: &mut Vec<u8>, filled: usize, reassembler: &mut Option<sni::SniReassembler>) -> PeekAction {
+    match try_parse_sni(buf, filled, reassembler) {
         SniPeekResult::Parsed(info) => {
             buf.truncate(filled);
             PeekAction::Done(info.sni)
@@ -589,12 +595,41 @@ fn handle_sni_read(buf: &mut Vec<u8>, filled: usize) -> PeekAction {
 }
 
 /// Attempt to parse SNI from the filled portion of the buffer.
+///
+/// The first attempt uses the stateless parser (zero-copy for the
+/// dominant whole-hello-in-one-read case); an incomplete result then
+/// switches to the resumable reassembler for later reads.
 #[expect(clippy::indexing_slicing, reason = "filled <= buf.len() maintained by caller")]
-fn try_parse_sni(buf: &[u8], filled: usize) -> SniPeekResult {
+fn try_parse_sni(buf: &[u8], filled: usize, reassembler: &mut Option<sni::SniReassembler>) -> SniPeekResult {
     let data = &buf[..filled];
+
+    if let Some(active) = reassembler {
+        return reassembler_step(active, data, filled);
+    }
+
     match sni::parse_sni(data) {
         Ok(info) => SniPeekResult::Parsed(info),
-        Err(sni::SniParseError::TooShort | sni::SniParseError::NeedMoreData) => SniPeekResult::NeedMore,
+        Err(sni::SniParseError::TooShort | sni::SniParseError::NeedMoreData) => {
+            // Catch the state up over what is already buffered; complete
+            // records are consumed now and never rescanned.
+            let mut active = sni::SniReassembler::new();
+            let result = reassembler_step(&mut active, data, filled);
+            *reassembler = Some(active);
+            result
+        },
+        Err(_) => {
+            trace!(filled, "not a TLS ClientHello, skipping SNI extraction");
+            SniPeekResult::NotTls
+        },
+    }
+}
+
+/// Feed the buffered bytes into the resumable reassembler and map its
+/// outcome onto the peek-state machine.
+fn reassembler_step(active: &mut sni::SniReassembler, data: &[u8], filled: usize) -> SniPeekResult {
+    match active.advance(data) {
+        Ok(Some(info)) => SniPeekResult::Parsed(info),
+        Ok(None) => SniPeekResult::NeedMore,
         Err(_) => {
             trace!(filled, "not a TLS ClientHello, skipping SNI extraction");
             SniPeekResult::NotTls
@@ -1066,7 +1101,7 @@ mod tests {
         let record = wrap_in_record(&hello);
         let filled = record.len();
 
-        let result = try_parse_sni(&record, filled);
+        let result = try_parse_sni(&record, filled, &mut None);
         assert!(
             matches!(&result, SniPeekResult::Parsed(info) if info.sni.as_deref() == Some("example.com")),
             "valid TLS ClientHello with SNI should return Parsed"
@@ -1076,7 +1111,7 @@ mod tests {
     #[test]
     fn try_parse_sni_empty_buffer() {
         let buf = [];
-        let result = try_parse_sni(&buf, 0);
+        let result = try_parse_sni(&buf, 0, &mut None);
         assert!(
             matches!(result, SniPeekResult::NeedMore),
             "empty buffer should return NeedMore"
@@ -1086,7 +1121,7 @@ mod tests {
     #[test]
     fn try_parse_sni_non_tls_data() {
         let buf = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
-        let result = try_parse_sni(buf, buf.len());
+        let result = try_parse_sni(buf, buf.len(), &mut None);
         assert!(
             matches!(result, SniPeekResult::NotTls),
             "HTTP request should return NotTls"
@@ -1100,7 +1135,7 @@ mod tests {
         let record = wrap_in_record(&hello);
         let truncated = &record[..5];
 
-        let result = try_parse_sni(truncated, 5);
+        let result = try_parse_sni(truncated, 5, &mut None);
         assert!(
             matches!(result, SniPeekResult::NeedMore),
             "truncated ClientHello (first 5 bytes) should return NeedMore"
@@ -1116,7 +1151,7 @@ mod tests {
         let mut padded = record.clone();
         padded.resize(filled + 512, 0);
 
-        let result = try_parse_sni(&padded, filled);
+        let result = try_parse_sni(&padded, filled, &mut None);
         assert!(
             matches!(&result, SniPeekResult::Parsed(info) if info.sni.as_deref() == Some("test.example.org")),
             "should parse correctly using filled as slice bound"
@@ -1132,7 +1167,7 @@ mod tests {
         let mut buf = record.clone();
         buf.resize(filled + 256, 0xAA);
 
-        let action = handle_sni_read(&mut buf, filled);
+        let action = handle_sni_read(&mut buf, filled, &mut None);
         assert!(
             matches!(&action, PeekAction::Done(Some(sni)) if sni == "parsed.example.com"),
             "Parsed result should yield Done with SNI hostname"
@@ -1145,7 +1180,7 @@ mod tests {
         let mut buf = vec![22, 3, 3, 0, 100, 1];
         let filled = buf.len();
 
-        let action = handle_sni_read(&mut buf, filled);
+        let action = handle_sni_read(&mut buf, filled, &mut None);
         assert!(
             matches!(action, PeekAction::ReadMore),
             "NeedMore below PEEK_MAX should return ReadMore"
@@ -1164,7 +1199,7 @@ mod tests {
         buf[..raw.len()].copy_from_slice(&raw);
         let filled = raw.len();
 
-        let action = handle_sni_read(&mut buf, filled);
+        let action = handle_sni_read(&mut buf, filled, &mut None);
         assert!(
             matches!(action, PeekAction::ReadMore),
             "NeedMore below PEEK_MAX should return ReadMore"
@@ -1179,7 +1214,7 @@ mod tests {
         buf[..raw.len()].copy_from_slice(&raw);
         let filled = PEEK_MAX;
 
-        let action = handle_sni_read(&mut buf, filled);
+        let action = handle_sni_read(&mut buf, filled, &mut None);
         assert!(
             matches!(action, PeekAction::Done(None)),
             "NeedMore at PEEK_MAX should return Done(None)"
@@ -1196,7 +1231,7 @@ mod tests {
         let mut buf = b"GET / HTTP/1.1\r\n".to_vec();
         let filled = buf.len();
 
-        let action = handle_sni_read(&mut buf, filled);
+        let action = handle_sni_read(&mut buf, filled, &mut None);
         assert!(
             matches!(action, PeekAction::Done(None)),
             "NotTls should return Done(None)"

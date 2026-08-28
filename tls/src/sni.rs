@@ -211,6 +211,95 @@ fn reassemble_handshake(buf: &[u8]) -> Result<Vec<u8>, SniParseError> {
     }
 }
 
+/// Resumable reassembly of a `ClientHello` fragmented across TLS
+/// records, fed in monotonically growing peek buffers.
+///
+/// [`parse_sni`] is stateless: a caller polling a socket re-parses —
+/// and, on the fragmented path, re-reassembles — the entire buffer on
+/// every read, which an attacker trickling a fragmented hello in tiny
+/// segments turns into quadratic work (up to ~134 MB of memcpy against
+/// a 16 KiB peek cap). This form scans each buffered byte once:
+/// [`advance`] walks only the records that completed since the previous
+/// call, accumulating the handshake header and body exactly like the
+/// stateless reassembly and classifying errors identically.
+///
+/// The caller feeds the same buffer, grown; once [`advance`] returns
+/// a terminal result (`Ok(Some(_))` or `Err(_)`) it must not be called
+/// again.
+///
+/// [`advance`]: Self::advance
+pub struct SniReassembler {
+    /// Offset of the first unconsumed record-header byte.
+    pos: usize,
+    /// Handshake-header accumulator (may span records).
+    header: [u8; HANDSHAKE_HEADER_LEN],
+    /// Filled bytes of `header`.
+    header_filled: usize,
+    /// Handshake body accumulated so far.
+    body: Vec<u8>,
+}
+
+impl SniReassembler {
+    /// Create an empty reassembler.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pos: 0,
+            header: [0_u8; HANDSHAKE_HEADER_LEN],
+            header_filled: 0,
+            body: Vec::new(),
+        }
+    }
+
+    /// Consume any records that completed since the previous call.
+    ///
+    /// Returns `Ok(None)` when more bytes are needed, `Ok(Some(info))`
+    /// on a fully reassembled and parsed `ClientHello`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SniParseError`] exactly as the stateless
+    /// [`parse_sni`] path would on the same grown buffer: a
+    /// non-handshake record ends reassembly, a non-`ClientHello`
+    /// handshake type is rejected, and `ClientHello` body errors come
+    /// from the shared body parser.
+    pub fn advance(&mut self, buf: &[u8]) -> Result<Option<ClientHelloInfo>, SniParseError> {
+        loop {
+            let (mut fragment, next_pos) = match handshake_record_fragment(buf, self.pos) {
+                Ok(parts) => parts,
+                Err(SniParseError::NeedMoreData | SniParseError::TooShort) => return Ok(None),
+                Err(e) => return Err(e),
+            };
+            self.pos = next_pos;
+
+            if self.header_filled < HANDSHAKE_HEADER_LEN {
+                (fragment, self.header_filled) = fill_handshake_header(&mut self.header, self.header_filled, fragment);
+            }
+            self.body.extend_from_slice(fragment);
+
+            if self.header_filled == HANDSHAKE_HEADER_LEN {
+                if *self.header.first().ok_or(SniParseError::NeedMoreData)? != HANDSHAKE_TYPE_CLIENT_HELLO {
+                    return Err(SniParseError::NotClientHello);
+                }
+                let hs_len = read_u24(&self.header, 1)? as usize;
+                if self.body.len() >= hs_len {
+                    self.body.truncate(hs_len);
+                    let body = std::mem::take(&mut self.body);
+                    return parse_client_hello(&body).map(Some);
+                }
+                // The total is known: size the accumulator once.
+                self.body.reserve(hs_len - self.body.len());
+            }
+        }
+    }
+}
+
+impl Default for SniReassembler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Parse the TLS record header at `pos` and return the record's handshake
 /// fragment plus the offset of the next record.
 fn handshake_record_fragment(buf: &[u8], pos: usize) -> Result<(&[u8], usize), SniParseError> {
@@ -445,10 +534,10 @@ fn reject_ip_literal(hostname: &str) -> Result<(), SniParseError> {
 
     // The IpAddr parse above already tried the unbracketed IPv6 form;
     // a second parse is only needed when brackets were actually stripped.
-    if let Some(trimmed) = hostname.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        if trimmed.parse::<std::net::Ipv6Addr>().is_ok() {
-            return Err(SniParseError::InvalidHostname);
-        }
+    if let Some(trimmed) = hostname.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+        && trimmed.parse::<std::net::Ipv6Addr>().is_ok()
+    {
+        return Err(SniParseError::InvalidHostname);
     }
 
     Ok(())
@@ -1069,6 +1158,65 @@ mod tests {
             result.sni.as_deref(),
             Some("split.example.org"),
             "SNI should be extracted when the handshake header spans records"
+        );
+    }
+
+    #[test]
+    fn reassembler_trickle_matches_one_shot_parse() {
+        // Feeding the buffer one byte at a time must produce exactly the
+        // one-shot parse_sni result, scanning each byte once.
+        let ext = build_sni_extension("trickle.example.com");
+        let hello = build_client_hello(&[], &[0x00, 0xFF], &[0x00], &ext);
+        let handshake = build_handshake_message(&hello);
+        let third = handshake.len() / 3;
+        let mut buf = wrap_fragment_in_record(handshake.get(..third).expect("head"));
+        buf.extend_from_slice(&wrap_fragment_in_record(handshake.get(third..2 * third).expect("mid")));
+        buf.extend_from_slice(&wrap_fragment_in_record(handshake.get(2 * third..).expect("tail")));
+
+        let mut reassembler = SniReassembler::new();
+        let mut result = None;
+        for end in 1..=buf.len() {
+            let step = reassembler
+                .advance(buf.get(..end).expect("prefix"))
+                .expect("trickled reassembly must not error");
+            if let Some(info) = step {
+                result = Some(info);
+                break;
+            }
+        }
+        let expected = parse_sni(&buf).expect("one-shot parse");
+        assert_eq!(
+            result.expect("trickled parse must complete").sni,
+            expected.sni,
+            "trickled reassembly must match the one-shot result"
+        );
+    }
+
+    #[test]
+    fn reassembler_rejects_non_client_hello_like_one_shot() {
+        // Handshake type 2 split across records: the reassembler must
+        // classify it exactly as the stateless path does.
+        let mut buf = wrap_fragment_in_record(&[2, 0]);
+        buf.extend_from_slice(&wrap_fragment_in_record(&[0, 0]));
+        let mut reassembler = SniReassembler::new();
+        assert!(
+            matches!(reassembler.advance(&buf), Err(SniParseError::NotClientHello)),
+            "a fragmented non-ClientHello must be rejected"
+        );
+    }
+
+    #[test]
+    fn reassembler_stops_at_non_handshake_record() {
+        let ext = build_sni_extension("example.com");
+        let hello = build_client_hello(&[], &[0x00, 0xFF], &[0x00], &ext);
+        let handshake = build_handshake_message(&hello);
+        let split = handshake.len() / 2;
+        let mut buf = wrap_fragment_in_record(handshake.get(..split).expect("head"));
+        buf.extend_from_slice(&[23, 0x03, 0x01, 0x00, 0x01, 0x00]);
+        let mut reassembler = SniReassembler::new();
+        assert!(
+            matches!(reassembler.advance(&buf), Err(SniParseError::NotHandshake)),
+            "a non-handshake record must end reassembly"
         );
     }
 
