@@ -124,7 +124,7 @@ impl SubRequestClient {
         framework_headers: Option<&FrameworkHeaders>,
     ) -> Result<RawExchange<'a>, SubRequestError> {
         let exchange_started = tokio::time::Instant::now();
-        let deadline = tokio::time::Instant::now()
+        let deadline = exchange_started
             .checked_add(timeout)
             .ok_or(SubRequestError::DeadlineExceeded)?;
         let mut bounded_peer = peer.clone();
@@ -513,8 +513,16 @@ impl SubRequestClient {
             return Err(SubRequestError::DeadlineExceeded);
         }
 
+        // Size the buffer from Content-Length when present, clamped to
+        // the limit so an untrusted length can never over-allocate; the
+        // ResponseTooLarge check below stays authoritative.
+        let advertised = resp_headers
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<usize>().ok())
+            .map_or(0, |len| len.min(effective_limit));
         let body_result: Result<Bytes, SubRequestError> = tokio::time::timeout(remaining, async {
-            let mut body_buf = Vec::new();
+            let mut body_buf = Vec::with_capacity(advertised);
             while !session.response_done() {
                 match session.read_response_body().await {
                     Ok(Some(chunk)) => {
@@ -576,7 +584,7 @@ impl SubRequestClient {
 async fn fail_header_exchange(
     exchange: RawExchange<'_>,
     circuit_guard: Option<CircuitGuard<'_>>,
-    termination: &str,
+    termination: &'static str,
     error: SubRequestError,
 ) -> SubRequestError {
     drop(circuit_guard);

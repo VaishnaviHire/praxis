@@ -290,8 +290,8 @@ pub(super) fn check_clean_completion(session: &mut HttpSession<()>) -> Result<bo
 ///
 /// Used by `send_streaming()` when the response completes at header
 /// time (HEAD, 204, 304, zero-length, or H2 error).
-pub(super) fn record_header_termination(termination: &str) {
-    counter!(SUBREQUEST_STREAMS_TOTAL, "termination" => termination.to_owned()).increment(1);
+pub(super) fn record_header_termination(termination: &'static str) {
+    counter!(SUBREQUEST_STREAMS_TOTAL, "termination" => termination).increment(1);
     histogram!(SUBREQUEST_STREAM_DURATION_SECONDS).record(0.0);
     debug!(termination, "sub-request: stream terminated at header phase");
 }
