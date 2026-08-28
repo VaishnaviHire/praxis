@@ -456,6 +456,20 @@ impl RetryPolicy {
                 ));
             }
         }
+
+        // The retry budget refills at `min_retries_per_second` tokens/second;
+        // a rate of 0 means the token bucket never refills, so every retry is
+        // denied cluster-wide with no error or log — the configured retry
+        // policy is silently inert. Reject it like the other zero-disables-the-
+        // feature cases above.
+        if let Some(budget) = &self.retry_budget
+            && budget.min_retries_per_second == 0
+        {
+            return Err(format!(
+                "{context}: retry_budget.min_retries_per_second is 0 (must be > 0; \
+                 0 stops the budget refilling and denies every retry)"
+            ));
+        }
         Ok(())
     }
 
@@ -659,6 +673,35 @@ backoff:
             policy.effective_max_retries(),
             MAX_EFFECTIVE_RETRIES,
             "values beyond Pingora's per-request attempt cap are clamped"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_zero_min_retries_per_second() {
+        let budget: RetryBudgetConfig = serde_yaml::from_str("percent: 20\nmin_retries_per_second: 0").unwrap();
+        let policy = RetryPolicy {
+            retry_budget: Some(budget),
+            ..RetryPolicy::legacy_default()
+        };
+        let err = policy
+            .validate_timeout_bounds("cluster 'backend'")
+            .expect_err("min_retries_per_second of 0 permanently empties the budget and must be rejected");
+        assert!(
+            err.contains("min_retries_per_second"),
+            "error should name the offending field: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_nonzero_min_retries_per_second() {
+        let budget: RetryBudgetConfig = serde_yaml::from_str("percent: 20\nmin_retries_per_second: 5").unwrap();
+        let policy = RetryPolicy {
+            retry_budget: Some(budget),
+            ..RetryPolicy::legacy_default()
+        };
+        assert!(
+            policy.validate_timeout_bounds("cluster 'backend'").is_ok(),
+            "a positive min_retries_per_second should pass validation"
         );
     }
 
