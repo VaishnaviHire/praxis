@@ -409,6 +409,11 @@ impl ServerApp for PingoraTcpProxy {
                 return None;
             }
 
+            // The peeked hello has been forwarded; a long-lived session
+            // must not pin up to 16 KiB of dead peek buffer for its
+            // whole lifetime.
+            drop(peeked_bytes);
+
             let mut shutdown_rx: watch::Receiver<bool> = shutdown.clone();
             let (copied_in, bytes_out, close_reason) = self
                 .forward(&mut session, &mut upstream, &mut shutdown_rx, &upstream_addr)
@@ -471,8 +476,11 @@ async fn resolve_connect_result(
             | FilterAction::TerminalResponse(_)
             | FilterAction::StreamingTerminalResponse(_),
         ) => {
-            if let Some(addr) = &ctx.upstream_addr {
-                Some(addr.clone().into_owned())
+            // `ctx` is dropped right after resolution, so take the
+            // address instead of deep-copying the owned String the
+            // routing filter just built.
+            if let Some(addr) = ctx.upstream_addr.take() {
+                Some(addr.into_owned())
             } else {
                 error!(remote = %remote_addr, "no upstream address resolved for TCP connection");
                 None
