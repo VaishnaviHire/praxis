@@ -26,6 +26,11 @@ use crate::circuit::{CircuitCheck, PeerKey};
 // SubRequestClient
 // ---------------------------------------------------------------------------
 
+/// Maximum number of 1xx interim responses tolerated before a final
+/// response, bounding a pathological upstream that only emits interim
+/// headers (the overall deadline is the other bound).
+const MAX_INTERIM_RESPONSES: u32 = 32;
+
 /// Hardened sub-request executor wrapping a shared connector.
 ///
 /// Provides a safe, bounded execution API that enforces:
@@ -238,30 +243,56 @@ impl SubRequestClient {
             .map_err(|_elapsed| classify_timeout(remaining, bounded_peer.options.write_timeout, "write"))?
             .map_err(|e| SubRequestError::Io(e.to_string()))?;
 
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            session.shutdown().await;
-            return Err(SubRequestError::DeadlineExceeded);
-        }
-        let read_timeout = min_timeout(bounded_peer.options.read_timeout, remaining);
+        // -- 6. Read the response header, skipping 1xx interim responses --
+        //
+        // Pingora's H1 client reads exactly one header block per call and does
+        // not advance past an informational (1xx) response; its body reader is
+        // left uninitialized, so reading the body while the status is still 1xx
+        // panics. An upstream may send an unsolicited `100 Continue` or
+        // `103 Early Hints` (RFC 8297) ahead of the final response, so loop
+        // until a final status arrives, honoring the overall deadline.
+        // `101 Switching Protocols` is a final response, not interim.
+        let mut interim_count = 0_u32;
+        let status = loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                session.shutdown().await;
+                return Err(SubRequestError::DeadlineExceeded);
+            }
+            let read_timeout = min_timeout(bounded_peer.options.read_timeout, remaining);
 
-        tokio::time::timeout(read_timeout, session.read_response_header())
-            .await
-            .map_err(|_elapsed| classify_timeout(remaining, bounded_peer.options.read_timeout, "read"))?
-            .map_err(|e| SubRequestError::Io(e.to_string()))?;
+            tokio::time::timeout(read_timeout, session.read_response_header())
+                .await
+                .map_err(|_elapsed| classify_timeout(remaining, bounded_peer.options.read_timeout, "read"))?
+                .map_err(|e| SubRequestError::Io(e.to_string()))?;
 
-        // -- 6. Validate response --
-        let resp_header = session
-            .response_header()
-            .ok_or_else(|| SubRequestError::Io("no response header received".to_owned()))?;
+            let resp_header = session
+                .response_header()
+                .ok_or_else(|| SubRequestError::Io("no response header received".to_owned()))?;
+            let status = resp_header.status.as_u16();
 
-        let status = resp_header.status.as_u16();
+            if (100..=199).contains(&status) && status != 101 {
+                interim_count += 1;
+                if interim_count > MAX_INTERIM_RESPONSES {
+                    session.shutdown().await;
+                    return Err(SubRequestError::Io(
+                        "upstream sent too many 1xx interim responses".to_owned(),
+                    ));
+                }
+                continue;
+            }
+            break status;
+        };
+
         if !(100..=599).contains(&status) {
             session.shutdown().await;
             return Err(SubRequestError::Io(format!(
                 "upstream returned unsupported HTTP status {status}"
             )));
         }
+        let resp_header = session
+            .response_header()
+            .ok_or_else(|| SubRequestError::Io("no response header received".to_owned()))?;
         let mut resp_headers = HeaderMap::new();
         for (name, value) in &resp_header.headers {
             if let Ok(v) = http::header::HeaderValue::from_bytes(value.as_bytes()) {

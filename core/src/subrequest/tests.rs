@@ -2516,3 +2516,48 @@ async fn streaming_body_maps_unclean_close_to_io_error() {
 
     assert!(errored, "an unclean close must surface as an error");
 }
+
+#[tokio::test]
+async fn interim_1xx_response_is_skipped_not_panicked() {
+    use pingora_core::upstreams::peer::HttpPeer;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    // A backend that emits an unsolicited 103 Early Hints (RFC 8297) ahead of
+    // the final 200. Before the interim-skip loop, reading the body while the
+    // session status was still 103 panicked Pingora's uninitialized body
+    // reader (aborting the process in release builds).
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let backend = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0_u8; 4096];
+        let _bytes_read = socket.read(&mut buf).await;
+        socket
+            .write_all(
+                b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n\
+                  HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
+            )
+            .await
+            .unwrap();
+        socket.flush().await.unwrap();
+        drop(socket);
+    });
+
+    let connector = SubRequestConnector::new(1, None);
+    let client = super::client::SubRequestClient::new(connector);
+    let peer = HttpPeer::new(addr.to_string(), false, String::new());
+    let request = SubRequest {
+        method: http::Method::GET,
+        uri: "/".parse().unwrap(),
+        headers: HeaderMap::new(),
+        body: Bytes::new(),
+    };
+
+    let response = Box::pin(client.execute(&peer, &request, 1024, Duration::from_secs(5), None))
+        .await
+        .expect("interim 1xx must be skipped and the final response returned");
+    backend.abort();
+
+    assert_eq!(response.status, 200, "the final status, not the interim 103, must be returned");
+    assert_eq!(response.body.as_ref(), b"hello", "the final response body must be read");
+}
