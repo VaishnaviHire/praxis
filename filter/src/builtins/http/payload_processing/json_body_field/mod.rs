@@ -3,10 +3,11 @@
 
 //! Extracts top-level JSON fields from the request body and promotes them to request headers.
 //!
-//! Parsing walks the top-level object without building a full DOM: unmapped
-//! values are skipped, and extraction stops once every configured field is
-//! found (first-wins on duplicate keys). Trailing JSON after early exit is
-//! not validated.
+//! Parsing walks the complete top-level object without building a full DOM:
+//! unmapped values are skipped, duplicate keys are last-wins (matching
+//! `serde_json` and typical backend parsers), and trailing non-whitespace
+//! content after the document blocks promotion so a promoted value always
+//! matches what the backend will parse.
 
 mod config;
 mod extract;
@@ -49,8 +50,9 @@ struct Promoted;
 /// their values to request headers using [`StreamBuffer`] mode.
 ///
 /// Uses a map visitor (not a full JSON DOM). Unmapped values are skipped;
-/// once every configured field is found, parsing stops (first-wins on
-/// duplicate keys). Trailing bytes after early exit are not validated.
+/// the whole top-level object is scanned so duplicate keys are last-wins
+/// (matching `serde_json` and typical backend parsers), and trailing
+/// non-whitespace content after the document blocks promotion.
 ///
 /// On successful promotion the filter returns [`FilterAction::BodyDone`] so
 /// [`StreamBuffer`] pre-read does not re-run extraction on later chunks
