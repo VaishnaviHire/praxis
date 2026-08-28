@@ -81,12 +81,12 @@ impl Maglev {
         #[expect(clippy::cast_possible_truncation, reason = "modulo fits usize")]
         let start = (fnv1a_seeded(key, 0) as usize) % len;
 
-        if let Some(state) = health {
-            if let Some(addr) = self.probe(start, exclude, |ep| {
+        if let Some(state) = health
+            && let Some(addr) = self.probe(start, exclude, |ep| {
                 state.endpoints().get(ep.index).is_some_and(EndpointHealth::is_healthy)
-            }) {
-                return Some(addr);
-            }
+            })
+        {
+            return Some(addr);
         }
 
         self.probe(start, exclude, |_| true)

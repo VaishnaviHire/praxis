@@ -24,6 +24,10 @@ use crate::{FilterError, filter::HttpFilterContext, load_balancing::endpoint::bu
 // ClusterEntry
 // -----------------------------------------------------------------------------
 
+/// Memo slot pairing a route override policy (the cache key, compared by
+/// [`Arc`] identity) with the merged policy computed from it.
+type RetryMemoSlot = Option<(Arc<RetryPolicy>, Arc<RetryPolicy>)>;
+
 /// Resolved state for a single cluster.
 pub(super) struct ClusterEntry {
     /// Pre-parsed upstream authority override as a [`HeaderValue`].
@@ -53,7 +57,7 @@ pub(super) struct ClusterEntry {
     /// requests flowing through one route hit the memo instead of
     /// re-allocating the merged policy each time; holding the route
     /// [`Arc`] both keys the cache and pins its address against reuse.
-    merged_retry_memo: ArcSwap<Option<(Arc<RetryPolicy>, Arc<RetryPolicy>)>>,
+    merged_retry_memo: ArcSwap<RetryMemoSlot>,
 
     /// Lazily built reselector for the common case — no hash key, no
     /// route retry override. The reselector is stateless config data,
@@ -100,10 +104,10 @@ impl ClusterEntry {
     /// [`RetryPolicy::merge_override`] and replaces the slot.
     pub(super) fn merged_retry_policy(&self, route: &Arc<RetryPolicy>) -> Arc<RetryPolicy> {
         let cached = self.merged_retry_memo.load();
-        if let Some((cached_route, merged)) = cached.as_ref() {
-            if Arc::ptr_eq(cached_route, route) {
-                return Arc::clone(merged);
-            }
+        if let Some((cached_route, merged)) = cached.as_ref()
+            && Arc::ptr_eq(cached_route, route)
+        {
+            return Arc::clone(merged);
         }
         let merged = Arc::new(self.retry_policy.merge_override(route));
         self.merged_retry_memo

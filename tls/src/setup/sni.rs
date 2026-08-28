@@ -118,12 +118,11 @@ impl SniCertResolver {
         // suffix, so splitting at the first dot yields the unique
         // candidate key. The empty-label guard preserves the old length
         // check (`.example.com` must not match `*.example.com`).
-        if let Some((label, rest)) = lower.split_once('.') {
-            if !label.is_empty() {
-                if let Some(cert) = self.wildcard_certs.get(rest) {
-                    return Some(Arc::clone(cert));
-                }
-            }
+        if let Some((label, rest)) = lower.split_once('.')
+            && !label.is_empty()
+            && let Some(cert) = self.wildcard_certs.get(rest)
+        {
+            return Some(Arc::clone(cert));
         }
 
         self.default.as_ref().map(Arc::clone)

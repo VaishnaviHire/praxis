@@ -29,12 +29,12 @@ pub(crate) fn normalize_origin(origin: &str) -> std::borrow::Cow<'_, str> {
     // normalized: lowercase, non-ws scheme, no default port. Detect that
     // in one scan and borrow — the owned path below runs only for
     // uppercase, ws/wss, or default-port inputs.
-    if !origin.bytes().any(|b| b.is_ascii_uppercase())
-        && !origin.starts_with("ws://")
-        && !origin.starts_with("wss://")
-        && !(origin.starts_with("https://") && origin.ends_with(":443"))
-        && !(origin.starts_with("http://") && origin.ends_with(":80"))
-    {
+    let needs_rewrite = origin.bytes().any(|b| b.is_ascii_uppercase())
+        || origin.starts_with("ws://")
+        || origin.starts_with("wss://")
+        || (origin.starts_with("https://") && origin.ends_with(":443"))
+        || (origin.starts_with("http://") && origin.ends_with(":80"));
+    if !needs_rewrite {
         return std::borrow::Cow::Borrowed(origin);
     }
 

@@ -271,6 +271,7 @@ impl CircuitBreaker {
             CircuitState::HalfOpen => inner.try_reset_stale_probe(&self.config, now),
         };
         self.store_state_cache(&inner);
+        drop(inner);
         check
     }
 
@@ -304,6 +305,7 @@ impl CircuitBreaker {
             CircuitState::Open => {},
         }
         self.store_state_cache(&inner);
+        drop(inner);
     }
 
     /// Record a failed exchange for the given token.
@@ -340,6 +342,7 @@ impl CircuitBreaker {
             CircuitState::Open => {},
         }
         self.store_state_cache(&inner);
+        drop(inner);
     }
 
     /// Whether the breaker has no request in flight and has been idle for

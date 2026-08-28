@@ -53,7 +53,6 @@ impl ConsistentHash {
     ///
     /// Skips unhealthy endpoints by probing adjacent ring slots, falling
     /// back to the original selection if all are unhealthy.
-    #[expect(clippy::indexing_slicing, reason = "within bounds")]
     pub(crate) fn select(
         &self,
         hash_key: Option<&str>,
@@ -69,13 +68,13 @@ impl ConsistentHash {
         #[expect(clippy::cast_possible_truncation, reason = "modulo fits usize")]
         let start = (fnv1a(key) as usize) % len;
 
-        if let Some(state) = health {
-            if let Some(addr) = self.probe(start, exclude, |ep| {
+        if let Some(state) = health
+            && let Some(addr) = self.probe(start, exclude, |ep| {
                 ep.index < state.endpoints().len()
                     && state.endpoints().get(ep.index).is_some_and(EndpointHealth::is_healthy)
-            }) {
-                return Some(addr);
-            }
+            })
+        {
+            return Some(addr);
         }
 
         self.probe(start, exclude, |_| true)
