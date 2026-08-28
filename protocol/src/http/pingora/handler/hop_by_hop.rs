@@ -319,7 +319,8 @@ impl RemoveHeader for pingora_http::ResponseHeader {
 fn is_proxy_owned(name: &str) -> bool {
     name.get(..12).is_some_and(|p| p.eq_ignore_ascii_case("x-forwarded-"))
         || name.eq_ignore_ascii_case("forwarded")
-        || praxis_core::reserved_headers::is_reserved(&name.to_ascii_lowercase())
+        // is_reserved matches ASCII case-insensitively; no lowercase copy needed.
+        || praxis_core::reserved_headers::is_reserved(name)
 }
 
 /// Whether a header is essential to message routing or framing and must

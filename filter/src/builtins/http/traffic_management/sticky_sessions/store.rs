@@ -223,7 +223,8 @@ impl SessionStore {
         self.map.is_empty()
     }
 
-    /// Remove expired entries. Called periodically or on capacity pressure.
+    /// Remove expired entries. Called opportunistically from `maybe_sweep`
+    /// on a lookup miss; capacity pressure is handled by `evict_one`.
     pub(super) fn sweep_expired(&self) {
         let now = Instant::now();
         self.map
