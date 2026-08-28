@@ -202,7 +202,9 @@ fn handle_header_response_records_session() {
 }
 
 #[test]
-fn put_preserves_created_at_on_update() {
+fn put_update_replaces_endpoint_without_duplicate_entry() {
+    // An update must replace the endpoint in place (single map entry, single
+    // eviction-queue position) under the TTL policy.
     let store = SessionStore::new(100, Duration::from_millis(500), config::EvictionPolicy::Ttl);
     store.put("key1".into(), "ep1".into());
     std::thread::sleep(Duration::from_millis(10));
