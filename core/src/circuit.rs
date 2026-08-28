@@ -847,10 +847,7 @@ mod tests {
         record_registry_failure(&registry, &a, ta);
 
         let evicted = registry.evict_idle(Duration::ZERO);
-        assert_eq!(
-            evicted, 1,
-            "an idle Open breaker past its recovery window is evictable"
-        );
+        assert_eq!(evicted, 1, "an idle Open breaker past its recovery window is evictable");
         assert_eq!(registry.len(), 0);
     }
 

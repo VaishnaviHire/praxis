@@ -827,9 +827,12 @@ mod tests {
     #[tokio::test]
     async fn forward_completed_returns_bytes_and_completed_reason() {
         let (_tx, mut rx) = watch::channel(false);
-        let (c2s, s2c, reason) =
-            forward_no_timeout(async { Ok((5_u64, 7_u64)) }, &mut rx, "10.0.0.1:5432").await;
-        assert_eq!((c2s, s2c), (5, 7), "clean completion must report the copied byte counts");
+        let (c2s, s2c, reason) = forward_no_timeout(async { Ok((5_u64, 7_u64)) }, &mut rx, "10.0.0.1:5432").await;
+        assert_eq!(
+            (c2s, s2c),
+            (5, 7),
+            "clean completion must report the copied byte counts"
+        );
         assert_eq!(reason, TcpCloseReason::Completed, "clean completion is 'completed'");
     }
 
@@ -843,15 +846,23 @@ mod tests {
         )
         .await;
         assert_eq!((c2s, s2c), (0, 0), "an errored copy cannot report counts");
-        assert_eq!(reason, TcpCloseReason::Error, "an I/O error must not be logged as 'completed'");
+        assert_eq!(
+            reason,
+            TcpCloseReason::Error,
+            "an I/O error must not be logged as 'completed'"
+        );
     }
 
     #[tokio::test]
     async fn forward_shutdown_returns_shutdown_reason() {
         let (tx, mut rx) = watch::channel(false);
         tx.send(true).expect("send shutdown");
-        let (c2s, s2c, reason) =
-            forward_no_timeout(std::future::pending::<io::Result<(u64, u64)>>(), &mut rx, "10.0.0.1:5432").await;
+        let (c2s, s2c, reason) = forward_no_timeout(
+            std::future::pending::<io::Result<(u64, u64)>>(),
+            &mut rx,
+            "10.0.0.1:5432",
+        )
+        .await;
         assert_eq!((c2s, s2c), (0, 0), "a shutdown-cancelled copy cannot report counts");
         assert_eq!(
             reason,

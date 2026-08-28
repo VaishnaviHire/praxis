@@ -1001,7 +1001,11 @@ mod tests {
             1,
             "a branch-scoped LB must not satisfy a top-level selection: {errors:?}"
         );
-        assert!(errors[0].contains('x'), "error should name the missing cluster: {}", errors[0]);
+        assert!(
+            errors[0].contains('x'),
+            "error should name the missing cluster: {}",
+            errors[0]
+        );
     }
 
     #[test]
@@ -1014,8 +1018,16 @@ mod tests {
         ];
         let mut errors = Vec::new();
         check_misaligned_clusters(&filters, &mut errors);
-        assert_eq!(errors.len(), 1, "a branch selecting an undefined cluster must error: {errors:?}");
-        assert!(errors[0].contains('y'), "error should name the missing cluster: {}", errors[0]);
+        assert_eq!(
+            errors.len(),
+            1,
+            "a branch selecting an undefined cluster must error: {errors:?}"
+        );
+        assert!(
+            errors[0].contains('y'),
+            "error should name the missing cluster: {}",
+            errors[0]
+        );
     }
 
     #[test]

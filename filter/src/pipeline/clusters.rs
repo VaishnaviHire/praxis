@@ -67,7 +67,10 @@ pub(super) fn level_selected_clusters(filters: &[PipelineFilter]) -> HashSet<Str
 /// pipeline-wide provider would hide a guaranteed request-time 502 for
 /// non-branch requests.
 pub(super) fn level_lb_clusters(filters: &[PipelineFilter]) -> HashSet<String> {
-    filters.iter().flat_map(|pf| pf.filter.load_balancer_clusters()).collect()
+    filters
+        .iter()
+        .flat_map(|pf| pf.filter.load_balancer_clusters())
+        .collect()
 }
 
 // -----------------------------------------------------------------------------

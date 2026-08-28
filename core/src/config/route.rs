@@ -294,6 +294,13 @@ impl Route {
                 self.path_match.value()
             ));
         }
+        if self.host.as_ref().is_some_and(String::is_empty) {
+            return Err(format!(
+                "route '{}': host must not be empty (an empty host can never match; \
+                 omit 'host' to match any host)",
+                self.path_match.value()
+            ));
+        }
         Ok(())
     }
 }
@@ -478,6 +485,20 @@ headers:
         assert!(
             err.to_string().contains("header match key must not be empty"),
             "an empty header name can never match and must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_empty_host_match() {
+        let yaml = r#"
+path_prefix: "/api"
+cluster: "backend"
+host: ""
+"#;
+        let err = serde_yaml::from_str::<Route>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("host must not be empty"),
+            "an empty host can never match and must be rejected: {err}"
         );
     }
 
