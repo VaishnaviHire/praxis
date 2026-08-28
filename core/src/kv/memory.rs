@@ -139,7 +139,14 @@ impl KvBackend for InMemoryKvBackend {
     }
 
     fn set(&self, key: &str, value: Arc<str>) -> bool {
-        if self.data.len() >= MAX_ENTRIES && !self.data.contains_key(key) {
+        // Overwrites need neither the capacity check (the cap only gates
+        // new keys) nor a fresh key allocation; DashMap::len sums every
+        // shard, so only new-key inserts pay that sweep.
+        if let Some(mut existing) = self.data.get_mut(key) {
+            *existing = value;
+            return true;
+        }
+        if self.data.len() >= MAX_ENTRIES {
             tracing::warn!(key, limit = MAX_ENTRIES, "KV store entry limit reached; insert skipped");
             return false;
         }
