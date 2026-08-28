@@ -128,7 +128,7 @@ pub struct Listener {
 /// let kind: ProtocolKind = serde_yaml::from_str("http").unwrap();
 /// assert_eq!(kind, ProtocolKind::Http);
 /// ```
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProtocolKind {
     /// HTTP (default).

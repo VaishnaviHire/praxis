@@ -256,6 +256,20 @@ impl FilterPipeline {
         self.filters.iter().any(|pf| pf.filter.name() == type_name)
     }
 
+    /// Names of filters in this pipeline whose protocol level is not
+    /// supported by `listener_protocol`.
+    ///
+    /// A TCP listener silently skips HTTP-level filters at runtime, so an
+    /// HTTP security filter placed on a TCP listener would never run. This
+    /// surfaces that mismatch at build time.
+    pub fn filters_unsupported_by(&self, listener_protocol: praxis_core::config::ProtocolKind) -> Vec<&'static str> {
+        self.filters
+            .iter()
+            .filter(|pf| !listener_protocol.supports(&pf.filter.protocol_level()))
+            .map(|pf| pf.filter.name())
+            .collect()
+    }
+
     /// Whether any filter of `type_name` has request conditions matching
     /// `request` (an unconditional entry always matches).
     ///

@@ -82,6 +82,18 @@ pub fn resolve_pipelines(
             subrequest_client,
         )?;
 
+        let unsupported = pipeline.filters_unsupported_by(listener.protocol);
+        if !unsupported.is_empty() {
+            let lname = &listener.name;
+            let proto = listener.protocol;
+            return Err(format!(
+                "listener '{lname}' ({proto:?}) has filter(s) not supported at its protocol level and \
+                 would be silently skipped at runtime: {}",
+                unsupported.join(", ")
+            )
+            .into());
+        }
+
         validate_pipeline(&pipeline, &entries, &listener.name, &config.insecure_options)?;
 
         pipelines.insert(listener.name.clone(), Arc::new(pipeline));
@@ -219,6 +231,46 @@ mod tests {
         assert!(
             pipelines.get("web").is_some(),
             "pipeline should exist for 'web' listener"
+        );
+    }
+
+    #[test]
+    fn resolve_pipelines_rejects_http_filter_on_tcp_listener() {
+        // An HTTP-level filter (ip_acl) on a TCP listener is silently skipped
+        // at runtime, so a configured security control would never run. Reject
+        // it at build time instead.
+        let config = Config::from_yaml(
+            r#"
+listeners:
+  - name: db
+    address: "127.0.0.1:5432"
+    protocol: tcp
+    upstream: "10.0.0.1:5432"
+    filter_chains: [guard]
+filter_chains:
+  - name: guard
+    filters:
+      - filter: ip_acl
+        deny: ["0.0.0.0/0"]
+"#,
+        )
+        .unwrap();
+        let registry = FilterRegistry::with_builtins();
+        let result = resolve_pipelines(
+            &config,
+            &registry,
+            &empty_health_registry(),
+            &empty_kv_stores(),
+            &empty_session_stores(),
+            &empty_subrequest_client(),
+        );
+        let err = match result {
+            Ok(_) => panic!("an HTTP filter on a TCP listener must be rejected at build"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ip_acl") && err.contains("silently skipped"),
+            "the error must name the offending filter: {err}"
         );
     }
 
