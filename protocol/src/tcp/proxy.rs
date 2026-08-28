@@ -82,6 +82,10 @@ pub(crate) struct PingoraTcpProxy {
     /// connection's local address keeps the `listener` label accurate.
     listener_names: HashMap<String, ::metrics::SharedString>,
 
+    /// Port → listener name fallback for wildcard binds, precomputed
+    /// from `listener_names` (the fallback runs per connection).
+    listener_ports: HashMap<String, ::metrics::SharedString>,
+
     /// Optional session timeout for the bidirectional forwarding phase.
     session_timeout: Option<Duration>,
 
@@ -114,6 +118,7 @@ impl PingoraTcpProxy {
             cluster,
             connection_semaphore,
             default_listener_name,
+            listener_ports: ports_by_listener(&listener_names),
             listener_names,
             session_timeout,
             max_duration,
@@ -124,7 +129,12 @@ impl PingoraTcpProxy {
 
     /// Resolve the metrics `listener` label for this connection's local address.
     fn listener_label_for(&self, local_addr: &str) -> ::metrics::SharedString {
-        resolve_listener_label(&self.listener_names, &self.default_listener_name, local_addr)
+        resolve_listener_label(
+            &self.listener_names,
+            &self.listener_ports,
+            &self.default_listener_name,
+            local_addr,
+        )
     }
 
     /// Cluster label for upstream connect metrics.
@@ -827,6 +837,7 @@ fn find_private_addr(addrs: &[SocketAddr]) -> Option<std::net::IpAddr> {
 /// then the group default.
 fn resolve_listener_label(
     listener_names: &HashMap<String, ::metrics::SharedString>,
+    listener_ports: &HashMap<String, ::metrics::SharedString>,
     default_listener_name: &::metrics::SharedString,
     local_addr: &str,
 ) -> ::metrics::SharedString {
@@ -834,15 +845,26 @@ fn resolve_listener_label(
         return name.clone();
     }
     // Config may use `0.0.0.0:port` while the socket digest reports a
-    // concrete interface address; fall back to matching on port.
-    if let Some(port) = local_addr.rsplit_once(':').map(|(_, p)| p) {
-        for (bind_addr, name) in listener_names {
-            if bind_addr.rsplit_once(':').is_some_and(|(_, p)| p == port) {
-                return name.clone();
-            }
-        }
+    // concrete interface address; fall back to matching on port. Under
+    // a wildcard bind this fallback runs on every connection, so it
+    // probes a precomputed port map instead of scanning the bind map.
+    if let Some((_, port)) = local_addr.rsplit_once(':')
+        && let Some(name) = listener_ports.get(port)
+    {
+        return name.clone();
     }
     default_listener_name.clone()
+}
+
+/// Derive the port → listener-name fallback map from the bind map.
+fn ports_by_listener(names: &HashMap<String, ::metrics::SharedString>) -> HashMap<String, ::metrics::SharedString> {
+    let mut ports = HashMap::with_capacity(names.len());
+    for (bind_addr, name) in names {
+        if let Some((_, port)) = bind_addr.rsplit_once(':') {
+            ports.entry(port.to_owned()).or_insert_with(|| name.clone());
+        }
+    }
+    ports
 }
 
 // -----------------------------------------------------------------------------
@@ -1071,7 +1093,7 @@ mod tests {
         names.insert("127.0.0.1:5433".to_owned(), ::metrics::SharedString::const_str("db2"));
         let default = ::metrics::SharedString::const_str("db1");
         assert_eq!(
-            resolve_listener_label(&names, &default, "127.0.0.1:5433").as_ref(),
+            resolve_listener_label(&names, &ports_by_listener(&names), &default, "127.0.0.1:5433").as_ref(),
             "db2",
             "exact local address should select the matching listener"
         );
@@ -1084,7 +1106,7 @@ mod tests {
         names.insert("0.0.0.0:5433".to_owned(), ::metrics::SharedString::const_str("db2"));
         let default = ::metrics::SharedString::const_str("db1");
         assert_eq!(
-            resolve_listener_label(&names, &default, "127.0.0.1:5433").as_ref(),
+            resolve_listener_label(&names, &ports_by_listener(&names), &default, "127.0.0.1:5433").as_ref(),
             "db2",
             "wildcard bind should still label by destination port"
         );
@@ -1096,7 +1118,7 @@ mod tests {
         names.insert("127.0.0.1:5432".to_owned(), ::metrics::SharedString::const_str("db1"));
         let default = ::metrics::SharedString::const_str("db1");
         assert_eq!(
-            resolve_listener_label(&names, &default, "unknown").as_ref(),
+            resolve_listener_label(&names, &ports_by_listener(&names), &default, "unknown").as_ref(),
             "db1",
             "unmatched local address should use the group default"
         );

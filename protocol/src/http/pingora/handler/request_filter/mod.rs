@@ -173,7 +173,14 @@ pub(in crate::http) async fn execute(
                 let _insert = req_headers.insert_header(name.clone(), value.clone());
             }
             for (name, value) in extra_headers {
-                let _insert = req_headers.insert_header(name.into_owned(), value);
+                // Most promoted names are `Cow::Borrowed` statics
+                // ("X-Forwarded-For", …): Pingora converts a &'static
+                // str zero-copy, while `into_owned` heap-copied every
+                // one per request.
+                let _insert = match name {
+                    Cow::Borrowed(name) => req_headers.insert_header(name, value),
+                    Cow::Owned(name) => req_headers.insert_header(name, value),
+                };
             }
             Ok(false)
         },

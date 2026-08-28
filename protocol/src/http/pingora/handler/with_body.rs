@@ -204,6 +204,19 @@ impl ProxyHttp for PingoraHttpHandler {
     where
         Self::CTX: Send + Sync,
     {
+        // Pure no-op fast path (mirroring execute's own early returns,
+        // which emit nothing): skip the pipeline Arc clone, span clone,
+        // and future instrumentation per chunk when no body filter can
+        // run — the default configuration for proxied bodies.
+        if ctx.connection_upgraded {
+            return Ok(());
+        }
+        if ctx.pre_read_body.is_none()
+            && let Some(pinned) = &ctx.pinned_pipeline
+            && !pinned.body_capabilities().needs_request_body
+        {
+            return Ok(());
+        }
         let pipeline = ctx.pipeline(&self.pipeline);
         let span = ctx.request_span.clone();
         request_body_filter::execute(&pipeline, session, body, end_of_stream, ctx)
@@ -221,6 +234,19 @@ impl ProxyHttp for PingoraHttpHandler {
     where
         Self::CTX: Send + Sync,
     {
+        // Same silent fast path as the request side, keeping execute's
+        // delivery-complete bookkeeping.
+        if ctx.connection_upgraded {
+            return Ok(None);
+        }
+        if let Some(pinned) = &ctx.pinned_pipeline
+            && !pinned.body_capabilities().needs_response_body
+        {
+            if end_of_stream {
+                ctx.response_delivery_complete = true;
+            }
+            return Ok(None);
+        }
         let span = ctx.request_span.clone();
         let _entered = span.enter();
         let pipeline = ctx.pipeline(&self.pipeline);
