@@ -8,15 +8,125 @@
 //! payloads the `params` subtree is nearly the entire body, allocated as
 //! a DOM and immediately dropped, per request. This module captures only
 //! the envelope fields (`jsonrpc`, `id`, `method`, `result`/`error`
-//! presence) through a serde visitor, consuming everything else with
-//! [`IgnoredAny`]: serde still scans and validates every byte, so the
-//! accepted and rejected inputs are unchanged, including duplicate-key
-//! last-wins semantics (the visitor overwrites like a DOM map insert).
+//! presence) through a serde visitor, consuming everything else with a
+//! depth-bounded ignore ([`BoundedIgnore`]): serde still scans and
+//! validates every byte, and nesting is capped at [`MAX_ENVELOPE_DEPTH`]
+//! so the accepted and rejected inputs match the previous DOM parser
+//! (`serde_json::from_slice::<Value>`, which rejected over-deep bodies via
+//! its recursion limit), including duplicate-key last-wins semantics (the
+//! visitor overwrites like a DOM map insert).
 //!
 //! [`parse_json_rpc_envelope`]: super::envelope::parse_json_rpc_envelope
 //! [`IgnoredAny`]: serde::de::IgnoredAny
 
-use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::de::{DeserializeSeed, Deserializer, Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+// -----------------------------------------------------------------------------
+// Depth-bounded ignore
+// -----------------------------------------------------------------------------
+
+/// Maximum JSON nesting depth accepted inside an ignored subtree (`params`,
+/// `result`, `error`, unknown fields, and container-valued `jsonrpc`/`id`/
+/// `method`).
+///
+/// The pre-streaming parser materialized the whole body with
+/// `serde_json::from_slice::<Value>`, which rejects input nested past
+/// serde_json's recursion limit. [`IgnoredAny`]'s `ignore_value` is iterative
+/// and unbounded, so without this cap the streaming parser would silently
+/// accept pathologically deep bodies the DOM parser rejected. Capping restores
+/// that fail-closed behavior and bounds [`BoundedIgnore`]'s own recursion.
+const MAX_ENVELOPE_DEPTH: usize = 128;
+
+/// Ignore any JSON value like [`IgnoredAny`], but reject nesting deeper than
+/// [`MAX_ENVELOPE_DEPTH`]. `depth` is the level of the value about to be
+/// consumed (0 for a top-level ignored value).
+struct BoundedIgnore {
+    depth: usize,
+}
+
+impl BoundedIgnore {
+    /// A bound starting at nesting depth zero.
+    fn new() -> Self {
+        Self { depth: 0 }
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for BoundedIgnore {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for BoundedIgnore {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("any JSON value")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        if self.depth >= MAX_ENVELOPE_DEPTH {
+            return Err(A::Error::custom("JSON nesting exceeds maximum depth"));
+        }
+        while map.next_key::<IgnoredAny>()?.is_some() {
+            map.next_value_seed(BoundedIgnore { depth: self.depth + 1 })?;
+        }
+        Ok(())
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        if self.depth >= MAX_ENVELOPE_DEPTH {
+            return Err(A::Error::custom("JSON nesting exceeds maximum depth"));
+        }
+        while seq.next_element_seed(BoundedIgnore { depth: self.depth + 1 })?.is_some() {}
+        Ok(())
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_bytes<E>(self, _: &[u8]) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_newtype_struct<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
 
 // -----------------------------------------------------------------------------
 // Captured Fields
@@ -207,7 +317,7 @@ impl<'de> Visitor<'de> for ItemVisitor {
     where
         A: SeqAccess<'de>,
     {
-        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        while seq.next_element_seed(BoundedIgnore::new())?.is_some() {}
         Ok(None)
     }
 
@@ -249,11 +359,11 @@ where
             "id" => message.id = map.next_value_seed(IdSeed)?,
             "method" => message.method = map.next_value_seed(MethodSeed)?,
             "result" | "error" => {
-                let _consumed: IgnoredAny = map.next_value()?;
+                map.next_value_seed(BoundedIgnore::new())?;
                 message.has_result_or_error = true;
             },
             _ => {
-                let _consumed: IgnoredAny = map.next_value()?;
+                map.next_value_seed(BoundedIgnore::new())?;
             },
         }
     }
@@ -313,12 +423,14 @@ impl<'de> Visitor<'de> for VersionVisitor {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        while map.next_key::<IgnoredAny>()?.is_some() {
+            map.next_value_seed(BoundedIgnore::new())?;
+        }
         Ok(RawVersion::Missing)
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        while seq.next_element_seed(BoundedIgnore::new())?.is_some() {}
         Ok(RawVersion::Missing)
     }
 }
@@ -378,12 +490,14 @@ impl<'de> Visitor<'de> for IdVisitor {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        while map.next_key::<IgnoredAny>()?.is_some() {
+            map.next_value_seed(BoundedIgnore::new())?;
+        }
         Ok(RawId::Invalid)
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        while seq.next_element_seed(BoundedIgnore::new())?.is_some() {}
         Ok(RawId::Invalid)
     }
 }
@@ -441,12 +555,14 @@ impl<'de> Visitor<'de> for MethodVisitor {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        while map.next_key::<IgnoredAny>()?.is_some() {
+            map.next_value_seed(BoundedIgnore::new())?;
+        }
         Ok(RawMethod::NotString)
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        while seq.next_element_seed(BoundedIgnore::new())?.is_some() {}
         Ok(RawMethod::NotString)
     }
 }

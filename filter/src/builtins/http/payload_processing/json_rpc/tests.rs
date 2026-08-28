@@ -846,3 +846,73 @@ fn assert_no_promoted_header(ctx: &crate::filter::HttpFilterContext<'_>, name: &
         .collect();
     assert!(!headers.contains_key(name), "promoted header '{name}' should be absent");
 }
+
+// -----------------------------------------------------------------------------
+// Nesting-depth bound: streaming envelope parity with the old DOM parser
+// -----------------------------------------------------------------------------
+
+/// A JSON-RPC request whose `params` is an array nested `depth` levels deep.
+fn deep_params_body(depth: usize) -> Vec<u8> {
+    let mut s = String::from(r#"{"jsonrpc":"2.0","method":"m","id":1,"params":"#);
+    s.push_str(&"[".repeat(depth));
+    s.push_str(&"]".repeat(depth));
+    s.push('}');
+    s.into_bytes()
+}
+
+#[test]
+fn shallow_nested_params_accepted() {
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    let body = deep_params_body(8);
+    let envelope = parse_json_rpc_envelope(&body, &config)
+        .expect("shallow nesting must parse")
+        .expect("must be a JSON-RPC message");
+    assert_eq!(envelope.method.as_deref(), Some("m"), "method must still be captured");
+}
+
+#[test]
+fn deep_nested_params_rejected() {
+    // The streaming parser caps ignored-subtree nesting at MAX_ENVELOPE_DEPTH,
+    // matching the recursion limit the old `from_slice::<Value>` DOM parser
+    // enforced. Without the bound, `IgnoredAny` accepted arbitrarily deep
+    // `params` and promoted the envelope; a security-adjacent classifier must
+    // fail closed on pathological input instead.
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    let body = deep_params_body(300);
+    let err = parse_json_rpc_envelope(&body, &config).expect_err("deep nesting must be rejected");
+    assert!(
+        matches!(err, super::envelope::JsonRpcParseError::InvalidJson(_)),
+        "over-deep nesting should surface as InvalidJson: {err:?}"
+    );
+}
+
+#[test]
+fn deep_nested_params_streaming_matches_dom() {
+    // Regression guard for the IgnoredAny-unbounded divergence: a body the DOM
+    // path rejects for excessive depth must also be rejected by the streaming
+    // path, so the two JSON-RPC parse paths agree on accept/reject.
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    let body = deep_params_body(300);
+    let dom_rejects = serde_json::from_slice::<serde_json::Value>(&body).is_err();
+    let streaming_rejects = parse_json_rpc_envelope(&body, &config).is_err();
+    assert!(dom_rejects, "the DOM parser must reject 300-deep nesting");
+    assert!(
+        streaming_rejects,
+        "the streaming parser must reject the same body the DOM parser rejects"
+    );
+}
+
+#[test]
+fn deep_nested_id_rejected() {
+    // A container-valued `id` nested past the cap is bounded on the id path too.
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    let mut s = String::from(r#"{"jsonrpc":"2.0","method":"m","id":"#);
+    s.push_str(&"[".repeat(300));
+    s.push_str(&"]".repeat(300));
+    s.push('}');
+    let err = parse_json_rpc_envelope(s.as_bytes(), &config).expect_err("deep id must be rejected");
+    assert!(
+        matches!(err, super::envelope::JsonRpcParseError::InvalidJson(_)),
+        "deep id nesting should surface as InvalidJson: {err:?}"
+    );
+}
