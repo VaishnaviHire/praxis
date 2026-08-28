@@ -141,8 +141,8 @@ impl SessionStore {
     /// If at capacity and the key is new, evicts one entry according to policy.
     /// An update keeps the entry's original eviction-queue position
     /// (creation order), so TTL-policy eviction age is preserved.
-    pub(super) fn put(&self, key: Arc<str>, endpoint: Arc<str>) {
-        if let Some(mut existing) = self.map.get_mut(key.as_ref()) {
+    pub(super) fn put(&self, key: &str, endpoint: Arc<str>) {
+        if let Some(mut existing) = self.map.get_mut(key) {
             existing.endpoint = endpoint;
             existing.last_accessed = Instant::now();
             return;
@@ -161,6 +161,9 @@ impl SessionStore {
 
         let now = Instant::now();
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+        // The owned key is materialized only here, on the new-entry path:
+        // update callers pass a borrow and allocate nothing.
+        let key: Arc<str> = Arc::from(key);
         let queued_key = Arc::clone(&key);
         self.map.insert(
             key,
@@ -394,7 +397,7 @@ mod tests {
     #[test]
     fn put_and_get() {
         let store = SessionStore::new(100, Duration::from_secs(3600), EvictionPolicy::Lru);
-        store.put("sess1".into(), "10.0.0.1:80".into());
+        store.put("sess1", "10.0.0.1:80".into());
         assert_eq!(store.get("sess1").as_deref(), Some("10.0.0.1:80"));
     }
 
@@ -407,7 +410,7 @@ mod tests {
     #[test]
     fn expired_entry_returns_none() {
         let store = SessionStore::new(100, Duration::from_millis(1), EvictionPolicy::Lru);
-        store.put("sess1".into(), "10.0.0.1:80".into());
+        store.put("sess1", "10.0.0.1:80".into());
         thread::sleep(Duration::from_millis(5));
         assert!(store.get("sess1").is_none());
         assert!(store.is_empty());
@@ -416,7 +419,7 @@ mod tests {
     #[test]
     fn remove_entry() {
         let store = SessionStore::new(100, Duration::from_secs(3600), EvictionPolicy::Lru);
-        store.put("sess1".into(), "10.0.0.1:80".into());
+        store.put("sess1", "10.0.0.1:80".into());
         store.remove("sess1");
         assert!(store.get("sess1").is_none());
     }
@@ -424,16 +427,16 @@ mod tests {
     #[test]
     fn eviction_at_capacity() {
         let store = SessionStore::new(2, Duration::from_secs(3600), EvictionPolicy::Lru);
-        store.put("a".into(), "ep1".into());
+        store.put("a", "ep1".into());
         thread::sleep(Duration::from_millis(1));
-        store.put("b".into(), "ep2".into());
+        store.put("b", "ep2".into());
 
         // Access "a" to make it recent
         drop(store.get("a"));
         thread::sleep(Duration::from_millis(1));
 
         // Insert "c" — should evict "b" (least recently accessed)
-        store.put("c".into(), "ep3".into());
+        store.put("c", "ep3".into());
 
         assert!(store.get("a").is_some());
         assert!(store.get("b").is_none());
@@ -443,8 +446,8 @@ mod tests {
     #[test]
     fn sweep_removes_expired() {
         let store = SessionStore::new(100, Duration::from_millis(1), EvictionPolicy::Lru);
-        store.put("a".into(), "ep1".into());
-        store.put("b".into(), "ep2".into());
+        store.put("a", "ep1".into());
+        store.put("b", "ep2".into());
         thread::sleep(Duration::from_millis(5));
         store.sweep_expired();
         assert_eq!(store.len(), 0);
@@ -462,7 +465,7 @@ mod tests {
     #[test]
     fn sliding_ttl_refreshes_on_access() {
         let store = SessionStore::new(100, Duration::from_millis(50), EvictionPolicy::Lru);
-        store.put("sess1".into(), "10.0.0.1:80".into());
+        store.put("sess1", "10.0.0.1:80".into());
 
         // Access every 30ms — each access should reset the 50ms idle timeout
         for _ in 0..5 {
@@ -489,10 +492,10 @@ mod tests {
         let cap = (EVICTION_SECOND_CHANCES as u64) * 3;
         let store = SessionStore::new(cap, Duration::from_secs(3600), EvictionPolicy::Lru);
         for i in 0..cap {
-            store.put(format!("seed-{i}").into(), "ep".into());
+            store.put(&format!("seed-{i}"), "ep".into());
         }
         for i in 0..cap * 2 {
-            store.put(format!("new-{i}").into(), "ep".into());
+            store.put(&format!("new-{i}"), "ep".into());
             assert_eq!(
                 store.map.len() as u64,
                 cap,
@@ -511,7 +514,7 @@ mod tests {
         let store = SessionStore::new(cap, Duration::from_secs(3600), EvictionPolicy::Lru);
         for i in 0..200 {
             let key = format!("churn-{i}");
-            store.put(key.clone().into(), "ep".into());
+            store.put(&key, "ep".into());
             store.remove(&key);
         }
         assert!(
@@ -532,7 +535,7 @@ mod tests {
         let cap = 8_u64;
         let store = SessionStore::new(cap, Duration::from_secs(3600), EvictionPolicy::Lru);
         for _ in 0..1_000 {
-            store.put("recurring".into(), "ep".into());
+            store.put("recurring", "ep".into());
             store.remove("recurring");
         }
         assert!(
@@ -549,12 +552,12 @@ mod tests {
         // and re-put) must be discarded by generation, not treated as "a"'s
         // creation age — else the recently re-created "a" is evicted first.
         let store = SessionStore::new(2, Duration::from_secs(3600), EvictionPolicy::Ttl);
-        store.put("a".into(), "ep1".into());
-        store.put("victim".into(), "ep2".into());
+        store.put("a", "ep1".into());
+        store.put("victim", "ep2".into());
         store.remove("a");
-        store.put("a".into(), "ep3".into());
+        store.put("a", "ep3".into());
 
-        store.put("newer".into(), "ep4".into());
+        store.put("newer", "ep4".into());
         assert!(
             store.get("victim").is_none(),
             "the oldest-created live entry must be the victim"
@@ -572,12 +575,12 @@ mod tests {
         // chance candidates under LRU; the chance budget must bound the loop
         // and still evict exactly one entry.
         let store = SessionStore::new(2, Duration::from_secs(3600), EvictionPolicy::Lru);
-        store.put("a".into(), "ep1".into());
-        store.put("b".into(), "ep2".into());
+        store.put("a", "ep1".into());
+        store.put("b", "ep2".into());
         drop(store.get("a"));
         drop(store.get("b"));
 
-        store.put("c".into(), "ep3".into());
+        store.put("c", "ep3".into());
         assert_eq!(store.len(), 2, "hot entries must not prevent eviction");
         assert!(store.get("c").is_some(), "the new entry must be present");
     }
@@ -587,13 +590,13 @@ mod tests {
         // Under the TTL policy queue order is creation order, so the oldest
         // created entry is evicted even when it was accessed most recently.
         let store = SessionStore::new(2, Duration::from_secs(3600), EvictionPolicy::Ttl);
-        store.put("old".into(), "ep1".into());
+        store.put("old", "ep1".into());
         thread::sleep(Duration::from_millis(1));
-        store.put("young".into(), "ep2".into());
+        store.put("young", "ep2".into());
         // Access "old" — irrelevant for TTL eviction order.
         drop(store.get("old"));
 
-        store.put("newer".into(), "ep3".into());
+        store.put("newer", "ep3".into());
         assert!(store.get("old").is_none(), "TTL policy evicts the oldest-created entry");
         assert!(store.get("young").is_some(), "younger entry survives");
         assert!(store.get("newer").is_some(), "new entry present");
@@ -609,11 +612,11 @@ mod tests {
         let cap = 30_000_u64;
         let store = SessionStore::new(cap, Duration::from_secs(3600), EvictionPolicy::Lru);
         for i in 0..cap {
-            store.put(format!("k{i}").into(), "ep".into());
+            store.put(&format!("k{i}"), "ep".into());
         }
         let started = Instant::now();
         for i in 0..3_000 {
-            store.put(format!("x{i}").into(), "ep".into());
+            store.put(&format!("x{i}"), "ep".into());
         }
         let elapsed = started.elapsed();
         assert!(
@@ -626,8 +629,8 @@ mod tests {
     #[test]
     fn put_updates_existing_entry() {
         let store = SessionStore::new(100, Duration::from_secs(3600), EvictionPolicy::Lru);
-        store.put("sess1".into(), "10.0.0.1:80".into());
-        store.put("sess1".into(), "10.0.0.2:80".into());
+        store.put("sess1", "10.0.0.1:80".into());
+        store.put("sess1", "10.0.0.2:80".into());
         assert_eq!(store.get("sess1").as_deref(), Some("10.0.0.2:80"));
         assert_eq!(store.len(), 1);
     }

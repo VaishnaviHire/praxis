@@ -36,7 +36,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use tracing::{debug, warn};
 
-use self::config::{ClusterSessionConfig, PersistenceConfig, StickySessionsConfig};
+use self::config::{ClusterSessionConfig, CookieAttributes, PersistenceConfig, StickySessionsConfig};
 pub use self::store::{SessionStore, SessionStoreRegistry};
 use crate::{
     FilterError,
@@ -228,10 +228,16 @@ impl StickySessionsFilter {
             .filter(|key| store.get(key).is_some())
             .unwrap_or_else(|| generate_session_id(endpoint));
 
-        store.put(Arc::from(session_key.as_str()), Arc::clone(endpoint));
+        store.put(&session_key, Arc::clone(endpoint));
 
-        let cookie_attrs = cfg.persistence.cookie_attributes().cloned().unwrap_or_default();
-        let set_cookie = cookie::build_set_cookie(cookie_name, &session_key, &cookie_attrs, cfg.ttl_secs);
+        let default_attrs;
+        let cookie_attrs = if let Some(attrs) = cfg.persistence.cookie_attributes() {
+            attrs
+        } else {
+            default_attrs = CookieAttributes::default();
+            &default_attrs
+        };
+        let set_cookie = cookie::build_set_cookie(cookie_name, &session_key, cookie_attrs, cfg.ttl_secs);
 
         if let Some(resp) = ctx.response_header.as_mut()
             && let Ok(val) = http::header::HeaderValue::from_str(&set_cookie)
@@ -288,7 +294,7 @@ impl StickySessionsFilter {
                     endpoint = %endpoint,
                     "learned session binding from upstream"
                 );
-                store.put(Arc::from(session_id), Arc::clone(endpoint));
+                store.put(session_id, Arc::clone(endpoint));
                 return;
             }
         }
@@ -308,7 +314,7 @@ impl StickySessionsFilter {
                 endpoint = %endpoint,
                 "re-pinning existing session to serving endpoint after failover"
             );
-            store.put(Arc::from(session_key), Arc::clone(endpoint));
+            store.put(session_key, Arc::clone(endpoint));
         }
     }
 
@@ -317,8 +323,7 @@ impl StickySessionsFilter {
         let Some(session_key) = ctx.get_metadata(META_SESSION_KEY) else {
             return;
         };
-        let session_key = session_key.to_owned();
-        store.put(Arc::from(session_key.as_str()), Arc::clone(endpoint));
+        store.put(session_key, Arc::clone(endpoint));
     }
 }
 
@@ -333,9 +338,9 @@ impl HttpFilter for StickySessionsFilter {
             return Ok(FilterAction::Continue);
         };
 
-        let cluster_name = match ctx.cluster.as_deref() {
-            Some(name) => name.to_owned(),
-            None => return Ok(FilterAction::Continue),
+        // Clone the Arc, not the string: releases the ctx borrow for free.
+        let Some(cluster_name) = ctx.cluster.clone() else {
+            return Ok(FilterAction::Continue);
         };
         let registry = ctx.session_stores.unwrap_or(&self.stores);
         let store = registry.get_or_create(
@@ -363,9 +368,9 @@ impl HttpFilter for StickySessionsFilter {
             return Ok(FilterAction::Continue);
         };
 
-        let cluster_name = match ctx.cluster.as_deref() {
-            Some(name) => name.to_owned(),
-            None => return Ok(FilterAction::Continue),
+        // Clone the Arc, not the string: releases the ctx borrow for free.
+        let Some(cluster_name) = ctx.cluster.clone() else {
+            return Ok(FilterAction::Continue);
         };
         let registry = ctx.session_stores.unwrap_or(&self.stores);
         let store = registry.get_or_create(

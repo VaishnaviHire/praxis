@@ -31,7 +31,13 @@ pub(crate) fn extract_set_cookie_value<'a>(set_cookie_header: &'a str, name: &st
 /// Build a `Set-Cookie` header value with the given attributes.
 #[must_use]
 pub(crate) fn build_set_cookie(name: &str, value: &str, attrs: &CookieAttributes, ttl_secs: u64) -> String {
-    let mut cookie = format!("{name}={value}");
+    use std::fmt::Write as _;
+
+    // Pre-size for the pair plus typical attributes so the builder does
+    // not grow through reallocation; Max-Age digits are written straight
+    // into the buffer instead of via an intermediate String.
+    let mut cookie = String::with_capacity(name.len() + value.len() + 64);
+    let _infallible = write!(cookie, "{name}={value}");
     if let Some(path) = &attrs.path {
         cookie.push_str("; Path=");
         cookie.push_str(path);
@@ -40,8 +46,7 @@ pub(crate) fn build_set_cookie(name: &str, value: &str, attrs: &CookieAttributes
         cookie.push_str("; Domain=");
         cookie.push_str(domain);
     }
-    cookie.push_str("; Max-Age=");
-    cookie.push_str(&ttl_secs.to_string());
+    let _infallible = write!(cookie, "; Max-Age={ttl_secs}");
     if attrs.http_only {
         cookie.push_str("; HttpOnly");
     }

@@ -206,9 +206,9 @@ fn put_update_replaces_endpoint_without_duplicate_entry() {
     // An update must replace the endpoint in place (single map entry, single
     // eviction-queue position) under the TTL policy.
     let store = SessionStore::new(100, Duration::from_millis(500), config::EvictionPolicy::Ttl);
-    store.put("key1".into(), "ep1".into());
+    store.put("key1", "ep1".into());
     std::thread::sleep(Duration::from_millis(10));
-    store.put("key1".into(), "ep2".into());
+    store.put("key1", "ep2".into());
 
     assert_eq!(store.get("key1").as_deref(), Some("ep2"));
     assert_eq!(store.len(), 1);
@@ -217,8 +217,8 @@ fn put_update_replaces_endpoint_without_duplicate_entry() {
 #[test]
 fn opportunistic_sweep_fires_after_half_ttl() {
     let store = SessionStore::new(100, Duration::from_millis(20), config::EvictionPolicy::Lru);
-    store.put("a".into(), "ep1".into());
-    store.put("b".into(), "ep2".into());
+    store.put("a", "ep1".into());
+    store.put("b", "ep2".into());
 
     std::thread::sleep(Duration::from_millis(25));
 
@@ -238,7 +238,7 @@ fn cookie_cfg() -> Arc<ClusterSessionConfig> {
         name: "backend".into(),
         persistence: PersistenceConfig::Cookie {
             cookie_name: "_praxis_route".into(),
-            cookie_attributes: config::CookieAttributes::default(),
+            cookie_attributes: CookieAttributes::default(),
         },
         ttl_secs: 3600,
         failover: true,
@@ -276,7 +276,7 @@ fn cookie_response_does_not_adopt_unknown_client_value() {
 #[test]
 fn cookie_response_repins_known_value_after_failover() {
     let store = SessionStore::new(100, Duration::from_secs(3600), config::EvictionPolicy::Lru);
-    store.put(Arc::from("sessA"), Arc::from("10.0.0.1:80"));
+    store.put("sessA", Arc::from("10.0.0.1:80"));
     let new_endpoint: Arc<str> = Arc::from("10.0.0.2:80");
     let cfg = cookie_cfg();
 
@@ -316,7 +316,7 @@ fn cookie_response_skips_store_when_no_response_header() {
 #[test]
 fn learn_response_repins_existing_binding_after_failover() {
     let store = SessionStore::new(100, Duration::from_secs(3600), config::EvictionPolicy::Lru);
-    store.put(Arc::from("sess1"), Arc::from("10.0.0.1:80"));
+    store.put("sess1", Arc::from("10.0.0.1:80"));
     let new_endpoint: Arc<str> = Arc::from("10.0.0.2:80");
 
     let cfg = Arc::new(ClusterSessionConfig {
@@ -381,7 +381,7 @@ fn learn_response_does_not_adopt_unknown_metadata_key() {
 fn registry_preserves_store_across_reload_when_config_unchanged() {
     let registry = SessionStoreRegistry::new();
     let first = registry.get_or_create("backend", 100, Duration::from_secs(3600), config::EvictionPolicy::Lru);
-    first.put(Arc::from("sess1"), Arc::from("10.0.0.1:80"));
+    first.put("sess1", Arc::from("10.0.0.1:80"));
 
     // A rebuilt pipeline resolves the store again with identical bounds.
     let second = registry.get_or_create("backend", 100, Duration::from_secs(3600), config::EvictionPolicy::Lru);
