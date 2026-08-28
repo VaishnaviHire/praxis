@@ -25,7 +25,7 @@ use tracing::{debug, warn};
 
 use super::{
     FilterPipeline,
-    body::{body_access_by_index, compute_body_capabilities},
+    body::{body_filter_indices, compute_body_capabilities},
     filter::PipelineFilter,
 };
 use crate::{FilterError, any_filter::AnyFilter, registry::FilterRegistry};
@@ -99,13 +99,13 @@ impl FilterPipeline {
         let body_capabilities = compute_body_capabilities(&filters);
         let compression = extract_compression_config(&filters);
         let may_select_streaming_subrequest_response = filters_may_select_streaming_subrequest_response(&filters);
-        let (request_body_access_by_idx, response_body_access_by_idx) = body_access_by_index(&filters);
+        let (request_body_filter_indices, response_body_filter_indices) = body_filter_indices(&filters);
         Self {
             body_capabilities,
             compression,
             filters,
-            request_body_access_by_idx,
-            response_body_access_by_idx,
+            request_body_filter_indices,
+            response_body_filter_indices,
             health_registry: None,
             id_generator: Arc::new(IdGenerator::new()),
             kv_stores: None,

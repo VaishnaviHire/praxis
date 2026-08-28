@@ -20,7 +20,6 @@ use crate::{
     FilterError,
     actions::{FilterAction, Rejection},
     any_filter::AnyFilter,
-    body::BodyAccess,
     condition::{should_execute, should_execute_response_ref},
     context::{HttpFilterContext, Response},
     metrics::{PHASE_REQUEST, PHASE_RESPONSE, STREAM_BODY, STREAM_HEADERS, record_filter_duration},
@@ -59,13 +58,12 @@ pub(super) fn as_request_body_filter<'a>(
     request: &crate::context::Request,
     conditions_resolved: bool,
 ) -> Option<&'a dyn crate::filter::HttpFilter> {
+    // Callers reach here only via the precomputed body-filter index
+    // lists, which already encode `request_body_access() != None`.
     let http_filter = match filter {
         AnyFilter::Http(f) => f.as_ref(),
         AnyFilter::Tcp(_) => return None,
     };
-    if http_filter.request_body_access() == BodyAccess::None {
-        return None;
-    }
     if !conditions_resolved && !should_execute(conditions, request) {
         trace!(filter = http_filter.name(), "body hook skipped by conditions");
         return None;
@@ -79,13 +77,12 @@ pub(super) fn as_response_body_filter<'a>(
     resp_conditions: &[praxis_core::config::ResponseCondition],
     response_header: Option<&Response>,
 ) -> Option<&'a dyn crate::filter::HttpFilter> {
+    // Callers reach here only via the precomputed body-filter index
+    // lists, which already encode `response_body_access() != None`.
     let http_filter = match filter {
         AnyFilter::Http(f) => f.as_ref(),
         AnyFilter::Tcp(_) => return None,
     };
-    if http_filter.response_body_access() == BodyAccess::None {
-        return None;
-    }
     if skip_by_response_conditions_with_header(http_filter, resp_conditions, response_header) {
         return None;
     }

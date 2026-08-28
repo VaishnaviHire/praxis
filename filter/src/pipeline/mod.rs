@@ -143,11 +143,11 @@ pub struct FilterPipeline {
     /// Global response body ceiling, enforced by counting in Stream mode.
     response_body_ceiling: Option<usize>,
 
-    /// Per-filter request-body access flags, index-aligned with `filters`.
-    request_body_access_by_idx: Vec<bool>,
+    /// Indices into `filters` of filters declaring request-body access.
+    request_body_filter_indices: Vec<usize>,
 
-    /// Per-filter response-body access flags, index-aligned with `filters`.
-    response_body_access_by_idx: Vec<bool>,
+    /// Indices into `filters` of filters declaring response-body access.
+    response_body_filter_indices: Vec<usize>,
 }
 
 #[expect(
