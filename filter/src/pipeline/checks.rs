@@ -1492,7 +1492,11 @@ mod tests {
         let filters = vec![host, ip_acl];
         let mut errors = Vec::new();
         check_terminal_rejoin_bypasses_security(&filters, &mut errors);
-        assert_eq!(errors.len(), 1, "a terminal routing branch before ip_acl must be flagged");
+        assert_eq!(
+            errors.len(),
+            1,
+            "a terminal routing branch before ip_acl must be flagged"
+        );
         assert!(
             errors[0].contains("ip_acl") && errors[0].contains("bypassing"),
             "error should name the bypassed filter: {}",
@@ -1503,7 +1507,10 @@ mod tests {
     #[test]
     fn terminal_branch_without_cluster_selection_no_error() {
         let mut host = named_noop_filter("headers", vec![]);
-        host.branches = vec![make_terminal_branch("br", vec![named_noop_filter("request_id", vec![])])];
+        host.branches = vec![make_terminal_branch(
+            "br",
+            vec![named_noop_filter("request_id", vec![])],
+        )];
         let ip_acl = named_noop_filter("ip_acl", vec![]);
         let filters = vec![host, ip_acl];
         let mut errors = Vec::new();
@@ -1583,6 +1590,9 @@ mod tests {
         let filters = vec![ip_acl, host];
         let mut errors = Vec::new();
         check_terminal_rejoin_bypasses_security(&filters, &mut errors);
-        assert!(errors.is_empty(), "security filter before the branch is not bypassed: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "security filter before the branch is not bypassed: {errors:?}"
+        );
     }
 }

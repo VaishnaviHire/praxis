@@ -280,7 +280,10 @@ async fn trailing_content_after_json_does_not_promote() {
         matches!(action, FilterAction::Continue),
         "trailing content after the JSON must not promote"
     );
-    assert!(ctx.extra_request_headers.is_empty(), "no header from a body with trailing junk");
+    assert!(
+        ctx.extra_request_headers.is_empty(),
+        "no header from a body with trailing junk"
+    );
 }
 
 #[tokio::test]
@@ -369,7 +372,10 @@ async fn incomplete_multi_field_body_does_not_promote() {
         matches!(action, FilterAction::Continue),
         "an incomplete body must not promote even when the mapped fields appear complete"
     );
-    assert!(ctx.extra_request_headers.is_empty(), "no header from an incomplete body");
+    assert!(
+        ctx.extra_request_headers.is_empty(),
+        "no header from an incomplete body"
+    );
 }
 
 #[tokio::test]
