@@ -14,7 +14,7 @@ use super::{
     branch_chain::validate_branch_chains,
     cluster::validate_clusters,
     filter_chain::validate_filter_chains,
-    inline_clusters::validate_inline_clusters,
+    inline_clusters::{validate_inline_clusters, validate_tcp_listener_clusters},
     listener::{validate_listener_names, validate_listeners},
 };
 use crate::{
@@ -87,6 +87,7 @@ impl Config {
         validate_cluster_names(&self.clusters)?;
         validate_clusters(&self.clusters, &self.insecure_options)?;
         validate_inline_clusters(&self.filter_chains, &self.insecure_options)?;
+        validate_tcp_listener_clusters(&self.listeners, &self.filter_chains)?;
         self.validate_runtime()?;
         validate_shutdown_timeout(self.shutdown_timeout_secs)?;
         validate_telemetry(&self.telemetry)?;

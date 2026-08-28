@@ -14,7 +14,7 @@ use std::collections::HashSet;
 
 use super::cluster::validate_clusters;
 use crate::{
-    config::{ChainRef, Cluster, FilterChainConfig, FilterEntry, InsecureOptions},
+    config::{ChainRef, Cluster, FilterChainConfig, FilterEntry, InsecureOptions, Listener, ProtocolKind},
     errors::ProxyError,
 };
 
@@ -68,6 +68,51 @@ fn validate_entry(chain_name: &str, entry: &FilterEntry, insecure_options: &Inse
     if entry.filter_type == STEP_BEARING_FILTER {
         for nested in extract_step_filters(chain_name, entry)? {
             validate_entry(chain_name, &nested, insecure_options)?;
+        }
+    }
+    Ok(())
+}
+
+/// Validate that every TCP listener's `cluster` reference resolves.
+///
+/// A TCP listener's `cluster` is consumed only by the `tcp_load_balancer`
+/// filter, which looks the name up in its own inline `clusters:` list. A
+/// name that matches none of those inline clusters is never resolvable, so
+/// every connection to the listener fails at connect time — a startup-time
+/// typo surfacing only as a total per-listener outage.
+pub(super) fn validate_tcp_listener_clusters(
+    listeners: &[Listener],
+    chains: &[FilterChainConfig],
+) -> Result<(), ProxyError> {
+    for listener in listeners {
+        if listener.protocol != ProtocolKind::Tcp {
+            continue;
+        }
+        let Some(cluster_name) = listener.cluster.as_deref() else {
+            continue;
+        };
+
+        let mut available: HashSet<String> = HashSet::new();
+        for chain_name in &listener.filter_chains {
+            let Some(chain) = chains.iter().find(|c| &c.name == chain_name) else {
+                continue;
+            };
+            for entry in &chain.filters {
+                if entry.filter_type == "tcp_load_balancer" {
+                    for cluster in extract_clusters(&chain.name, entry)? {
+                        available.insert(cluster.name.to_string());
+                    }
+                }
+            }
+        }
+
+        if !available.contains(cluster_name) {
+            return Err(ProxyError::Config(format!(
+                "listener '{}': cluster '{cluster_name}' is not defined by any tcp_load_balancer \
+                 filter in its chains (a TCP listener's cluster must name an inline \
+                 tcp_load_balancer cluster)",
+                listener.name
+            )));
         }
     }
     Ok(())
@@ -221,6 +266,22 @@ mod tests {
             "          - name: web\n            endpoints:\n              - address: \"192.0.2.1:80\"\n                weight: 5\n",
         );
         Config::from_yaml(&yaml).expect("valid inline cluster should pass validation");
+    }
+
+    #[test]
+    fn tcp_listener_unknown_cluster_rejected() {
+        let yaml = "listeners:\n  - name: db\n    address: \"127.0.0.1:15432\"\n    protocol: tcp\n    cluster: db_pool_typo\n    filter_chains: [tcp_lb]\nfilter_chains:\n  - name: tcp_lb\n    filters:\n      - filter: tcp_load_balancer\n        clusters:\n          - name: db_pool\n            endpoints: [\"10.0.0.1:5432\"]\ninsecure_options:\n  allow_private_endpoints: true\n";
+        let err = Config::from_yaml(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("db_pool_typo") && err.to_string().contains("tcp_load_balancer"),
+            "a TCP listener cluster typo must be rejected at startup: {err}"
+        );
+    }
+
+    #[test]
+    fn tcp_listener_known_cluster_accepted() {
+        let yaml = "listeners:\n  - name: db\n    address: \"127.0.0.1:15432\"\n    protocol: tcp\n    cluster: db_pool\n    filter_chains: [tcp_lb]\nfilter_chains:\n  - name: tcp_lb\n    filters:\n      - filter: tcp_load_balancer\n        clusters:\n          - name: db_pool\n            endpoints: [\"10.0.0.1:5432\"]\ninsecure_options:\n  allow_private_endpoints: true\n";
+        Config::from_yaml(yaml).expect("a TCP listener naming a defined tcp_load_balancer cluster must pass");
     }
 
     #[test]
