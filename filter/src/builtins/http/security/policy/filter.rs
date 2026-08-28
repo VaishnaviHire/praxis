@@ -146,6 +146,23 @@ impl PolicyFilter {
         reason = "linear construction + init steps; splitting obscures the startup flow"
     )]
     pub(crate) fn new(cfg: PolicyFilterConfig) -> Result<Self, FilterError> {
+        // Bound the per-request ReadWrite buffer ceiling: 0 makes every
+        // non-empty body fail, and an unbounded value multiplies per-request
+        // memory by concurrency. The pipeline's unbounded-buffer startup check
+        // never fires here because this filter always passes a concrete
+        // Some(max_buffer_bytes), so validate it directly.
+        if cfg.max_buffer_bytes == 0 {
+            return Err("policy: max_buffer_bytes must be > 0".into());
+        }
+        if cfg.max_buffer_bytes > praxis_core::config::ABSOLUTE_MAX_BODY_BYTES {
+            return Err(format!(
+                "policy: max_buffer_bytes ({}) exceeds the maximum ({})",
+                cfg.max_buffer_bytes,
+                praxis_core::config::ABSOLUTE_MAX_BODY_BYTES
+            )
+            .into());
+        }
+
         let yaml = std::fs::read_to_string(&cfg.config_path).map_err(|e| -> FilterError {
             format!("policy: failed to read config_path {}: {e}", cfg.config_path).into()
         })?;

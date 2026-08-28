@@ -1017,6 +1017,39 @@ fn config_parses_minimal_yaml() {
     assert_eq!(cfg.max_buffer_bytes, 10_485_760, "max_buffer_bytes defaults to 10 MiB",);
 }
 
+#[test]
+fn rejects_zero_max_buffer_bytes() {
+    // The check runs before the config_path read, so a bogus path is fine.
+    let cfg = PolicyFilterConfig {
+        config_path: "/nonexistent/policy.yaml".to_owned(),
+        body_access: super::config::BodyAccessMode::ReadWrite,
+        require_protocol_metadata: true,
+        init_timeout_secs: 30,
+        max_buffer_bytes: 0,
+    };
+    let err = match PolicyFilter::new(cfg) {
+        Ok(_) => panic!("zero max_buffer_bytes must be rejected"),
+        Err(e) => e.to_string(),
+    };
+    assert!(err.contains("max_buffer_bytes must be > 0"), "got: {err}");
+}
+
+#[test]
+fn rejects_oversized_max_buffer_bytes() {
+    let cfg = PolicyFilterConfig {
+        config_path: "/nonexistent/policy.yaml".to_owned(),
+        body_access: super::config::BodyAccessMode::ReadWrite,
+        require_protocol_metadata: true,
+        init_timeout_secs: 30,
+        max_buffer_bytes: praxis_core::config::ABSOLUTE_MAX_BODY_BYTES + 1,
+    };
+    let err = match PolicyFilter::new(cfg) {
+        Ok(_) => panic!("oversized max_buffer_bytes must be rejected"),
+        Err(e) => e.to_string(),
+    };
+    assert!(err.contains("exceeds the maximum"), "got: {err}");
+}
+
 /// The filter declares its policy document, which is what lets the config
 /// watcher reload when an operator edits policy. See praxis-proxy/praxis#900.
 #[test]
