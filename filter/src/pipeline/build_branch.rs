@@ -38,6 +38,19 @@ use std::{collections::HashMap, mem, sync::Arc};
 use praxis_core::config::{BranchChainConfig, BranchCondition, ChainRef, FilterEntry, MAX_BRANCH_DEPTH};
 use tracing::debug;
 
+/// Hard ceiling on the total number of filter instances a single pipeline
+/// may materialize during branch resolution.
+///
+/// Branch chains expand named references recursively, so the instance count
+/// is the *product* of per-branch reference counts across the nesting depth,
+/// not the config-text size. `MAX_BRANCH_DEPTH` bounds depth and the config
+/// validator bounds branch and filter counts individually, but neither bounds
+/// that product: a small config (e.g. 8 named references per branch, 10 levels
+/// deep) expands to ~10^9 filter instances, exhausting memory at startup or on
+/// hot reload. Counting materialized instances against this ceiling fails such
+/// a config fast instead.
+const MAX_PIPELINE_FILTER_INSTANCES: usize = 100_000;
+
 use super::{
     branch::{RejoinTarget, ResolvedBranch, ResolvedBranchCondition},
     filter::PipelineFilter,
@@ -142,6 +155,14 @@ fn build_filters(
         );
         let filter_id = *next_filter_id;
         *next_filter_id += 1;
+        if *next_filter_id > MAX_PIPELINE_FILTER_INSTANCES {
+            return Err(format!(
+                "branch resolution exceeded {MAX_PIPELINE_FILTER_INSTANCES} filter instances; \
+                 a branch chain likely fans out over named references (reduce references per branch \
+                 or nesting depth)"
+            )
+            .into());
+        }
         let mut pf = PipelineFilter::new(
             filter_id,
             filter,
@@ -566,6 +587,45 @@ mod tests {
         assert_eq!(resolved.filter_name.as_ref(), "cache", "filter_name mismatch");
         assert_eq!(resolved.key.as_ref(), "status", "key mismatch");
         assert_eq!(resolved.value.as_ref(), "hit", "value mismatch");
+    }
+
+    #[test]
+    fn named_ref_fanout_is_bounded() {
+        // A chain whose filter fans out over `refs` named references, nested a
+        // few levels deep, expands multiplicatively. This stays within the
+        // depth limit and per-level branch/filter limits, but the instance
+        // product must be caught before it exhausts memory.
+        fn fanout_chain(target: &str, refs: usize, branch: &str) -> Vec<FilterEntry> {
+            vec![FilterEntry {
+                branch_chains: Some(vec![BranchChainConfig {
+                    chains: (0..refs).map(|_| ChainRef::Named(target.to_owned())).collect(),
+                    max_iterations: None,
+                    name: branch.to_owned(),
+                    on_result: None,
+                    rejoin: "next".to_owned(),
+                }]),
+                ..make_entry("request_id", None)
+            }]
+        }
+
+        let registry = FilterRegistry::with_builtins();
+        let leaf = vec![make_entry("request_id", None)];
+        let c1 = fanout_chain("leaf", 20, "b1");
+        let c2 = fanout_chain("c1", 20, "b2");
+        let c3 = fanout_chain("c2", 20, "b3");
+        let chains: HashMap<&str, &[FilterEntry]> = HashMap::from([
+            ("leaf", leaf.as_slice()),
+            ("c1", c1.as_slice()),
+            ("c2", c2.as_slice()),
+            ("c3", c3.as_slice()),
+        ]);
+        // ~20^4 = 160k instances, over the 100k ceiling.
+        let mut top = fanout_chain("c3", 20, "b0");
+        let err = resolve_chain_filters(&mut top, &registry, &chains, 0).unwrap_err();
+        assert!(
+            err.to_string().contains("filter instances"),
+            "an unbounded named-reference fan-out must fail the build: {err}"
+        );
     }
 
     #[test]
