@@ -68,6 +68,16 @@ fn validate_parameterised(name: &str, param: &ParameterisedStrategy) -> Result<(
                 opts.overprovisioning_factor,
             )));
         },
+        ParameterisedStrategy::Subset(opts) if opts.selector.is_empty() => {
+            // An empty selector matches every endpoint (vacuous `all()`),
+            // silently degrading the subset strategy to its inner strategy
+            // over the full endpoint set and making fallback_policy dead
+            // config. That is never what a subset strategy is configured for.
+            return Err(ProxyError::Config(format!(
+                "cluster '{name}': subset.selector must not be empty \
+                 (an empty selector matches all endpoints, defeating the subset)"
+            )));
+        },
         ParameterisedStrategy::ConsistentHash(_)
         | ParameterisedStrategy::Maglev(_)
         | ParameterisedStrategy::RingHash(_)
@@ -96,7 +106,7 @@ mod tests {
     use super::validate_lb_strategy;
     use crate::config::{
         Cluster, HashFunction, LoadBalancerStrategy, ParameterisedStrategy, PriorityOpts, RingHashOpts, SimpleStrategy,
-        ZoneAwareOpts,
+        SubsetFallbackPolicy, SubsetOpts, ZoneAwareOpts,
     };
 
     #[test]
@@ -228,6 +238,34 @@ mod tests {
             },
         )));
         validate_lb_strategy(&cluster).expect("valid overprovisioning should pass");
+    }
+
+    #[test]
+    fn reject_subset_empty_selector() {
+        let cluster = cluster_with_strategy(LoadBalancerStrategy::Parameterised(ParameterisedStrategy::Subset(
+            SubsetOpts {
+                fallback_policy: SubsetFallbackPolicy::default(),
+                inner_strategy: SimpleStrategy::default(),
+                selector: std::collections::HashMap::new(),
+            },
+        )));
+        let err = validate_lb_strategy(&cluster).unwrap_err();
+        assert!(
+            err.to_string().contains("subset.selector must not be empty"),
+            "an empty selector matches all endpoints and must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn accept_subset_with_selector() {
+        let cluster = cluster_with_strategy(LoadBalancerStrategy::Parameterised(ParameterisedStrategy::Subset(
+            SubsetOpts {
+                fallback_policy: SubsetFallbackPolicy::default(),
+                inner_strategy: SimpleStrategy::default(),
+                selector: std::collections::HashMap::from([("zone".to_owned(), "a".to_owned())]),
+            },
+        )));
+        validate_lb_strategy(&cluster).expect("a non-empty selector should pass");
     }
 
     #[test]
