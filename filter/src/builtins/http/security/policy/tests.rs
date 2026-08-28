@@ -1924,15 +1924,15 @@ fn entity_for_protocol_method_post_covers_known_methods() {
 /// falls back to the empty string when the body is missing or malformed.
 #[test]
 fn json_rpc_id_handles_string_numeric_and_malformed() {
-    use super::json_rpc::json_rpc_id;
+    use super::json_rpc::ParsedEnvelope;
     let str_id = bytes::Bytes::from_static(br#"{"jsonrpc":"2.0","id":"req-1","method":"x"}"#);
     let num_id = bytes::Bytes::from_static(br#"{"jsonrpc":"2.0","id":42,"method":"x"}"#);
     let no_id = bytes::Bytes::from_static(br#"{"jsonrpc":"2.0","method":"x"}"#);
     let bad = bytes::Bytes::from_static(b"not json");
-    assert_eq!(json_rpc_id(&str_id), "req-1");
-    assert_eq!(json_rpc_id(&num_id), "42");
-    assert_eq!(json_rpc_id(&no_id), "");
-    assert_eq!(json_rpc_id(&bad), "");
+    assert_eq!(ParsedEnvelope::parse(&str_id).id_string(), "req-1");
+    assert_eq!(ParsedEnvelope::parse(&num_id).id_string(), "42");
+    assert_eq!(ParsedEnvelope::parse(&no_id).id_string(), "");
+    assert_eq!(ParsedEnvelope::parse(&bad).id_string(), "");
 }
 
 /// `json_rpc_id_value` preserves the original JSON type so an error
@@ -1940,13 +1940,13 @@ fn json_rpc_id_handles_string_numeric_and_malformed() {
 /// string; numeric stays numeric). Missing/malformed → `Value::Null`.
 #[test]
 fn json_rpc_id_value_preserves_json_type() {
-    use super::json_rpc::json_rpc_id_value;
+    use super::json_rpc::ParsedEnvelope;
     let str_id = bytes::Bytes::from_static(br#"{"id":"req-1"}"#);
     let num_id = bytes::Bytes::from_static(br#"{"id":42}"#);
     let bad = bytes::Bytes::from_static(b"{");
-    assert_eq!(json_rpc_id_value(&str_id), serde_json::json!("req-1"));
-    assert_eq!(json_rpc_id_value(&num_id), serde_json::json!(42));
-    assert_eq!(json_rpc_id_value(&bad), serde_json::Value::Null);
+    assert_eq!(ParsedEnvelope::parse(&str_id).id_value(), serde_json::json!("req-1"));
+    assert_eq!(ParsedEnvelope::parse(&num_id).id_value(), serde_json::json!(42));
+    assert_eq!(ParsedEnvelope::parse(&bad).id_value(), serde_json::Value::Null);
 }
 
 /// `tools/call` parses `params.arguments` into a `ToolCall` content
@@ -1961,7 +1961,12 @@ fn build_content_for_method_tools_call() {
         br#"{"jsonrpc":"2.0","id":1,"method":"tools/call",
              "params":{"name":"echo","arguments":{"text":"hi","n":7}}}"#,
     );
-    let parts = build_content_for_method("tools/call", "echo", "corr-1", &body);
+    let parts = build_content_for_method(
+        "tools/call",
+        "echo",
+        "corr-1",
+        &super::json_rpc::ParsedEnvelope::parse(&body),
+    );
     assert_eq!(parts.len(), 1);
     match &parts[0] {
         ContentPart::ToolCall { content } => {
@@ -1986,7 +1991,12 @@ fn build_content_for_method_resources_read() {
         br#"{"jsonrpc":"2.0","id":1,"method":"resources/read",
              "params":{"uri":"file:///etc/example"}}"#,
     );
-    let parts = build_content_for_method("resources/read", "file:///etc/example", "corr-1", &body);
+    let parts = build_content_for_method(
+        "resources/read",
+        "file:///etc/example",
+        "corr-1",
+        &super::json_rpc::ParsedEnvelope::parse(&body),
+    );
     assert_eq!(parts.len(), 1);
     match &parts[0] {
         ContentPart::ResourceRef { content } => {
@@ -2004,7 +2014,12 @@ fn build_content_for_method_resources_read() {
 fn build_content_for_method_unknown_method_yields_empty() {
     use super::json_rpc::build_content_for_method;
     let body = bytes::Bytes::from_static(br#"{"method":"tools/list"}"#);
-    let parts = build_content_for_method("tools/list", "n/a", "corr-1", &body);
+    let parts = build_content_for_method(
+        "tools/list",
+        "n/a",
+        "corr-1",
+        &super::json_rpc::ParsedEnvelope::parse(&body),
+    );
     assert!(parts.is_empty());
 }
 
@@ -2059,7 +2074,12 @@ fn build_response_content_for_method_text_fallback() {
              "content":[{"type":"text","text":"{\"k\":\"v\"}"}],
              "isError":false}}"#,
     );
-    let parts = build_response_content_for_method("tools/call", "echo", "corr-1", &body);
+    let parts = build_response_content_for_method(
+        "tools/call",
+        "echo",
+        "corr-1",
+        &super::json_rpc::ParsedEnvelope::parse(&body),
+    );
     assert_eq!(parts.len(), 1);
     match &parts[0] {
         ContentPart::ToolResult { content } => {
@@ -2084,7 +2104,12 @@ fn build_response_content_for_method_prefers_structured_content() {
              "structuredContent":{"hi":"there"},
              "isError":true}}"#,
     );
-    let parts = build_response_content_for_method("tools/call", "echo", "corr-1", &body);
+    let parts = build_response_content_for_method(
+        "tools/call",
+        "echo",
+        "corr-1",
+        &super::json_rpc::ParsedEnvelope::parse(&body),
+    );
     assert_eq!(parts.len(), 1);
     match &parts[0] {
         ContentPart::ToolResult { content } => {
@@ -2114,7 +2139,12 @@ fn build_response_content_for_method_folds_all_text_blocks() {
              ],
              "isError":false}}"#,
     );
-    let parts = build_response_content_for_method("tools/call", "echo", "corr-1", &body);
+    let parts = build_response_content_for_method(
+        "tools/call",
+        "echo",
+        "corr-1",
+        &super::json_rpc::ParsedEnvelope::parse(&body),
+    );
     assert_eq!(parts.len(), 1);
     match &parts[0] {
         ContentPart::ToolResult { content } => {

@@ -28,25 +28,43 @@ use ppe::praxis_policy_core::cmf::{
 ///
 /// Delegates to [`json_rpc_id_value`] so the body is parsed by a single
 /// implementation rather than two independent `from_slice` calls.
-pub(super) fn json_rpc_id(body: &Bytes) -> String {
-    match json_rpc_id_value(body) {
-        serde_json::Value::String(s) => s,
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
-    }
-}
+/// A JSON-RPC body parsed once per filter phase.
+///
+/// The request- and response-phase paths each needed the body's `id`
+/// (twice, on deny paths), `params`/`result`, and the rewrite base —
+/// previously each helper re-parsed the full body from bytes, up to
+/// three O(body) DOM materializations per phase. Parsing once and
+/// passing this around removes the repeats; a missing or malformed
+/// body parses to `Null`, reproducing every helper's old independent
+/// fallback exactly.
+pub(super) struct ParsedEnvelope(serde_json::Value);
 
-/// Typed companion to [`json_rpc_id`]. Returns the raw `id` JSON value
-/// from the request body — preserves the original shape (string or
-/// number) so a JSON-RPC error envelope echoes back exactly what the
-/// client sent. Returns `Value::Null` when the body is missing or
-/// malformed; per JSON-RPC 2.0, an error response MAY use `null` when
-/// the original id could not be determined.
-pub(super) fn json_rpc_id_value(body: &Bytes) -> serde_json::Value {
-    serde_json::from_slice::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| v.get("id").cloned())
-        .unwrap_or(serde_json::Value::Null)
+impl ParsedEnvelope {
+    /// Parse `body`; malformed or empty input yields a `Null` envelope.
+    pub(super) fn parse(body: &Bytes) -> Self {
+        Self(serde_json::from_slice(body).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// The raw `id` value (`Null` when absent), preserving the original
+    /// shape so error envelopes echo exactly what the client sent.
+    pub(super) fn id_value(&self) -> serde_json::Value {
+        self.0.get("id").cloned().unwrap_or(serde_json::Value::Null)
+    }
+
+    /// The `id` rendered for correlation strings.
+    pub(super) fn id_string(&self) -> String {
+        match self.id_value() {
+            serde_json::Value::String(s) => s,
+            serde_json::Value::Null => String::new(),
+            other => other.to_string(),
+        }
+    }
+
+    /// A top-level field of the envelope, if the body parsed to an
+    /// object carrying it.
+    fn field(&self, name: &str) -> Option<&serde_json::Value> {
+        self.0.get(name)
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -68,12 +86,9 @@ pub(super) fn build_content_for_method(
     method: &str,
     entity_name: &str,
     correlation_id: &str,
-    body: &Bytes,
+    envelope: &ParsedEnvelope,
 ) -> Vec<ContentPart> {
-    let params: serde_json::Value = serde_json::from_slice::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| v.get("params").cloned())
-        .unwrap_or(serde_json::Value::Null);
+    let params: serde_json::Value = envelope.field("params").cloned().unwrap_or(serde_json::Value::Null);
 
     match method {
         "tools/call" => {
@@ -225,16 +240,12 @@ pub(super) fn build_response_content_for_method(
     method: &str,
     entity_name: &str,
     correlation_id: &str,
-    body: &Bytes,
+    envelope: &ParsedEnvelope,
 ) -> Vec<ContentPart> {
     if method != "tools/call" {
         return Vec::new();
     }
-    let envelope: serde_json::Value = match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let Some(result) = envelope.get("result") else {
+    let Some(result) = envelope.field("result") else {
         return Vec::new();
     };
     let is_error = result

@@ -29,8 +29,8 @@ use super::{
     config::{BodyAccessMode, PolicyFilterConfig},
     error::{VIOLATION_HEADER, auth_rejection, json_rpc_error_envelope_bytes, json_rpc_error_rejection},
     json_rpc::{
-        build_content_for_method, build_response_content_for_method, json_rpc_id, json_rpc_id_value,
-        reserialize_json_rpc_body, reserialize_json_rpc_response_body,
+        ParsedEnvelope, build_content_for_method, build_response_content_for_method, reserialize_json_rpc_body,
+        reserialize_json_rpc_response_body,
     },
 };
 use crate::{
@@ -855,8 +855,11 @@ impl HttpFilter for PolicyFilter {
         // body is already in memory; the duplicate parse is
         // microseconds.
         let body_bytes = body.as_ref().cloned().unwrap_or_else(Bytes::new);
-        let id = json_rpc_id(&body_bytes);
-        let content = build_content_for_method(&method, &entity_name, &id, &body_bytes);
+        // Parse once for this phase: the id, the typed content, and the
+        // deny-path id echo all read the same DOM.
+        let parsed = ParsedEnvelope::parse(&body_bytes);
+        let id = parsed.id_string();
+        let content = build_content_for_method(&method, &entity_name, &id, &parsed);
 
         // Dispatch the CMF hook. The route annotation (installed by
         // the APL visitor at config-load time) drives policy
@@ -881,7 +884,7 @@ impl HttpFilter for PolicyFilter {
         .map_err(|e| -> FilterError { format!("policy: CMF request-phase hook task failed: {e}").into() })?;
 
         if !cmf_result.continue_processing {
-            let request_id = json_rpc_id_value(&body_bytes);
+            let request_id = parsed.id_value();
             tracing::debug!(
                 target: "policy.filter",
                 hook = %hook_name,
@@ -987,7 +990,10 @@ impl HttpFilter for PolicyFilter {
         };
 
         let body_bytes = body.as_ref().cloned().unwrap_or_else(Bytes::new);
-        let id_str = json_rpc_id(&body_bytes);
+        // Parse once for this phase; the id string, the deny-path id
+        // echoes, and the typed content all read the same DOM.
+        let parsed = ParsedEnvelope::parse(&body_bytes);
+        let id_str = parsed.id_string();
 
         // Rebuild `Extensions` from the identity resolved in the request
         // phase (stashed in `ctx.extensions`), rather than re-running the
@@ -1009,7 +1015,7 @@ impl HttpFilter for PolicyFilter {
                 "no request-phase identity stashed; failing closed \
                  (replacing response body with deny envelope)",
             );
-            let request_id = json_rpc_id_value(&body_bytes);
+            let request_id = parsed.id_value();
             let violation = PluginViolation::new(
                 "identity.post_phase_unavailable",
                 "no request-phase identity available for response processing",
@@ -1026,7 +1032,7 @@ impl HttpFilter for PolicyFilter {
         let headers = Self::snapshot_headers(ctx);
         let extensions = Self::extensions_from_identity(&headers, identity, entity_type, &entity_name);
 
-        let content = build_response_content_for_method(&method, &entity_name, &id_str, &body_bytes);
+        let content = build_response_content_for_method(&method, &entity_name, &id_str, &parsed);
         if content.is_empty() {
             return Ok(FilterAction::Continue);
         }
@@ -1067,7 +1073,7 @@ impl HttpFilter for PolicyFilter {
             );
             // Reuse `body_bytes` (the original response body cloned above);
             // it has not been reassigned on this path.
-            let request_id = json_rpc_id_value(&body_bytes);
+            let request_id = parsed.id_value();
             let envelope = json_rpc_error_envelope_bytes(cmf_result.violation.as_ref(), &request_id);
             *body = Some(fit_to_original_length(
                 envelope,
@@ -1100,7 +1106,7 @@ impl HttpFilter for PolicyFilter {
                         "response rewrite exceeds committed Content-Length; \
                          failing closed with deny envelope",
                     );
-                    let request_id = json_rpc_id_value(&body_bytes);
+                    let request_id = parsed.id_value();
                     let violation = PluginViolation::new(
                         "gateway.response_rewrite_overflow",
                         "response rewrite exceeded the committed response length",
