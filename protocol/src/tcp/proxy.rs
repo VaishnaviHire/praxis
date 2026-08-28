@@ -136,24 +136,21 @@ impl PingoraTcpProxy {
             })
     }
 
-    /// Run bidirectional forwarding, returning `(bytes_in, bytes_out)`.
+    /// Run bidirectional forwarding, returning `(bytes_in, bytes_out, reason)`.
+    ///
+    /// The byte counts are exact only on a clean close (`Completed`); a
+    /// cancelled `copy_bidirectional` (shutdown, idle timeout, or max-duration
+    /// force-close) cannot report its partial progress, so those reasons carry
+    /// zero counts. The reason lets the `connection_close` log distinguish a
+    /// force-close from a genuine completion.
     async fn forward(
         &self,
         session: &mut Stream,
         upstream: &mut TcpStream,
         shutdown_rx: &mut watch::Receiver<bool>,
         upstream_addr: &str,
-    ) -> (u64, u64) {
-        let result = self.forward_inner(session, upstream, shutdown_rx, upstream_addr).await;
-
-        match result {
-            Some(Ok((c2s, s2c))) => (c2s, s2c),
-            Some(Err(e)) => {
-                warn!(upstream = %upstream_addr, error = %e, phase = "forward", "connection_error");
-                (0, 0)
-            },
-            None => (0, 0),
-        }
+    ) -> (u64, u64, TcpCloseReason) {
+        self.forward_inner(session, upstream, shutdown_rx, upstream_addr).await
     }
 
     /// Inner forwarding logic, optionally wrapped in a max-duration timeout.
@@ -163,12 +160,12 @@ impl PingoraTcpProxy {
         upstream: &mut TcpStream,
         shutdown_rx: &mut watch::Receiver<bool>,
         upstream_addr: &str,
-    ) -> Option<io::Result<(u64, u64)>> {
+    ) -> (u64, u64, TcpCloseReason) {
         let copy_fut = async {
             let copy_future = tokio::io::copy_bidirectional(session, upstream);
             match self.session_timeout {
                 Some(timeout) => forward_with_timeout(copy_future, shutdown_rx, timeout, upstream_addr).await,
-                None => forward_no_timeout(copy_future, shutdown_rx).await,
+                None => forward_no_timeout(copy_future, shutdown_rx, upstream_addr).await,
             }
         };
 
@@ -181,7 +178,7 @@ impl PingoraTcpProxy {
                     max_duration_secs = max_dur.as_secs(),
                     "TCP session exceeded maximum duration"
                 );
-                None
+                (0, 0, TcpCloseReason::MaxDuration)
             }
         } else {
             copy_fut.await
@@ -326,6 +323,7 @@ impl ServerApp for PingoraTcpProxy {
             } else {
                 (None, Vec::new())
             };
+            let peeked_len = u64::try_from(peeked_bytes.len()).unwrap_or(u64::MAX);
 
             // Pin one pipeline generation for the whole connection so paired
             // connect/disconnect filter state (e.g. least-connections counters)
@@ -409,9 +407,13 @@ impl ServerApp for PingoraTcpProxy {
             }
 
             let mut shutdown_rx: watch::Receiver<bool> = shutdown.clone();
-            let (bytes_in, bytes_out) = self
+            let (copied_in, bytes_out, close_reason) = self
                 .forward(&mut session, &mut upstream, &mut shutdown_rx, &upstream_addr)
                 .await;
+            // The peeked ClientHello bytes were read from the client and
+            // written to the upstream before copy_bidirectional started, so
+            // they are client->upstream ingress and belong in bytes_in.
+            let bytes_in = copied_in.saturating_add(peeked_len);
 
             self.run_disconnect_filters(
                 &pipeline,
@@ -432,7 +434,7 @@ impl ServerApp for PingoraTcpProxy {
                 bytes_in,
                 bytes_out,
                 duration_ms,
-                reason = "completed",
+                reason = close_reason.as_str(),
                 "connection_close"
             );
             super::metrics::record_tcp_connection_duration(
@@ -629,35 +631,75 @@ fn extract_addrs(session: &Stream) -> (String, String) {
     (remote, local)
 }
 
-/// Forward with an idle timeout, returning `None` on shutdown or timeout.
+/// Why a forwarded TCP connection closed, for the `connection_close` log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TcpCloseReason {
+    /// `copy_bidirectional` completed normally (both directions saw EOF).
+    Completed,
+    /// The copy returned an I/O error.
+    Error,
+    /// The server shut down while forwarding.
+    Shutdown,
+    /// The idle `session_timeout` elapsed.
+    SessionTimeout,
+    /// The overall `max_duration` elapsed and the session was force-closed.
+    MaxDuration,
+}
+
+impl TcpCloseReason {
+    /// Stable log label.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Error => "error",
+            Self::Shutdown => "shutdown",
+            Self::SessionTimeout => "session_timeout",
+            Self::MaxDuration => "max_duration",
+        }
+    }
+}
+
+/// Forward with an idle timeout, returning the close reason on shutdown or timeout.
 async fn forward_with_timeout<F: Future<Output = io::Result<(u64, u64)>>>(
     copy_future: F,
     shutdown_rx: &mut watch::Receiver<bool>,
     timeout: Duration,
     upstream_addr: &str,
-) -> Option<io::Result<(u64, u64)>> {
+) -> (u64, u64, TcpCloseReason) {
     tokio::select! {
         biased;
-        _ = shutdown_rx.changed() => None,
-        r = tokio::time::timeout(timeout, copy_future) => if let Ok(inner) = r {
-            Some(inner)
-        } else {
-            let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
-            warn!(upstream = %upstream_addr, timeout_ms, "TCP session timed out");
-            None
+        _ = shutdown_rx.changed() => (0, 0, TcpCloseReason::Shutdown),
+        r = tokio::time::timeout(timeout, copy_future) => match r {
+            Ok(Ok((c2s, s2c))) => (c2s, s2c, TcpCloseReason::Completed),
+            Ok(Err(e)) => {
+                warn!(upstream = %upstream_addr, error = %e, phase = "forward", "connection_error");
+                (0, 0, TcpCloseReason::Error)
+            },
+            Err(_) => {
+                let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+                warn!(upstream = %upstream_addr, timeout_ms, "TCP session timed out");
+                (0, 0, TcpCloseReason::SessionTimeout)
+            },
         },
     }
 }
 
-/// Forward without timeout, returning `None` on shutdown.
+/// Forward without timeout, returning the close reason on shutdown.
 async fn forward_no_timeout<F: Future<Output = io::Result<(u64, u64)>>>(
     copy_future: F,
     shutdown_rx: &mut watch::Receiver<bool>,
-) -> Option<io::Result<(u64, u64)>> {
+    upstream_addr: &str,
+) -> (u64, u64, TcpCloseReason) {
     tokio::select! {
         biased;
-        _ = shutdown_rx.changed() => None,
-        r = copy_future => Some(r),
+        _ = shutdown_rx.changed() => (0, 0, TcpCloseReason::Shutdown),
+        r = copy_future => match r {
+            Ok((c2s, s2c)) => (c2s, s2c, TcpCloseReason::Completed),
+            Err(e) => {
+                warn!(upstream = %upstream_addr, error = %e, phase = "forward", "connection_error");
+                (0, 0, TcpCloseReason::Error)
+            },
+        },
     }
 }
 
@@ -781,6 +823,69 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
+
+    #[tokio::test]
+    async fn forward_completed_returns_bytes_and_completed_reason() {
+        let (_tx, mut rx) = watch::channel(false);
+        let (c2s, s2c, reason) =
+            forward_no_timeout(async { Ok((5_u64, 7_u64)) }, &mut rx, "10.0.0.1:5432").await;
+        assert_eq!((c2s, s2c), (5, 7), "clean completion must report the copied byte counts");
+        assert_eq!(reason, TcpCloseReason::Completed, "clean completion is 'completed'");
+    }
+
+    #[tokio::test]
+    async fn forward_error_returns_error_reason() {
+        let (_tx, mut rx) = watch::channel(false);
+        let (c2s, s2c, reason) = forward_no_timeout(
+            async { Err(io::Error::new(io::ErrorKind::ConnectionReset, "reset")) },
+            &mut rx,
+            "10.0.0.1:5432",
+        )
+        .await;
+        assert_eq!((c2s, s2c), (0, 0), "an errored copy cannot report counts");
+        assert_eq!(reason, TcpCloseReason::Error, "an I/O error must not be logged as 'completed'");
+    }
+
+    #[tokio::test]
+    async fn forward_shutdown_returns_shutdown_reason() {
+        let (tx, mut rx) = watch::channel(false);
+        tx.send(true).expect("send shutdown");
+        let (c2s, s2c, reason) =
+            forward_no_timeout(std::future::pending::<io::Result<(u64, u64)>>(), &mut rx, "10.0.0.1:5432").await;
+        assert_eq!((c2s, s2c), (0, 0), "a shutdown-cancelled copy cannot report counts");
+        assert_eq!(
+            reason,
+            TcpCloseReason::Shutdown,
+            "a server-shutdown close must not be logged as 'completed'"
+        );
+    }
+
+    #[tokio::test]
+    async fn forward_idle_timeout_returns_session_timeout_reason() {
+        let (_tx, mut rx) = watch::channel(false);
+        let (c2s, s2c, reason) = forward_with_timeout(
+            std::future::pending::<io::Result<(u64, u64)>>(),
+            &mut rx,
+            Duration::from_millis(5),
+            "10.0.0.1:5432",
+        )
+        .await;
+        assert_eq!((c2s, s2c), (0, 0), "a timed-out copy cannot report counts");
+        assert_eq!(
+            reason,
+            TcpCloseReason::SessionTimeout,
+            "an idle-timeout close must not be logged as 'completed'"
+        );
+    }
+
+    #[test]
+    fn tcp_close_reason_labels_are_stable() {
+        assert_eq!(TcpCloseReason::Completed.as_str(), "completed");
+        assert_eq!(TcpCloseReason::Error.as_str(), "error");
+        assert_eq!(TcpCloseReason::Shutdown.as_str(), "shutdown");
+        assert_eq!(TcpCloseReason::SessionTimeout.as_str(), "session_timeout");
+        assert_eq!(TcpCloseReason::MaxDuration.as_str(), "max_duration");
+    }
 
     /// Rejects every TCP connection; stands in for a policy filter placed
     /// after the load balancer.
