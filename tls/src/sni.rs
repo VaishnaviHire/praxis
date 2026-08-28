@@ -287,8 +287,13 @@ impl SniReassembler {
                     let body = std::mem::take(&mut self.body);
                     return parse_client_hello(&body).map(Some);
                 }
-                // The total is known: size the accumulator once.
-                self.body.reserve(hs_len - self.body.len());
+                // Size the accumulator from the claimed total, clamped
+                // to what the current buffer can still supply. The u24
+                // length is attacker-chosen (up to 16 MiB), while the
+                // caller's peek cap bounds real data to a few KiB: a
+                // 9-byte record must not drive a 16 MiB reservation.
+                self.body
+                    .reserve((hs_len - self.body.len()).min(buf.len().saturating_sub(self.pos)));
             }
         }
     }
@@ -1217,6 +1222,26 @@ mod tests {
         assert!(
             matches!(reassembler.advance(&buf), Err(SniParseError::NotHandshake)),
             "a non-handshake record must end reassembly"
+        );
+    }
+
+    #[test]
+    fn reassembler_reservation_bounded_by_supplied_bytes() {
+        // A 9-byte record claiming the maximum u24 handshake length
+        // (16 MiB) must not drive the accumulator's capacity past the
+        // bytes actually supplied: the length field is attacker-chosen
+        // while the caller's peek cap bounds real data.
+        let buf = [22, 3, 1, 0, 4, HANDSHAKE_TYPE_CLIENT_HELLO, 0xFF, 0xFF, 0xFF];
+        let mut reassembler = SniReassembler::new();
+        assert!(
+            matches!(reassembler.advance(&buf), Ok(None)),
+            "an incomplete hello must ask for more data"
+        );
+        assert!(
+            reassembler.body.capacity() <= buf.len(),
+            "capacity {} must not exceed the {} supplied bytes",
+            reassembler.body.capacity(),
+            buf.len()
         );
     }
 
