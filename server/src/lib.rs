@@ -33,7 +33,7 @@ pub(crate) mod reload_diagnostics;
 mod server;
 pub(crate) mod startup_checks;
 pub(crate) mod watcher;
-pub use pipelines::resolve_pipelines;
+pub use pipelines::{build_subrequest_client, resolve_pipelines};
 pub use praxis_core::{
     config::load_config,
     logging::{TracingGuard, init_tracing},

@@ -565,9 +565,16 @@ fn predicate_keeps_all_safe_headers() {
 fn connector_stores_configured_max_connections() {
     let connector = SubRequestConnector::new(4, Some(256));
     assert_eq!(connector.configured_max_connections, Some(256));
+    assert_eq!(
+        connector.configured_max_connections(),
+        Some(256),
+        "accessor matches field"
+    );
+    assert!(!connector.has_circuit_breaker(), "new() never wires a circuit breaker");
 
     let unbounded = SubRequestConnector::new(4, None);
     assert_eq!(unbounded.configured_max_connections, None);
+    assert_eq!(unbounded.configured_max_connections(), None, "accessor matches field");
 }
 
 // -- SubRequestConnectorOptions -----------------------------------------------
@@ -588,6 +595,7 @@ fn with_options_creates_connector() {
         connector.circuit_breakers.is_none(),
         "no circuit breaker config should mean no registry"
     );
+    assert!(!connector.has_circuit_breaker(), "accessor reflects no registry");
 }
 
 #[test]
@@ -605,6 +613,7 @@ fn with_options_circuit_breaker_enabled() {
         connector.circuit_breakers.is_some(),
         "circuit breaker config should create a registry"
     );
+    assert!(connector.has_circuit_breaker(), "accessor reflects the wired registry");
 }
 
 // -- CircuitGuard outcome classification ------------------------------------

@@ -133,6 +133,26 @@ impl SubRequestConnector {
         &self.inner
     }
 
+    /// Whether a sub-request circuit breaker registry is wired.
+    ///
+    /// `true` only when the connector was built (via [`with_options`]) with a
+    /// circuit-breaker config; [`new`] never wires one. Exposed so callers and
+    /// tests can assert that a configured `runtime.subrequest_circuit_breaker`
+    /// actually reached the connector.
+    ///
+    /// [`with_options`]: Self::with_options
+    /// [`new`]: Self::new
+    #[must_use]
+    pub fn has_circuit_breaker(&self) -> bool {
+        self.circuit_breakers.is_some()
+    }
+
+    /// The configured max-connections admission limit, if any.
+    #[must_use]
+    pub fn configured_max_connections(&self) -> Option<usize> {
+        self.configured_max_connections
+    }
+
     /// Acquire an admission permit if a concurrency limit is
     /// configured. Returns `None` when no limit is set.
     ///
