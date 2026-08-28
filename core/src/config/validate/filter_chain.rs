@@ -63,6 +63,14 @@ fn validate_entry_conditions(chain_name: &str, entry: &FilterEntry) -> Result<()
             }
         }
     }
+    // Filters nested in an iterative_request_router's steps are built into
+    // real pipelines, so their conditions need the same empty-predicate
+    // check (matching the inline-cluster validation walk).
+    if entry.filter_type == super::inline_clusters::STEP_BEARING_FILTER {
+        for nested in super::inline_clusters::extract_step_filters(chain_name, entry)? {
+            validate_entry_conditions(chain_name, &nested)?;
+        }
+    }
     Ok(())
 }
 
@@ -272,6 +280,33 @@ filter_chains:
         assert!(
             err.to_string().contains("condition 0 is empty"),
             "an empty unless predicate silently disables the filter: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_empty_condition_in_iterative_router_step() {
+        let yaml = r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+filter_chains:
+  - name: main
+    filters:
+      - filter: iterative_request_router
+        steps:
+          - name: call
+            url: "http://backend"
+            filters:
+              - filter: ip_acl
+                deny: ["10.0.0.0/8"]
+                conditions:
+                  - unless: {}
+"#;
+        let err = Config::from_yaml(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("condition 0 is empty"),
+            "an empty predicate inside an IRR step must be rejected too: {err}"
         );
     }
 

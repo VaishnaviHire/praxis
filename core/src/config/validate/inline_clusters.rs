@@ -22,7 +22,7 @@ use crate::{
 const CLUSTER_BEARING_FILTERS: &[&str] = &["load_balancer", "tcp_load_balancer"];
 
 /// Filter type whose config nests filter entries under `steps[].filters`.
-const STEP_BEARING_FILTER: &str = "iterative_request_router";
+pub(super) const STEP_BEARING_FILTER: &str = "iterative_request_router";
 
 // -----------------------------------------------------------------------------
 // Inline Cluster Validation
@@ -124,7 +124,7 @@ pub(super) fn validate_tcp_listener_clusters(
 /// These live in the opaque filter config exactly like inline branch
 /// filters, and can themselves declare inline load-balancer clusters that
 /// would otherwise bypass validation.
-fn extract_step_filters(chain_name: &str, entry: &FilterEntry) -> Result<Vec<FilterEntry>, ProxyError> {
+pub(super) fn extract_step_filters(chain_name: &str, entry: &FilterEntry) -> Result<Vec<FilterEntry>, ProxyError> {
     let serde_yaml::Value::Mapping(mapping) = &entry.config else {
         return Ok(Vec::new());
     };
