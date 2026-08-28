@@ -91,6 +91,49 @@ fn tcp_session_timeout_closes_idle_session() {
     );
 }
 
+#[test]
+fn tcp_session_omitted_timeout_gets_default_and_forwards() {
+    // No tcp_session_timeout_ms in config: validation applies the 5-minute
+    // default, and forwarding must relay traffic both ways and propagate the
+    // client's EOF through to a clean close long before that deadline.
+    let backend_port = start_tcp_tagged_backend("defaulted");
+    let proxy_port = free_port();
+    let yaml = tcp_yaml(proxy_port, backend_port, "", "");
+    let config = Config::from_yaml(&yaml).unwrap();
+    let _proxy = start_full_proxy(&config);
+    wait_for_tcp(&format!("127.0.0.1:{proxy_port}"));
+
+    // One connect/write/read exchange. `None` if the proxy shed the
+    // connection during setup (a clean empty close under suite load).
+    let attempt = || -> Option<String> {
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{proxy_port}")).ok()?;
+        stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+        stream.write_all(b"default-timeout-traffic").ok()?;
+        // Half-close: the proxy must forward the EOF; the tagged backend
+        // echoes and closes, and the proxy must relay that close back.
+        stream.shutdown(std::net::Shutdown::Write).ok()?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).ok()?;
+        Some(String::from_utf8_lossy(&buf).into_owned())
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut last = String::from("<connection shed on every attempt>");
+    loop {
+        if let Some(text) = attempt() {
+            if text == "defaulted:default-timeout-traffic" {
+                return;
+            }
+            last = text.chars().take(48).collect();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a defaulted-timeout session must forward bytes and close cleanly: {last:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Start a backend that accepts connections and holds them open
 /// without responding, so sessions only end when the proxy ends them.
 fn start_holding_backend() -> u16 {

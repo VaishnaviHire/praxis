@@ -379,6 +379,25 @@ mod tests {
     }
 
     #[test]
+    fn load_balancer_strategy_rejects_sequence_value() {
+        let err = serde_yaml::from_str::<LoadBalancerStrategy>("[round_robin]").unwrap_err();
+        assert!(
+            err.to_string().contains("must be a strategy name"),
+            "a sequence value must be rejected with the expected-shape message: {err}"
+        );
+    }
+
+    #[test]
+    fn load_balancer_strategy_rejects_multi_key_mapping() {
+        let yaml = "consistent_hash:\n  header: \"X-User-Id\"\nring_hash: {}\n";
+        let err = serde_yaml::from_str::<LoadBalancerStrategy>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("exactly one strategy"),
+            "a mapping naming two strategies must be rejected: {err}"
+        );
+    }
+
+    #[test]
     fn load_balancer_strategy_parses_consistent_hash() {
         let yaml = r#"
 consistent_hash:

@@ -2565,3 +2565,46 @@ async fn interim_1xx_response_is_skipped_not_panicked() {
     );
     assert_eq!(response.body.as_ref(), b"hello", "the final response body must be read");
 }
+
+#[tokio::test]
+async fn excessive_interim_1xx_responses_are_rejected() {
+    use pingora_core::upstreams::peer::HttpPeer;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    // A backend streaming an endless run of interim responses must not pin
+    // the client in the skip loop until the deadline: past the interim cap
+    // the sub-request fails fast with an explicit error.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let backend = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0_u8; 4096];
+        let _bytes_read = socket.read(&mut buf).await;
+        // More interim responses than the client's cap (32).
+        let flood = b"HTTP/1.1 103 Early Hints\r\n\r\n".repeat(40);
+        let _write = socket.write_all(&flood).await;
+        let _flush = socket.flush().await;
+        // Hold the socket open so the error is the cap, not a hangup.
+        let _hold = socket.read(&mut buf).await;
+    });
+
+    let connector = SubRequestConnector::new(1, None);
+    let client = super::client::SubRequestClient::new(connector);
+    let peer = HttpPeer::new(addr.to_string(), false, String::new());
+    let request = SubRequest {
+        method: http::Method::GET,
+        uri: "/".parse().unwrap(),
+        headers: HeaderMap::new(),
+        body: Bytes::new(),
+    };
+
+    let err = Box::pin(client.execute(&peer, &request, 1024, Duration::from_secs(5), None))
+        .await
+        .expect_err("a 1xx flood past the cap must fail the sub-request");
+    backend.abort();
+
+    assert!(
+        matches!(&err, SubRequestError::Io(msg) if msg.contains("too many 1xx")),
+        "the error must name the interim-response cap, got: {err:?}"
+    );
+}

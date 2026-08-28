@@ -584,6 +584,66 @@ insecure_options:
 
     #[cfg(unix)]
     #[test]
+    fn warn_key_permissions_flags_permissive_top_level_cluster_client_key() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let key_path = dir.path().join("client-key.pem");
+        let cert_path = dir.path().join("client-cert.pem");
+        std::fs::write(&key_path, "fake-key").expect("write key");
+        std::fs::write(&cert_path, "fake-cert").expect("write cert");
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+
+        // The client cert lives on the typed top-level `clusters:` list, not
+        // inline in a load-balancer filter, exercising the typed loop rather
+        // than the raw-config walk.
+        let config = Config::from_yaml(&format!(
+            r#"
+listeners:
+  - name: tcp
+    address: "127.0.0.1:9090"
+    protocol: tcp
+    cluster: backend
+    filter_chains: [chain]
+filter_chains:
+  - name: chain
+    filters:
+      - filter: tcp_load_balancer
+        clusters:
+          - name: backend
+            endpoints:
+              - "127.0.0.1:3000"
+clusters:
+  - name: backend
+    endpoints:
+      - "127.0.0.1:3000"
+    tls:
+      sni: "backend.local"
+      client_cert:
+        cert_path: "{}"
+        key_path: "{}"
+insecure_options:
+  allow_private_endpoints: true
+"#,
+            cert_path.to_str().expect("cert"),
+            key_path.to_str().expect("key"),
+        ))
+        .expect("valid config");
+        let warnings = capture_warnings(|| super::warn_insecure_key_permissions(&config));
+        assert_eq!(
+            warnings.len(),
+            1,
+            "a permissive top-level cluster client key should warn: {warnings:?}"
+        );
+        assert!(
+            warnings[0].contains("overly permissive"),
+            "warning should mention permissive permissions: {:?}",
+            warnings[0]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn warn_key_permissions_flags_permissive_cluster_client_key() {
         use std::os::unix::fs::PermissionsExt as _;
 

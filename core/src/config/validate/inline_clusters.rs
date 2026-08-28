@@ -195,13 +195,30 @@ fn validate_inline_names(chain_name: &str, filter_type: &str, clusters: &[Cluste
     reason = "tests use unwrap/expect for brevity"
 )]
 mod tests {
-    use crate::config::Config;
+    use crate::config::{Config, FilterChainConfig, Listener};
 
     /// Base YAML with an inline `load_balancer` cluster spliced in.
     fn config_with_inline_cluster(cluster_yaml: &str) -> String {
         format!(
             "listeners:\n  - name: main\n    address: \"127.0.0.1:18080\"\n    protocol: http\n    filter_chains: [chain]\nfilter_chains:\n  - name: chain\n    filters:\n      - filter: load_balancer\n        clusters:\n{cluster_yaml}"
         )
+    }
+
+    #[test]
+    fn tcp_listener_unknown_chain_skipped_without_panic() {
+        // A TCP listener referencing a chain name that does not exist must
+        // not derail cluster validation: the unknown chain contributes no
+        // clusters and the listener's cluster is then reported as undefined.
+        let listener: Listener = serde_yaml::from_str(
+            "name: t\naddress: \"127.0.0.1:19999\"\nprotocol: tcp\ncluster: pool\nfilter_chains: [missing]\n",
+        )
+        .expect("listener yaml");
+        let chains: Vec<FilterChainConfig> = Vec::new();
+        let err = super::validate_tcp_listener_clusters(&[listener], &chains).unwrap_err();
+        assert!(
+            err.to_string().contains("pool"),
+            "the undefined cluster must be reported even with an unknown chain: {err}"
+        );
     }
 
     #[test]

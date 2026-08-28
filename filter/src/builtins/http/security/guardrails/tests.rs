@@ -104,6 +104,41 @@ async fn non_ascii_rule_fails_closed_on_undecodable_header() {
 }
 
 #[tokio::test]
+async fn non_ascii_pattern_rule_fails_closed_on_undecodable_header() {
+    // Same fail-closed posture as the contains case, via the regex matcher:
+    // a non-ASCII pattern can never faithfully match a lossily-decoded
+    // value, so an undecodable value must trigger the rule.
+    let f = make_filter(vec![header_pattern("user-agent", "b\u{e4}d")]);
+    let mut req = crate::test_utils::make_request(http::Method::GET, "/");
+    req.headers
+        .insert("user-agent", http::HeaderValue::from_bytes(b"b\xe4d").unwrap());
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+
+    let action = f.on_request(&mut ctx).await.unwrap();
+    assert!(
+        matches!(action, FilterAction::Reject(r) if r.status == 403),
+        "an undecodable value checked by a non-ASCII regex rule must fail closed"
+    );
+}
+
+#[tokio::test]
+async fn pii_rule_evaluates_faithfully_on_undecodable_header() {
+    // Built-in PII patterns are ASCII, so a PII rule evaluates the lossily
+    // decoded value faithfully — an unrelated non-UTF-8 value must pass.
+    let f = make_filter(vec![header_pii("user-agent", &[PiiKind::Email])]);
+    let mut req = crate::test_utils::make_request(http::Method::GET, "/");
+    req.headers
+        .insert("user-agent", http::HeaderValue::from_bytes(b"plain\xff").unwrap());
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+
+    let action = f.on_request(&mut ctx).await.unwrap();
+    assert!(
+        matches!(action, FilterAction::Continue),
+        "a PII rule must not fail closed on an unrelated non-UTF-8 value"
+    );
+}
+
+#[tokio::test]
 async fn ascii_rule_allows_unrelated_undecodable_header() {
     // ASCII patterns evaluate faithfully over lossily-decoded values (the
     // replacement character can never synthesize ASCII pattern bytes), so an

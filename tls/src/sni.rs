@@ -497,6 +497,20 @@ mod tests {
     }
 
     #[test]
+    fn fragmented_non_client_hello_rejected() {
+        // Handshake type 2 (ServerHello) with its 4-byte header split across
+        // two TLS records: the fast path sees an incomplete header and defers
+        // to reassembly, which must still reject the wrong handshake type.
+        let mut buf = vec![22, 3, 3, 0, 2, 2, 0];
+        buf.extend_from_slice(&[22, 3, 3, 0, 2, 0, 0]);
+        assert_eq!(
+            parse_sni(&buf),
+            Err(SniParseError::NotClientHello),
+            "a fragmented non-ClientHello handshake should be rejected"
+        );
+    }
+
+    #[test]
     fn minimal_client_hello_no_sni() {
         let hello = build_client_hello(&[], &[0x00, 0xFF], &[0x00], &[]);
         let record = wrap_in_record(&hello);

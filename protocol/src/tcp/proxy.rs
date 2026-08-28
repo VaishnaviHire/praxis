@@ -165,6 +165,9 @@ impl PingoraTcpProxy {
             let copy_future = tokio::io::copy_bidirectional(session, upstream);
             match self.session_timeout {
                 Some(timeout) => forward_with_timeout(copy_future, shutdown_rx, timeout, upstream_addr).await,
+                // Config validation applies a default session timeout to every
+                // TCP listener, so this arm is reachable only for a proxy
+                // constructed programmatically without one.
                 None => forward_no_timeout(copy_future, shutdown_rx, upstream_addr).await,
             }
         };
