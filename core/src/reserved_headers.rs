@@ -56,7 +56,9 @@ pub const RESERVED_HEADER_PREFIXES: &[&str] = &["x-praxis-", "x-ext-protocol-", 
 /// ```
 pub fn is_reserved(name: &str) -> bool {
     let bytes = name.as_bytes();
-    RESERVED_HEADER_PREFIXES
-        .iter()
-        .any(|prefix| bytes.get(..prefix.len()).is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes())))
+    RESERVED_HEADER_PREFIXES.iter().any(|prefix| {
+        bytes
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
+    })
 }

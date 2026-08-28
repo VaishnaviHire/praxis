@@ -365,7 +365,7 @@ mod tests {
             "reserved x-ext-* header must be stripped from a terminal response"
         );
         assert_eq!(
-            headers.get("content-type").map(|v| v.as_bytes()),
+            headers.get("content-type").map(http::HeaderValue::as_bytes),
             Some(b"text/plain".as_slice()),
             "non-reserved headers must be preserved"
         );

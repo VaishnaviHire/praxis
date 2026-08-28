@@ -181,15 +181,7 @@ impl ChunkedBackend {
             stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
             let _headers = read_until_headers_complete(&mut stream);
 
-            let mut resp =
-                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\nServer: praxis-test-backend\r\n"
-                    .to_owned();
-            for (name, value) in &headers {
-                use std::fmt::Write as _;
-                let _written = write!(resp, "{name}: {value}\r\n");
-            }
-            resp.push_str("\r\n");
-            let _sent = stream.write_all(resp.as_bytes());
+            let _sent = stream.write_all(build_chunked_response_header(&headers).as_bytes());
             let _flushed = stream.flush();
 
             for chunk in &chunks {
@@ -211,6 +203,20 @@ impl ChunkedBackend {
             let _flushed = stream.flush();
         })
     }
+}
+
+/// Build the chunked-response header block (status line, framing headers, and
+/// any extra `headers`) terminated by the blank line.
+fn build_chunked_response_header(headers: &[(String, String)]) -> String {
+    let mut resp =
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\nServer: praxis-test-backend\r\n"
+            .to_owned();
+    for (name, value) in headers {
+        use std::fmt::Write as _;
+        let _written = write!(resp, "{name}: {value}\r\n");
+    }
+    resp.push_str("\r\n");
+    resp
 }
 
 // -----------------------------------------------------------------------------

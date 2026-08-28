@@ -179,7 +179,9 @@ fn reassemble_handshake(buf: &[u8]) -> Result<Vec<u8>, SniParseError> {
     let mut pos = 0;
 
     loop {
-        let header = buf.get(pos..pos + TLS_RECORD_HEADER_LEN).ok_or(SniParseError::NeedMoreData)?;
+        let header = buf
+            .get(pos..pos + TLS_RECORD_HEADER_LEN)
+            .ok_or(SniParseError::NeedMoreData)?;
         if *header.first().ok_or(SniParseError::NeedMoreData)? != CONTENT_TYPE_HANDSHAKE {
             return Err(SniParseError::NotHandshake);
         }
@@ -338,6 +340,8 @@ fn parse_sni_extension(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
 
     let mut list = data.get(2..2 + list_len).ok_or(SniParseError::MalformedExtension)?;
 
+    let mut hostname: Option<String> = None;
+
     while list.len() >= 3 {
         let name_type = *list.first().ok_or(SniParseError::MalformedExtension)?;
         let name_len = read_u16(list, 1)? as usize;
@@ -347,26 +351,32 @@ fn parse_sni_extension(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
         }
 
         if name_type == SNI_NAME_TYPE_HOST {
+            // RFC 6066 §3: a ServerNameList MUST NOT contain more than one name
+            // of the same name_type. Reject a second host_name rather than
+            // silently taking the first — a duplicate could disagree with a
+            // downstream parser's choice and mislead SNI-based routing.
+            if hostname.is_some() {
+                return Err(SniParseError::MalformedExtension);
+            }
+
             let name_bytes = list.get(3..3 + name_len).ok_or(SniParseError::MalformedExtension)?;
 
             if name_bytes.is_empty() {
                 return Err(SniParseError::EmptyHostname);
             }
 
-            let hostname = std::str::from_utf8(name_bytes).map_err(|_utf8| SniParseError::InvalidHostname)?;
+            let name = std::str::from_utf8(name_bytes).map_err(|_utf8| SniParseError::InvalidHostname)?;
 
-            reject_ip_literal(hostname)?;
-            crate::dns::validate_dns_hostname(hostname).map_err(|_dns| SniParseError::InvalidHostname)?;
+            reject_ip_literal(name)?;
+            crate::dns::validate_dns_hostname(name).map_err(|_dns| SniParseError::InvalidHostname)?;
 
-            return Ok(ClientHelloInfo {
-                sni: Some(hostname.to_owned()),
-            });
+            hostname = Some(name.to_owned());
         }
 
         list = list.get(3 + name_len..).ok_or(SniParseError::MalformedExtension)?;
     }
 
-    Ok(ClientHelloInfo { sni: None })
+    Ok(ClientHelloInfo { sni: hostname })
 }
 
 // -----------------------------------------------------------------------------
@@ -843,6 +853,42 @@ mod tests {
         ext
     }
 
+    /// Build an SNI extension payload carrying two `host_name` entries, which
+    /// RFC 6066 forbids.
+    #[expect(clippy::cast_possible_truncation, reason = "test hostnames are short")]
+    fn build_sni_extension_two_hosts(a: &str, b: &str) -> Vec<u8> {
+        let entry = |name: &str| {
+            let nb = name.as_bytes();
+            let mut e = Vec::new();
+            e.push(SNI_NAME_TYPE_HOST);
+            e.extend_from_slice(&(nb.len() as u16).to_be_bytes());
+            e.extend_from_slice(nb);
+            e
+        };
+        let mut list = entry(a);
+        list.extend_from_slice(&entry(b));
+
+        let mut ext = Vec::new();
+        ext.extend_from_slice(&0_u16.to_be_bytes());
+        let ext_data_len = (2 + list.len()) as u16;
+        ext.extend_from_slice(&ext_data_len.to_be_bytes());
+        ext.extend_from_slice(&(list.len() as u16).to_be_bytes());
+        ext.extend_from_slice(&list);
+        ext
+    }
+
+    #[test]
+    fn duplicate_host_name_entries_rejected() {
+        let ext = build_sni_extension_two_hosts("a.example.com", "b.example.com");
+        let hello = build_client_hello(&[], &[0x00, 0xFF], &[0x00], &ext);
+        let record = wrap_in_record(&hello);
+        assert_eq!(
+            parse_sni(&record),
+            Err(SniParseError::MalformedExtension),
+            "two host_name entries violate RFC 6066 §3 and must be rejected, not silently first-wins"
+        );
+    }
+
     /// Build a non-SNI extension with the given type and data.
     fn build_dummy_extension(ext_type: u16, data: &[u8]) -> Vec<u8> {
         let mut ext = Vec::new();
@@ -955,7 +1001,11 @@ mod tests {
         buf.extend_from_slice(&wrap_fragment_in_record(&handshake[third..2 * third]));
         buf.extend_from_slice(&wrap_fragment_in_record(&handshake[2 * third..]));
         let result = parse_sni(&buf).expect("ClientHello across three records should parse");
-        assert_eq!(result.sni.as_deref(), Some("shard.example.net"), "SNI should span three records");
+        assert_eq!(
+            result.sni.as_deref(),
+            Some("shard.example.net"),
+            "SNI should span three records"
+        );
     }
 
     #[test]
