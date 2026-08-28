@@ -271,8 +271,18 @@ impl ProxyHttp for PingoraHttpHandler {
         // request body — silent request corruption.
         let truncated = session.as_mut().retry_buffer_truncated();
         // Preserve an explicit retry decision from the response-status path
-        // (already validated by the policy engine).
+        // (already validated by the policy engine) — but still refuse it if the
+        // replay buffer was truncated. should_retry's body-size guard makes
+        // this unreachable while retry_body_limit_bytes stays capped at
+        // Pingora's replay-buffer size, but that invariant lives in config
+        // validation, not here; guarding locally keeps the two other retry
+        // paths' replay-safety property from resting on an external cap.
         if matches!(e.retry, pingora_core::RetryType::Decided(true)) {
+            if truncated {
+                let mut e = e;
+                e.set_retry(false);
+                return e;
+            }
             return e;
         }
         // Stale-connection (ReusedOnly) errors skip the retry budget but still
