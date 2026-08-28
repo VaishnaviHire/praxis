@@ -277,11 +277,28 @@ fn respawn_health_checks(
     let registry = Arc::clone(health_registry);
     let new_token = health_shutdown.lock().expect("health shutdown lock poisoned").clone();
 
+    spawn_health_check_thread(clusters, registry, new_token);
+}
+
+/// Spawn the reloaded health-check probes on a dedicated thread + runtime.
+///
+/// Degrades gracefully on runtime-build failure (e.g. FD/thread exhaustion)
+/// instead of panicking the thread: a successful pipeline swap must not be
+/// followed by a health-check thread panic. Mirrors startup's
+/// `spawn_on_dedicated_runtime`.
+fn spawn_health_check_thread(
+    clusters: Vec<praxis_core::config::Cluster>,
+    registry: HealthRegistry,
+    new_token: CancellationToken,
+) {
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("health check runtime");
+        let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(rt) => rt,
+            Err(e) => {
+                error!(error = %e, "failed to start health-check runtime after reload; health checks disabled until next reload");
+                return;
+            },
+        };
         rt.block_on(async {
             praxis_protocol::http::pingora::health::runner::spawn_health_checks(&clusters, &registry, &new_token);
             new_token.cancelled().await;
