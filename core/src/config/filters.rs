@@ -119,10 +119,13 @@ where
         .ok_or_else(|| D::Error::custom("filter entry must be a mapping"))?
         .clone();
 
-    let filter_type = map
-        .remove(serde_yaml::Value::from("filter"))
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .ok_or_else(|| D::Error::missing_field("filter"))?;
+    let filter_type = match map.remove(serde_yaml::Value::from("filter")) {
+        None => return Err(D::Error::missing_field("filter")),
+        Some(v) => v
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| D::Error::custom("filter must be a string naming the filter type"))?,
+    };
 
     let branch_chains = take_optional(&mut map, "branch_chains").map_err(D::Error::custom)?;
     let name = take_optional(&mut map, "name").map_err(D::Error::custom)?;
@@ -555,5 +558,30 @@ filter: headers
 "#;
         let entry: FilterEntry = serde_yaml::from_str(yaml).unwrap();
         assert!(entry.branch_chains.is_none(), "branch_chains should default to None");
+    }
+
+    #[test]
+    fn non_string_filter_value_reports_type_error_not_missing() {
+        let yaml = "filter: 123\n";
+        let err = serde_yaml::from_str::<FilterEntry>(yaml).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("filter must be a string"),
+            "a present-but-non-string filter key must not be reported as missing: {msg}"
+        );
+        assert!(
+            !msg.contains("missing field"),
+            "the key is present, so the error must not say it is missing: {msg}"
+        );
+    }
+
+    #[test]
+    fn missing_filter_key_still_reports_missing() {
+        let yaml = "name: x\n";
+        let err = serde_yaml::from_str::<FilterEntry>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("missing field"),
+            "an absent filter key must still report missing: {err}"
+        );
     }
 }
