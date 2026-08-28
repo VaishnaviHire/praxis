@@ -196,29 +196,85 @@ pub(super) fn check_conflicting_cluster_selectors(filters: &[PipelineFilter], er
 /// Every cluster selected by a pipeline filter must be defined by the
 /// load balancer that will consume `ctx.cluster`.
 pub(super) fn check_misaligned_clusters(filters: &[PipelineFilter], errors: &mut Vec<String>) {
-    let selected_clusters = super::clusters::extract_selected_clusters(filters);
-    let lb_clusters = super::clusters::extract_lb_clusters(filters);
+    // Scope-aware alignment: a load balancer inside a branch runs only when
+    // its branch runs, so it cannot serve a selection made at the top level —
+    // counting it pipeline-wide would hide a guaranteed 502 for non-branch
+    // requests. Top-level demands must be met by top-level load balancers;
+    // demands made inside a branch may be met by that branch's own load
+    // balancers or anything inherited from enclosing scopes.
+    let top_selected = super::clusters::level_selected_clusters(filters);
+    let top_lb = super::clusters::level_lb_clusters(filters);
 
-    if selected_clusters.is_empty() || lb_clusters.is_empty() {
-        return;
-    }
-
-    for cluster in &selected_clusters {
-        if !lb_clusters.contains(cluster.as_str()) {
-            errors.push(format!(
-                "cluster-selecting filter references cluster \
-                 '{cluster}' which is not defined in the \
-                 load_balancer configuration"
-            ));
+    // The empty-LB escape is judged on the WHOLE pipeline: a pipeline with no
+    // load balancer anywhere may route by other means (static upstream), but
+    // one whose only LBs live inside branches cannot serve a top-level
+    // selection, so the top-level check must still run against top_lb.
+    let any_lb = !super::clusters::extract_lb_clusters(filters).is_empty();
+    if !top_selected.is_empty() && any_lb {
+        for cluster in &top_selected {
+            if !top_lb.contains(cluster.as_str()) {
+                errors.push(format!(
+                    "cluster-selecting filter references cluster \
+                     '{cluster}' which is not defined in the \
+                     load_balancer configuration"
+                ));
+            }
         }
     }
 
+    check_branch_cluster_demands(filters, &top_lb, any_lb, errors);
+
+    // The unused-cluster warning stays whole-pipeline: a cluster selected
+    // only inside a branch still counts as used.
+    let selected_clusters = super::clusters::extract_selected_clusters(filters);
+    let lb_clusters = super::clusters::extract_lb_clusters(filters);
     for cluster in &lb_clusters {
         if !selected_clusters.contains(cluster.as_str()) {
             warn!(
                 cluster = %cluster,
                 "load_balancer defines cluster not referenced by any cluster-selecting filter"
             );
+        }
+    }
+}
+
+/// Check each branch sub-chain's cluster demands against its availability.
+///
+/// A branch's available load balancers are those inherited from enclosing
+/// scopes plus the load balancers at the branch's OWN level — not its nested
+/// branches' (a nested branch's LB only runs when that nested branch fires,
+/// so counting it here would hide the same guaranteed-502 shape one level
+/// down). Nested branches inherit this level's availability and add their
+/// own when recursed into. The empty-LB escape is pipeline-global
+/// (`any_lb`), matching the top-level check: only a pipeline with no load
+/// balancer anywhere (static upstream) skips demand validation — a branch
+/// whose local availability happens to be empty is still checked.
+fn check_branch_cluster_demands(
+    filters: &[PipelineFilter],
+    inherited_lb: &std::collections::HashSet<String>,
+    any_lb: bool,
+    errors: &mut Vec<String>,
+) {
+    for pf in filters {
+        for branch in &pf.branches {
+            let mut available = inherited_lb.clone();
+            available.extend(super::clusters::level_lb_clusters(&branch.filters));
+
+            let demands = super::clusters::level_selected_clusters(&branch.filters);
+            if any_lb {
+                for cluster in &demands {
+                    if !available.contains(cluster.as_str()) {
+                        errors.push(format!(
+                            "cluster-selecting filter in branch '{name}' references cluster \
+                             '{cluster}' which is not defined in any load_balancer \
+                             visible to that branch",
+                            name = branch.name,
+                        ));
+                    }
+                }
+            }
+
+            check_branch_cluster_demands(&branch.filters, &available, any_lb, errors);
         }
     }
 }
@@ -913,6 +969,166 @@ mod tests {
         let mut errors = Vec::new();
         check_misaligned_clusters(&filters, &mut errors);
         assert!(errors.is_empty(), "aligned clusters should produce no errors");
+    }
+
+    /// Build a host filter carrying one Next-rejoin branch with `filters`.
+    fn host_with_branch(branch_filters: Vec<PipelineFilter>) -> PipelineFilter {
+        let mut host = noop_filter_with_conditions("headers", vec![]);
+        host.branches = vec![ResolvedBranch {
+            condition: None,
+            filters: branch_filters,
+            max_iterations: None,
+            name: Arc::from("br"),
+            rejoin: RejoinTarget::Next,
+        }];
+        host
+    }
+
+    #[test]
+    fn branch_lb_does_not_satisfy_top_level_selection() {
+        // The branch's LB only runs when the branch runs; a top-level router
+        // selecting its cluster still 502s for non-branch requests, so this
+        // must error.
+        let filters = vec![
+            selector_filter("router", &["x"]),
+            host_with_branch(vec![lb_filter(&["x"])]),
+            lb_filter(&["other"]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
+        assert_eq!(
+            errors.len(),
+            1,
+            "a branch-scoped LB must not satisfy a top-level selection: {errors:?}"
+        );
+        assert!(errors[0].contains('x'), "error should name the missing cluster: {}", errors[0]);
+    }
+
+    #[test]
+    fn branch_selection_without_any_visible_lb_errors() {
+        // A router inside a branch demanding a cluster no visible LB defines
+        // is the guaranteed request-time 502 this check exists to catch.
+        let filters = vec![
+            host_with_branch(vec![selector_filter("router", &["y"])]),
+            lb_filter(&["other"]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
+        assert_eq!(errors.len(), 1, "a branch selecting an undefined cluster must error: {errors:?}");
+        assert!(errors[0].contains('y'), "error should name the missing cluster: {}", errors[0]);
+    }
+
+    #[test]
+    fn branch_selection_satisfied_by_top_level_lb_no_error() {
+        let filters = vec![
+            host_with_branch(vec![selector_filter("router", &["web"])]),
+            lb_filter(&["web"]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
+        assert!(
+            errors.is_empty(),
+            "a top-level LB is visible inside branches and satisfies the demand: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn top_level_selection_with_only_branch_lbs_errors() {
+        // No top-level LB exists at all, but the pipeline is not LB-free:
+        // its only LB lives in a branch, which cannot serve the top-level
+        // selection. The whole-pipeline escape must not skip this.
+        let filters = vec![
+            selector_filter("router", &["x"]),
+            host_with_branch(vec![lb_filter(&["x"])]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
+        assert_eq!(
+            errors.len(),
+            1,
+            "a top-level selection served only by a branch LB must error: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn branch_demand_served_only_by_nested_branch_lb_errors() {
+        // The demand sits at branch level but the only LB defining its
+        // cluster is inside a NESTED branch, which only runs when that
+        // nested branch fires — the same guaranteed-502 shape one level
+        // down.
+        let mut nested_host = noop_filter_with_conditions("headers", vec![]);
+        nested_host.branches = vec![ResolvedBranch {
+            condition: None,
+            filters: vec![lb_filter(&["deep"])],
+            max_iterations: None,
+            name: Arc::from("nested"),
+            rejoin: RejoinTarget::Next,
+        }];
+        let filters = vec![
+            host_with_branch(vec![selector_filter("router", &["deep"]), nested_host]),
+            lb_filter(&["web"]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
+        assert_eq!(
+            errors.len(),
+            1,
+            "a branch demand served only by a nested branch's LB must error: {errors:?}"
+        );
+        assert!(
+            errors[0].contains("deep"),
+            "error should name the missing cluster: {}",
+            errors[0]
+        );
+    }
+
+    #[test]
+    fn nested_branch_lb_without_any_outer_lb_still_errors() {
+        // No LB exists at the top level at all; the pipeline's only LB sits
+        // in a NESTED branch. The empty-LB escape is pipeline-global, so the
+        // branch-level demand must still be validated — and rejected, since
+        // the nested LB only runs when the nested branch fires.
+        let mut nested_host = noop_filter_with_conditions("headers", vec![]);
+        nested_host.branches = vec![ResolvedBranch {
+            condition: None,
+            filters: vec![lb_filter(&["deep"])],
+            max_iterations: None,
+            name: Arc::from("nested"),
+            rejoin: RejoinTarget::Next,
+        }];
+        let filters = vec![host_with_branch(vec![
+            selector_filter("router", &["deep"]),
+            nested_host,
+        ])];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
+        assert_eq!(
+            errors.len(),
+            1,
+            "the pipeline-global escape must not skip a branch demand: {errors:?}"
+        );
+        assert!(
+            errors[0].contains("deep"),
+            "error should name the cluster: {}",
+            errors[0]
+        );
+    }
+
+    #[test]
+    fn self_contained_branch_selection_no_error() {
+        // A branch that both selects and defines its own cluster is complete
+        // on its own; the top level must not be required to re-define it.
+        let filters = vec![
+            selector_filter("router", &["web"]),
+            host_with_branch(vec![selector_filter("router", &["z"]), lb_filter(&["z"])]),
+            lb_filter(&["web"]),
+        ];
+        let mut errors = Vec::new();
+        check_misaligned_clusters(&filters, &mut errors);
+        assert!(
+            errors.is_empty(),
+            "a self-contained branch selection must not error: {errors:?}"
+        );
     }
 
     #[test]

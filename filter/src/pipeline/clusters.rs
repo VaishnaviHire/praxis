@@ -19,16 +19,55 @@ use super::filter::PipelineFilter;
 // -----------------------------------------------------------------------------
 
 /// Cluster selectors declare every cluster name they may assign.
+///
+/// Recurses into branch sub-chains: a cluster selected inside a branch is
+/// assigned to `ctx.cluster` when the branch runs, so it must be checked
+/// against the load balancers just like a top-level selection — otherwise a
+/// branch selecting an undefined cluster passes the build and 502s at request
+/// time.
 pub(super) fn extract_selected_clusters(filters: &[PipelineFilter]) -> HashSet<String> {
-    filters.iter().flat_map(|pf| pf.filter.selected_clusters()).collect()
+    let mut out = HashSet::new();
+    for pf in filters {
+        out.extend(pf.filter.selected_clusters());
+        for branch in &pf.branches {
+            out.extend(extract_selected_clusters(&branch.filters));
+        }
+    }
+    out
 }
 
 /// Load-balancers declare the cluster names they can consume.
+///
+/// Recurses into branch sub-chains for the same reason as
+/// [`extract_selected_clusters`].
 pub(super) fn extract_lb_clusters(filters: &[PipelineFilter]) -> HashSet<String> {
-    filters
-        .iter()
-        .flat_map(|pf| pf.filter.load_balancer_clusters())
-        .collect()
+    let mut out = HashSet::new();
+    for pf in filters {
+        out.extend(pf.filter.load_balancer_clusters());
+        for branch in &pf.branches {
+            out.extend(extract_lb_clusters(&branch.filters));
+        }
+    }
+    out
+}
+
+/// Cluster names selected by this level's filters only (no branch recursion).
+///
+/// Branch-level demands are checked per branch with that branch's own
+/// availability; see `check_misaligned_clusters`.
+pub(super) fn level_selected_clusters(filters: &[PipelineFilter]) -> HashSet<String> {
+    filters.iter().flat_map(|pf| pf.filter.selected_clusters()).collect()
+}
+
+/// Cluster names provided by this level's load balancers only (no branch
+/// recursion).
+///
+/// A load balancer inside a branch runs only when the branch runs, so it
+/// cannot serve selections made outside that branch; counting it as a
+/// pipeline-wide provider would hide a guaranteed request-time 502 for
+/// non-branch requests.
+pub(super) fn level_lb_clusters(filters: &[PipelineFilter]) -> HashSet<String> {
+    filters.iter().flat_map(|pf| pf.filter.load_balancer_clusters()).collect()
 }
 
 // -----------------------------------------------------------------------------
@@ -107,6 +146,27 @@ mod tests {
         let clusters = extract_selected_clusters(&filters);
         assert_eq!(clusters.len(), 1, "duplicate cluster names should be deduplicated");
         assert!(clusters.contains("web"), "should contain 'web'");
+    }
+
+    #[test]
+    fn recurses_into_branch_subchains() {
+        use std::sync::Arc;
+
+        use crate::pipeline::branch::{RejoinTarget, ResolvedBranch};
+
+        let mut host = noop_filter("headers");
+        host.branches = vec![ResolvedBranch {
+            condition: None,
+            filters: vec![selector_filter("router", &["branch-cluster"])],
+            max_iterations: None,
+            name: Arc::from("br"),
+            rejoin: RejoinTarget::Terminal,
+        }];
+        let selected = extract_selected_clusters(&[host]);
+        assert!(
+            selected.contains("branch-cluster"),
+            "a cluster selected inside a branch sub-chain must be collected"
+        );
     }
 
     #[test]
