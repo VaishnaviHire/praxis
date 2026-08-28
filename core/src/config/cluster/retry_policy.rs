@@ -423,6 +423,42 @@ impl RetryPolicy {
         self.allow_non_idempotent.unwrap_or(false)
     }
 
+    /// Validate the per-attempt and overall timeout bounds.
+    ///
+    /// `per_try_timeout_ms: 0` would set zero-duration connect/read/write
+    /// timeouts on every upstream attempt (failing effectively all
+    /// requests on non-loopback upstreams), and `request_timeout_ms: 0`
+    /// makes the overall deadline elapse before the first attempt,
+    /// silently disabling retries. Both are rejected here with the same
+    /// zero/ceiling bounds every other timeout field gets.
+    ///
+    /// `context` names the owning config object for the error message
+    /// (e.g. `cluster 'backend'`).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the offending field when either timeout
+    /// is `0` or exceeds the 1-hour ceiling.
+    pub fn validate_timeout_bounds(&self, context: &str) -> Result<(), String> {
+        for (field, value) in [
+            ("retry_policy.per_try_timeout_ms", self.per_try_timeout_ms),
+            ("retry_policy.request_timeout_ms", self.request_timeout_ms),
+        ] {
+            if let Some(0) = value {
+                return Err(format!("{context}: {field} is 0 (must be > 0)"));
+            }
+            if let Some(v) = value
+                && v > super::super::validate::cluster::MAX_TIMEOUT_MS
+            {
+                return Err(format!(
+                    "{context}: {field} ({v} ms) exceeds maximum ({} ms / 1 hour)",
+                    super::super::validate::cluster::MAX_TIMEOUT_MS
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Merge a route-level override onto this cluster policy.
     ///
     /// Route fields override cluster fields where present. List-typed

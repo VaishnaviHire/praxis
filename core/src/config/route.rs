@@ -253,8 +253,12 @@ impl TryFrom<RouteRaw> for Route {
     type Error = String;
 
     fn try_from(raw: RouteRaw) -> Result<Self, Self::Error> {
+        let path_match = PathMatch::from_parts(raw.path, raw.path_prefix)?;
+        if let Some(policy) = &raw.retry_policy {
+            policy.validate_timeout_bounds(&format!("route '{}'", path_match.value()))?;
+        }
         Ok(Self {
-            path_match: PathMatch::from_parts(raw.path, raw.path_prefix)?,
+            path_match,
             cluster: raw.cluster,
             headers: raw.headers,
             host: raw.host,
@@ -372,6 +376,21 @@ cluster: "backend"
         assert!(
             err.to_string().contains("either 'path' or 'path_prefix'"),
             "a route without a path key must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_route_retry_policy_zero_timeout() {
+        let yaml = r#"
+path_prefix: "/api"
+cluster: "backend"
+retry_policy:
+  per_try_timeout_ms: 0
+"#;
+        let err = serde_yaml::from_str::<Route>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("per_try_timeout_ms is 0"),
+            "route-level retry overrides get the same timeout bounds as clusters: {err}"
         );
     }
 
