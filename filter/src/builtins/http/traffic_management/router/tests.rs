@@ -175,6 +175,72 @@ fn from_config_empty_routes_rejected() {
     );
 }
 
+#[test]
+fn from_config_rejects_route_retry_timeout_of_zero() {
+    // The router builds core Route values via RouterRouteConfigRaw::try_from,
+    // which runs Route::validate_semantics -> RetryPolicy::validate_timeout_bounds.
+    // A route-level retry timeout of 0 (which would zero every upstream attempt's
+    // timeouts, or disable retries) must be rejected at config load just like a
+    // cluster-level retry policy -- the router path must not bypass the bound.
+    let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+            routes:
+              - path_prefix: "/api"
+                cluster: "backend"
+                retry_policy:
+                  per_try_timeout_ms: 0
+            "#,
+    )
+    .unwrap();
+
+    let Err(err) = RouterFilter::from_config(&yaml) else {
+        panic!("a route retry per_try_timeout_ms of 0 must be rejected");
+    };
+    assert!(
+        err.to_string().contains("per_try_timeout_ms"),
+        "error should name the offending field, got: {err}"
+    );
+}
+
+#[test]
+fn from_config_rejects_route_retry_timeout_over_ceiling() {
+    let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+            routes:
+              - path_prefix: "/api"
+                cluster: "backend"
+                retry_policy:
+                  request_timeout_ms: 3600001
+            "#,
+    )
+    .unwrap();
+
+    let Err(err) = RouterFilter::from_config(&yaml) else {
+        panic!("a route retry request_timeout_ms over the 1h ceiling must be rejected");
+    };
+    assert!(
+        err.to_string().contains("request_timeout_ms") || err.to_string().contains("maximum"),
+        "error should reference the over-ceiling timeout, got: {err}"
+    );
+}
+
+#[test]
+fn from_config_accepts_valid_route_retry_timeouts() {
+    let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+            routes:
+              - path_prefix: "/api"
+                cluster: "backend"
+                retry_policy:
+                  per_try_timeout_ms: 1000
+                  request_timeout_ms: 5000
+            "#,
+    )
+    .unwrap();
+    let filter = RouterFilter::from_config(&yaml).expect("valid route retry timeouts must parse");
+    assert_eq!(filter.name(), "router", "valid route retry timeouts should build a router");
+}
+
 #[tokio::test]
 async fn on_request_sets_cluster_on_match() {
     let router = make_router(vec![prefix_route("/", "default")]);

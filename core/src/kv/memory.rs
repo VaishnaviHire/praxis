@@ -440,6 +440,24 @@ mod tests {
     }
 
     #[test]
+    fn lookup_suffix_returns_smallest_matching_key() {
+        // Determinism guard for the Suffix arm: with many suffix matches the
+        // lexicographically smallest key must win, not an arbitrary hash-order
+        // entry. Keys inserted largest-first make a nondeterministic
+        // implementation near-certain to return a non-smallest key.
+        let store = InMemoryKvBackend::new();
+        for c in ('a'..='z').rev() {
+            let key = format!("{c}.svc");
+            store.set(&key, Arc::from(key.as_str()));
+        }
+        let (key, _) = store
+            .lookup(".svc", MatchType::Suffix)
+            .unwrap()
+            .expect("a suffixed key should match");
+        assert_eq!(key.as_ref(), "a.svc", "the smallest matching suffix key must be returned");
+    }
+
+    #[test]
     fn lookup_suffix_does_not_match_substring() {
         let store = InMemoryKvBackend::new();
         store.set("api.users.list", Arc::from("v1"));

@@ -253,6 +253,34 @@ mod tests {
     }
 
     #[test]
+    fn rejection_header_strips_mixed_case_reserved_from_string_list() {
+        // A filter (static_response, rate_limit, policy, ...) can supply a
+        // response header with arbitrary case via Rejection::with_header, which
+        // lands in the string-list branch. The reserved check must be
+        // case-insensitive so a mixed-case X-Praxis-*/X-Ext-* header cannot
+        // slip past it (pingora preserves original casing on HTTP/1.1).
+        let rejection = Rejection::status(403)
+            .with_header("X-Praxis-Route", "internal-cluster")
+            .with_header("X-Ext-Agent-Task", "meta")
+            .with_header("X-Custom", "keep");
+
+        let header = build_rejection_header(&rejection);
+        assert!(
+            header.headers.get("x-praxis-route").is_none(),
+            "a mixed-case reserved x-praxis-* header must be dropped from a rejection"
+        );
+        assert!(
+            header.headers.get("x-ext-agent-task").is_none(),
+            "a mixed-case reserved x-ext-agent-* header must be dropped from a rejection"
+        );
+        assert_eq!(
+            header.headers.get("x-custom").map(http::HeaderValue::as_bytes),
+            Some(b"keep".as_slice()),
+            "non-reserved rejection headers must still be preserved"
+        );
+    }
+
+    #[test]
     fn rejection_header_preserves_duplicate_values() {
         let rejection = Rejection::status(200)
             .with_header("set-cookie", "first=1")
