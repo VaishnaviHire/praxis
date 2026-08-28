@@ -54,10 +54,23 @@ fn validate_endpoint_address(addr: &str, cluster_name: &str) -> Result<(), Proxy
     if addr.parse::<std::net::SocketAddr>().is_ok() {
         return Ok(());
     }
-    let port_str = addr.rsplit_once(':').map_or("", |(_, p)| p);
+    let Some((host, port_str)) = addr.rsplit_once(':') else {
+        return Err(ProxyError::Config(format!(
+            "cluster '{cluster_name}': endpoint '{addr}' must be 'host:port' with a valid port"
+        )));
+    };
     if port_str.parse::<u16>().is_err() {
         return Err(ProxyError::Config(format!(
             "cluster '{cluster_name}': endpoint '{addr}' must be 'host:port' with a valid port"
+        )));
+    }
+    // A valid port with an empty host (`:80`) parses here but has no
+    // resolvable host, so every request to the cluster fails at connect;
+    // the empty host also slips past the SSRF hostname check.
+    let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    if host.is_empty() {
+        return Err(ProxyError::Config(format!(
+            "cluster '{cluster_name}': endpoint '{addr}' has an empty host (expected 'host:port')"
         )));
     }
     Ok(())
@@ -267,6 +280,23 @@ mod tests {
             err.to_string().contains("must not be empty"),
             "empty endpoint address should be rejected: {err}"
         );
+    }
+
+    #[test]
+    fn reject_empty_host_endpoint() {
+        let clusters = vec![Cluster::with_defaults("web", vec![":80".into()])];
+        let err = validate_clusters(&clusters, &InsecureOptions::default()).unwrap_err();
+        assert!(
+            err.to_string().contains("empty host"),
+            "an endpoint with a valid port but empty host must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_empty_bracketed_host_endpoint() {
+        let clusters = vec![Cluster::with_defaults("web", vec!["[]:80".into()])];
+        let err = validate_clusters(&clusters, &InsecureOptions::default()).unwrap_err();
+        assert!(err.to_string().contains("empty host"), "got: {err}");
     }
 
     #[test]
