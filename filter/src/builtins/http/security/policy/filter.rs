@@ -919,10 +919,9 @@ impl HttpFilter for PolicyFilter {
             && let Some(mp) = cmf_result.modified_payload.as_ref()
             && let Some(updated) = mp.as_any().downcast_ref::<MessagePayload>()
         {
-            // `body_bytes` (cloned above) still holds the original body —
-            // it has not been reassigned — so reuse it instead of cloning
-            // the buffer a second time.
-            if let Some(new_bytes) = reserialize_json_rpc_body(&body_bytes, &method, &updated.message) {
+            // The rewrite mutates the DOM this phase already parsed;
+            // handing it over avoids a second O(body) parse.
+            if let Some(new_bytes) = reserialize_json_rpc_body(parsed.into_value(), &method, &updated.message) {
                 // Praxis recomputes upstream `Content-Length` from the
                 // rewritten body via `mutated_request_body_len` →
                 // `apply_mutated_content_length`, so we ship the bytes
@@ -1087,9 +1086,12 @@ impl HttpFilter for PolicyFilter {
         if let Some(mp) = cmf_result.modified_payload.as_ref()
             && let Some(updated) = mp.as_any().downcast_ref::<MessagePayload>()
         {
-            // Reuse `body_bytes` (the original response body cloned above)
-            // rather than cloning the buffer again.
-            if let Some(new_bytes) = reserialize_json_rpc_response_body(&body_bytes, &method, &updated.message) {
+            // Capture the id before the rewrite consumes the parsed DOM
+            // (handing the DOM over avoids a second O(body) parse); only
+            // the overflow arm below still needs it.
+            let request_id = parsed.id_value();
+            if let Some(new_bytes) = reserialize_json_rpc_response_body(parsed.into_value(), &method, &updated.message)
+            {
                 let final_bytes = if new_bytes.len() > body_bytes.len() {
                     // The rewrite grew the body past the committed
                     // response Content-Length. We can't enlarge the
@@ -1106,7 +1108,6 @@ impl HttpFilter for PolicyFilter {
                         "response rewrite exceeds committed Content-Length; \
                          failing closed with deny envelope",
                     );
-                    let request_id = parsed.id_value();
                     let violation = PluginViolation::new(
                         "gateway.response_rewrite_overflow",
                         "response rewrite exceeded the committed response length",

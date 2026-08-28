@@ -2050,7 +2050,7 @@ fn reserialize_tools_call_round_trips_with_mutated_args() {
             },
         }],
     );
-    let new_bytes = reserialize_json_rpc_body(&original, "tools/call", &message).expect("rewrite Some");
+    let new_bytes = reserialize_json_rpc_body(parse_dom(&original), "tools/call", &message).expect("rewrite Some");
     let parsed: serde_json::Value = serde_json::from_slice(&new_bytes).expect("valid JSON");
     assert_eq!(parsed["jsonrpc"], "2.0");
     assert_eq!(parsed["id"], 1);
@@ -2184,7 +2184,7 @@ fn reserialize_response_collapses_to_single_vetted_block() {
             },
         }],
     );
-    let out = reserialize_json_rpc_response_body(&original, "tools/call", &message).expect("Some");
+    let out = reserialize_json_rpc_response_body(parse_dom(&original), "tools/call", &message).expect("Some");
     let parsed: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON");
     let content = parsed["result"]["content"].as_array().expect("content array");
     assert_eq!(content.len(), 1, "extra blocks must be dropped; got {content:?}");
@@ -2770,6 +2770,11 @@ fn write_config_naming_kind(kind: &str) -> (TempDir, String) {
     std::fs::write(&cfg_path, yaml).expect("write cpex.yaml");
     let path_str = cfg_path.to_str().expect("utf8 path").to_owned();
     (dir, path_str)
+}
+
+/// Parse a test body into the DOM the reserializers consume.
+fn parse_dom(bytes: &bytes::Bytes) -> serde_json::Value {
+    serde_json::from_slice(bytes).expect("valid envelope")
 }
 
 fn try_build_filter(config_path: String) -> Result<PolicyFilter, crate::FilterError> {

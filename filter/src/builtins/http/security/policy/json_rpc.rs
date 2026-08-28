@@ -65,6 +65,17 @@ impl ParsedEnvelope {
     fn field(&self, name: &str) -> Option<&serde_json::Value> {
         self.0.get(name)
     }
+
+    /// Consume the envelope, yielding the parsed DOM for rewriting.
+    ///
+    /// The reserializers mutate the same document this envelope
+    /// already parsed; re-parsing the body bytes for them would be a
+    /// second O(body) pass. A malformed body is `Null` here, and
+    /// `Null.get_mut(..)` short-circuits the rewrite exactly like the
+    /// old failed re-parse did.
+    pub(super) fn into_value(self) -> serde_json::Value {
+        self.0
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -88,12 +99,15 @@ pub(super) fn build_content_for_method(
     correlation_id: &str,
     envelope: &ParsedEnvelope,
 ) -> Vec<ContentPart> {
-    let params: serde_json::Value = envelope.field("params").cloned().unwrap_or(serde_json::Value::Null);
+    // Borrow `params` in place: only `arguments` / `uri` are read out
+    // of it, and cloning the whole subtree — most of the body for
+    // typical payloads — per request served nothing.
+    let params = envelope.field("params");
 
     match method {
         "tools/call" => {
             let arguments = params
-                .get("arguments")
+                .and_then(|p| p.get("arguments"))
                 .and_then(|v| v.as_object())
                 .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                 .unwrap_or_default();
@@ -108,7 +122,7 @@ pub(super) fn build_content_for_method(
         },
         "prompts/get" => {
             let arguments = params
-                .get("arguments")
+                .and_then(|p| p.get("arguments"))
                 .and_then(|v| v.as_object())
                 .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                 .unwrap_or_default();
@@ -127,7 +141,7 @@ pub(super) fn build_content_for_method(
             // protocol classifier filter (it treats `uri` as the "selector"). Carry
             // it through as the `ResourceReference`.
             let uri = params
-                .get("uri")
+                .and_then(|p| p.get("uri"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(entity_name)
                 .to_owned();
@@ -170,8 +184,8 @@ pub(super) fn build_content_for_method(
     clippy::too_many_lines,
     reason = "per-method envelope orchestration; splitting per-method obscures the JSON-RPC shape"
 )]
-pub(super) fn reserialize_json_rpc_body(original: &Bytes, method: &str, message: &Message) -> Option<Bytes> {
-    let mut envelope: serde_json::Value = serde_json::from_slice(original).ok()?;
+pub(super) fn reserialize_json_rpc_body(envelope: serde_json::Value, method: &str, message: &Message) -> Option<Bytes> {
+    let mut envelope = envelope;
     let params = envelope.get_mut("params")?;
     let params_obj = params.as_object_mut()?;
 
@@ -309,11 +323,15 @@ pub(super) fn build_response_content_for_method(
 /// `result.structuredContent` is mirrored to the same value, but
 /// only when the original response already had it (we don't invent
 /// fields).
-pub(super) fn reserialize_json_rpc_response_body(original: &Bytes, method: &str, message: &Message) -> Option<Bytes> {
+pub(super) fn reserialize_json_rpc_response_body(
+    envelope: serde_json::Value,
+    method: &str,
+    message: &Message,
+) -> Option<Bytes> {
     if method != "tools/call" {
         return None;
     }
-    let mut envelope: serde_json::Value = serde_json::from_slice(original).ok()?;
+    let mut envelope = envelope;
     let result = envelope.get_mut("result")?;
     let result_obj = result.as_object_mut()?;
 
