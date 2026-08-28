@@ -82,34 +82,54 @@ impl Maglev {
         let start = (fnv1a_seeded(key, 0) as usize) % len;
 
         if let Some(state) = health {
-            for offset in 0..len {
-                let ep = self.endpoint_at((start + offset) % len);
-                if is_excluded(&ep.address, exclude) {
-                    continue;
-                }
-                if state.endpoints().get(ep.index).is_some_and(EndpointHealth::is_healthy) {
-                    return Some(Arc::clone(&ep.address));
-                }
+            if let Some(addr) = self.probe(start, exclude, |ep| {
+                state.endpoints().get(ep.index).is_some_and(EndpointHealth::is_healthy)
+            }) {
+                return Some(addr);
             }
         }
 
-        for offset in 0..len {
-            let ep = self.endpoint_at((start + offset) % len);
-            if !is_excluded(&ep.address, exclude) {
-                return Some(Arc::clone(&ep.address));
-            }
-        }
-        None
+        self.probe(start, exclude, |_| true)
     }
 
-    /// The endpoint owning table `slot`. The slot is `< table.len()` and the
-    /// owner index it holds is a valid `endpoints` index by construction.
+    /// Probe table slots clockwise from `start` for an endpoint that is
+    /// not excluded and passes `accept`.
+    ///
+    /// The probe is bounded by distinct endpoints rather than table
+    /// slots (the ring-hash precedent): with every endpoint rejected,
+    /// walking all 65k slots would revisit each endpoint's slots
+    /// thousands of times — hundreds of microseconds per request exactly
+    /// during a full-cluster outage.
     #[expect(
         clippy::indexing_slicing,
         reason = "table slot and owner index are in bounds by construction"
     )]
-    fn endpoint_at(&self, slot: usize) -> &WeightedEndpoint {
-        &self.endpoints[self.table[slot] as usize]
+    fn probe(
+        &self,
+        start: usize,
+        exclude: &[Arc<str>],
+        accept: impl Fn(&WeightedEndpoint) -> bool,
+    ) -> Option<Arc<str>> {
+        let len = self.table.len();
+        // Stack-backed for the common small-cluster case: avoids a
+        // per-request heap allocation on the selection hot path.
+        let mut visited: smallvec::SmallVec<[bool; 32]> = smallvec::smallvec![false; self.endpoints.len()];
+        let mut remaining = self.endpoints.len();
+        for offset in 0..len {
+            let owner = self.table[(start + offset) % len] as usize;
+            let ep = &self.endpoints[owner];
+            if !is_excluded(&ep.address, exclude) && accept(ep) {
+                return Some(Arc::clone(&ep.address));
+            }
+            if !visited[owner] {
+                visited[owner] = true;
+                remaining -= 1;
+                if remaining == 0 {
+                    break;
+                }
+            }
+        }
+        None
     }
 }
 
