@@ -25,6 +25,7 @@ use crate::{
         log_config_change_audit, log_restart_required_changes, warn_insecure_option_escalations,
         warn_stateful_filter_reset,
     },
+    startup_checks::{warn_insecure_key_permissions, warn_insecure_log_file_permissions},
 };
 
 // -----------------------------------------------------------------------------
@@ -103,6 +104,13 @@ pub(crate) fn reload_pipelines(
     warn_insecure_option_escalations(old_config, new_config);
     warn_stateful_filter_reset(new_config);
     log_config_change_audit(old_config, new_config);
+    // The advisory file-permission warnings belong with the diagnostics
+    // above for the same reason: a reload may introduce a new listener
+    // cert, a cluster mTLS client key, or a new log file path, and a
+    // reload that also lowers verbosity must not swallow the warning
+    // about the insecurely-permissioned file it just brought live.
+    warn_insecure_key_permissions(new_config);
+    warn_insecure_log_file_permissions(new_config);
 
     // Apply the log-level baseline while a failure can still abort the reload
     // cleanly. This is the last fallible step; it must run before the
