@@ -221,12 +221,12 @@ mod tests {
         host
     }
 
-    fn cond() -> Option<ResolvedBranchCondition> {
-        Some(ResolvedBranchCondition {
+    fn cond() -> ResolvedBranchCondition {
+        ResolvedBranchCondition {
             filter_name: Arc::from("classifier"),
             key: Arc::from("kind"),
             value: Arc::from("premium"),
-        })
+        }
     }
 
     #[test]
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn reachable_excludes_conditional_branch_lb() {
         // A conditional branch may not fire, so its LB is not reachable.
-        let filters = vec![host_with(cond(), vec![lb_filter(&["x"])])];
+        let filters = vec![host_with(Some(cond()), vec![lb_filter(&["x"])])];
         assert!(
             !reachable_lb_clusters(&filters).contains("x"),
             "conditional branch LB must not be reachable"
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn reachable_stops_folding_at_conditional_nesting() {
         // Outer unconditional, inner conditional: the inner LB is unreachable.
-        let inner = host_with(cond(), vec![lb_filter(&["deep"])]);
+        let inner = host_with(Some(cond()), vec![lb_filter(&["deep"])]);
         let outer = host_with(None, vec![inner]);
         assert!(
             !reachable_lb_clusters(&[outer]).contains("deep"),

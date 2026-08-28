@@ -454,7 +454,11 @@ mod tests {
             .lookup(".svc", MatchType::Suffix)
             .unwrap()
             .expect("a suffixed key should match");
-        assert_eq!(key.as_ref(), "a.svc", "the smallest matching suffix key must be returned");
+        assert_eq!(
+            key.as_ref(),
+            "a.svc",
+            "the smallest matching suffix key must be returned"
+        );
     }
 
     #[test]

@@ -31,7 +31,7 @@ use serde::de::{DeserializeSeed, Deserializer, Error as _, IgnoredAny, MapAccess
 ///
 /// The pre-streaming parser materialized the whole body with
 /// `serde_json::from_slice::<Value>`, which rejects input nested past
-/// serde_json's recursion limit. [`IgnoredAny`]'s `ignore_value` is iterative
+/// `serde_json`'s recursion limit. [`IgnoredAny`]'s `ignore_value` is iterative
 /// and unbounded, so without this cap the streaming parser would silently
 /// accept pathologically deep bodies the DOM parser rejected. Capping restores
 /// that fail-closed behavior and bounds [`BoundedIgnore`]'s own recursion.
@@ -41,6 +41,7 @@ const MAX_ENVELOPE_DEPTH: usize = 128;
 /// [`MAX_ENVELOPE_DEPTH`]. `depth` is the level of the value about to be
 /// consumed (0 for a top-level ignored value).
 struct BoundedIgnore {
+    /// Nesting level of the value about to be consumed (0 at the top).
     depth: usize,
 }
 
@@ -83,7 +84,10 @@ impl<'de> Visitor<'de> for BoundedIgnore {
         if self.depth >= MAX_ENVELOPE_DEPTH {
             return Err(A::Error::custom("JSON nesting exceeds maximum depth"));
         }
-        while seq.next_element_seed(BoundedIgnore { depth: self.depth + 1 })?.is_some() {}
+        while seq
+            .next_element_seed(BoundedIgnore { depth: self.depth + 1 })?
+            .is_some()
+        {}
         Ok(())
     }
 

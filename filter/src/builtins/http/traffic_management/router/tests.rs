@@ -238,7 +238,11 @@ fn from_config_accepts_valid_route_retry_timeouts() {
     )
     .unwrap();
     let filter = RouterFilter::from_config(&yaml).expect("valid route retry timeouts must parse");
-    assert_eq!(filter.name(), "router", "valid route retry timeouts should build a router");
+    assert_eq!(
+        filter.name(),
+        "router",
+        "valid route retry timeouts should build a router"
+    );
 }
 
 #[tokio::test]
