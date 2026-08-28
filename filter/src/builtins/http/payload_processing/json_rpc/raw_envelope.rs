@@ -111,24 +111,8 @@ impl<'de> Visitor<'de> for BoundedIgnore {
         Ok(())
     }
 
-    fn visit_bytes<E>(self, _: &[u8]) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
     fn visit_unit<E>(self) -> Result<Self::Value, E> {
         Ok(())
-    }
-
-    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.deserialize_any(self)
-    }
-
-    fn visit_newtype_struct<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.deserialize_any(self)
     }
 }
 

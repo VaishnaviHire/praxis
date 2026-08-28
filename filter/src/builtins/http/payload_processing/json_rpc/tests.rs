@@ -916,3 +916,129 @@ fn deep_nested_id_rejected() {
         "deep id nesting should surface as InvalidJson: {err:?}"
     );
 }
+
+#[test]
+fn deep_nested_object_params_rejected() {
+    // Exercises BoundedIgnore::visit_map's depth guard (objects, not arrays).
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    let mut s = String::from(r#"{"jsonrpc":"2.0","method":"m","id":1,"params":"#);
+    s.push_str(&r#"{"a":"#.repeat(300));
+    s.push('1');
+    s.push_str(&"}".repeat(300));
+    s.push('}');
+    assert!(
+        parse_json_rpc_envelope(s.as_bytes(), &config).is_err(),
+        "deeply nested object params must be rejected"
+    );
+}
+
+#[test]
+fn ignored_params_scalars_and_containers_are_accepted() {
+    // Exercises every reachable BoundedIgnore arm (bool, i64, u64, f64, str,
+    // unit/null, map, seq) via the ignored `params` value.
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    for params in [
+        "true",
+        "42",
+        "-7",
+        "1.5",
+        r#""s""#,
+        "null",
+        r#"{"a":1,"b":[2,3]}"#,
+        "[1,2,3]",
+    ] {
+        let body = format!(r#"{{"jsonrpc":"2.0","method":"m","id":1,"params":{params}}}"#);
+        let env = parse_json_rpc_envelope(body.as_bytes(), &config)
+            .unwrap_or_else(|e| panic!("params {params} should parse: {e:?}"))
+            .expect("a JSON-RPC message");
+        assert_eq!(
+            env.method.as_deref(),
+            Some("m"),
+            "method must still be captured with params={params}"
+        );
+    }
+}
+
+#[test]
+fn id_variants_are_classified() {
+    // Exercises IdVisitor scalar arms (str, i64, u64, f64, unit).
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    for (id, kind) in [
+        (r#""abc""#, JsonRpcIdKind::String),
+        ("7", JsonRpcIdKind::Integer),
+        ("-7", JsonRpcIdKind::Integer),
+        ("18446744073709551615", JsonRpcIdKind::Integer),
+        ("1.5", JsonRpcIdKind::Number),
+        ("null", JsonRpcIdKind::Null),
+    ] {
+        let body = format!(r#"{{"jsonrpc":"2.0","method":"m","id":{id}}}"#);
+        let env = parse_json_rpc_envelope(body.as_bytes(), &config)
+            .unwrap()
+            .expect("a JSON-RPC message");
+        assert_eq!(env.id_kind, kind, "id {id} classification");
+    }
+}
+
+#[test]
+fn container_and_bool_ids_are_invalid() {
+    // Exercises IdVisitor::visit_map / visit_seq / visit_bool -> RawId::Invalid.
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    for id in [r#"{"a":1}"#, "[1,2]", "true"] {
+        let body = format!(r#"{{"jsonrpc":"2.0","method":"m","id":{id}}}"#);
+        let err = parse_json_rpc_envelope(body.as_bytes(), &config).unwrap_err();
+        assert!(
+            matches!(err, super::envelope::JsonRpcParseError::InvalidId),
+            "id {id} must be InvalidId, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn non_string_version_is_treated_as_missing() {
+    // Exercises VersionVisitor non-string arms (i64, bool, map, seq) ->
+    // RawVersion::Missing -> handle_non_json_rpc (Continue -> Ok(None)).
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    for v in ["2", "true", r#"{"x":1}"#, "[1]"] {
+        let body = format!(r#"{{"jsonrpc":{v},"method":"m","id":1}}"#);
+        let out = parse_json_rpc_envelope(body.as_bytes(), &config).unwrap();
+        assert!(out.is_none(), "a non-string jsonrpc={v} is not a JSON-RPC message");
+    }
+}
+
+#[test]
+fn non_string_method_variants_are_invalid() {
+    // Exercises MethodVisitor non-string arms (i64, bool, map, seq, unit) ->
+    // RawMethod::NotString -> InvalidMethod.
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    for m in ["1", "true", r#"{"x":1}"#, "[1]", "null"] {
+        let body = format!(r#"{{"jsonrpc":"2.0","method":{m},"id":1}}"#);
+        let err = parse_json_rpc_envelope(body.as_bytes(), &config).unwrap_err();
+        assert!(
+            matches!(err, super::envelope::JsonRpcParseError::InvalidMethod),
+            "method {m} must be InvalidMethod, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn batch_first_skips_non_object_items() {
+    // Exercises ItemVisitor scalar/seq arms: non-object batch items are
+    // captured as None and skipped; the first valid object wins.
+    let config = make_config(BatchPolicy::First, OnInvalidBehavior::Continue);
+    let body = br#"[1, "x", [1,2], {"jsonrpc":"2.0","method":"picked","id":1}]"#;
+    let env = parse_json_rpc_envelope(body, &config)
+        .unwrap()
+        .expect("the first valid object");
+    assert_eq!(env.method.as_deref(), Some("picked"), "first valid batch object wins");
+    assert_eq!(env.kind, JsonRpcKind::Batch, "kind should be batch");
+}
+
+#[test]
+fn root_scalars_are_not_json_rpc() {
+    // Exercises TopVisitor scalar arms -> RawTop::Other -> handle_non_json_rpc.
+    let config = make_config(BatchPolicy::Reject, OnInvalidBehavior::Continue);
+    for root in [r#""s""#, "42", "1.5", "true", "null"] {
+        let out = parse_json_rpc_envelope(root.as_bytes(), &config).unwrap();
+        assert!(out.is_none(), "root scalar {root} is not JSON-RPC");
+    }
+}
