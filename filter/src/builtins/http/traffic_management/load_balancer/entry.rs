@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use http::header::HeaderValue;
 use praxis_core::{
     config::{CachedClusterTls, Cluster, RetryPolicy},
@@ -45,6 +46,14 @@ pub(super) struct ClusterEntry {
 
     /// Shared active-request counter and retry budget.
     pub(super) retry_state: Arc<ClusterRetryState>,
+
+    /// One-slot memo of the last route-override retry merge, keyed by
+    /// the route policy's [`Arc`] identity. Route policies are
+    /// config-stable [`Arc`]s cloned per request from router config, so
+    /// requests flowing through one route hit the memo instead of
+    /// re-allocating the merged policy each time; holding the route
+    /// [`Arc`] both keys the cache and pins its address against reuse.
+    merged_retry_memo: ArcSwap<Option<(Arc<RetryPolicy>, Arc<RetryPolicy>)>>,
 }
 
 impl ClusterEntry {
@@ -75,6 +84,25 @@ impl ClusterEntry {
             connection: Arc::clone(&self.opts),
             tls,
         }
+    }
+
+    /// Merge the route-level retry override onto this cluster's policy,
+    /// memoizing the last merge by the route policy's [`Arc`] identity.
+    ///
+    /// A memo hit costs one lock-free load and a refcount bump; a miss
+    /// (first request, or the route's policy changed) re-runs
+    /// [`RetryPolicy::merge_override`] and replaces the slot.
+    pub(super) fn merged_retry_policy(&self, route: &Arc<RetryPolicy>) -> Arc<RetryPolicy> {
+        let cached = self.merged_retry_memo.load();
+        if let Some((cached_route, merged)) = cached.as_ref() {
+            if Arc::ptr_eq(cached_route, route) {
+                return Arc::clone(merged);
+            }
+        }
+        let merged = Arc::new(self.retry_policy.merge_override(route));
+        self.merged_retry_memo
+            .store(Arc::new(Some((Arc::clone(route), Arc::clone(&merged)))));
+        merged
     }
 
     /// Capture a reselector with an already-merged retry policy.
@@ -135,6 +163,7 @@ pub(super) fn build_cluster_entry(cluster: &Cluster) -> Result<ClusterEntry, Fil
         tls,
         retry_policy,
         retry_state,
+        merged_retry_memo: ArcSwap::from_pointee(None),
     })
 }
 
@@ -226,6 +255,43 @@ mod tests {
             strip_host_port("example.com:443"),
             "example.com",
             "should strip default HTTPS port"
+        );
+    }
+
+    #[test]
+    fn merged_retry_policy_memoizes_by_route_identity() {
+        let cluster: Cluster =
+            serde_yaml::from_str("name: memo\nendpoints:\n  - \"203.0.113.1:80\"\nretry_policy:\n  max_retries: 2\n")
+                .expect("cluster yaml");
+        let entry = build_cluster_entry(&cluster).expect("entry");
+
+        let route = Arc::new(RetryPolicy {
+            max_retries: Some(5),
+            ..RetryPolicy::default()
+        });
+
+        let first = entry.merged_retry_policy(&route);
+        let second = entry.merged_retry_policy(&route);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "the same route policy must hit the memo, not re-allocate"
+        );
+        assert_eq!(first.max_retries, Some(5), "route override must win");
+
+        let other_route = Arc::new(RetryPolicy {
+            max_retries: Some(7),
+            ..RetryPolicy::default()
+        });
+        let third = entry.merged_retry_policy(&other_route);
+        assert!(
+            !Arc::ptr_eq(&first, &third),
+            "a different route policy must recompute the merge"
+        );
+        assert_eq!(third.max_retries, Some(7), "recomputed merge must use the new route");
+        assert_eq!(
+            *third,
+            entry.retry_policy.merge_override(&other_route),
+            "the memoized merge must equal a direct merge_override"
         );
     }
 }

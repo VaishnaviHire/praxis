@@ -227,7 +227,7 @@ impl HttpFilter for LoadBalancerFilter {
         ctx.cluster_retry_state = Some(Arc::clone(&entry.retry_state));
 
         let policy = match &ctx.route_retry_policy {
-            Some(route_override) => Arc::new(entry.retry_policy.merge_override(route_override)),
+            Some(route_override) => entry.merged_retry_policy(route_override),
             None => Arc::clone(&entry.retry_policy),
         };
         ctx.retry_policy = Some(Arc::clone(&policy));
