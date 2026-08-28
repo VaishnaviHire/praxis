@@ -175,40 +175,73 @@ pub fn parse_sni(buf: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
 /// the caller caps (the TCP proxy limits its SNI peek buffer), so this cannot
 /// allocate unboundedly.
 fn reassemble_handshake(buf: &[u8]) -> Result<Vec<u8>, SniParseError> {
-    let mut handshake: Vec<u8> = Vec::new();
+    // The 4-byte handshake header accumulates in a stack array so the body
+    // can be returned as-is, without the front-drain memmove of up to the
+    // whole peek buffer the old single-Vec shape paid. The body Vec is
+    // sized once from the caller-capped peek buffer instead of growing by
+    // doubling; this path is attacker-triggerable per read on a fragmented
+    // hello, so its per-invocation cost matters.
+    let mut header = [0_u8; HANDSHAKE_HEADER_LEN];
+    let mut header_filled = 0_usize;
+    let mut body: Vec<u8> = Vec::with_capacity(buf.len().saturating_sub(TLS_RECORD_HEADER_LEN));
     let mut pos = 0;
 
     loop {
-        let header = buf
-            .get(pos..pos + TLS_RECORD_HEADER_LEN)
-            .ok_or(SniParseError::NeedMoreData)?;
-        if *header.first().ok_or(SniParseError::NeedMoreData)? != CONTENT_TYPE_HANDSHAKE {
-            return Err(SniParseError::NotHandshake);
-        }
-        let record_len = read_u16(header, 3)? as usize;
-        let frag_start = pos + TLS_RECORD_HEADER_LEN;
-        let fragment = buf
-            .get(frag_start..frag_start + record_len)
-            .ok_or(SniParseError::NeedMoreData)?;
-        handshake.extend_from_slice(fragment);
+        let (mut fragment, next_pos) = handshake_record_fragment(buf, pos)?;
 
-        // Once the 4-byte handshake header is available, we know the total
+        if header_filled < HANDSHAKE_HEADER_LEN {
+            (fragment, header_filled) = fill_handshake_header(&mut header, header_filled, fragment);
+        }
+        body.extend_from_slice(fragment);
+
+        // Once the 4-byte handshake header is complete, we know the total
         // ClientHello length and can stop as soon as enough bytes are gathered.
-        if handshake.len() >= HANDSHAKE_HEADER_LEN {
-            if *handshake.first().ok_or(SniParseError::NeedMoreData)? != HANDSHAKE_TYPE_CLIENT_HELLO {
+        if header_filled == HANDSHAKE_HEADER_LEN {
+            if *header.first().ok_or(SniParseError::NeedMoreData)? != HANDSHAKE_TYPE_CLIENT_HELLO {
                 return Err(SniParseError::NotClientHello);
             }
-            let hs_len = read_u24(&handshake, 1)? as usize;
-            let end = HANDSHAKE_HEADER_LEN + hs_len;
-            if handshake.len() >= end {
-                handshake.truncate(end);
-                handshake.drain(..HANDSHAKE_HEADER_LEN);
-                return Ok(handshake);
+            let hs_len = read_u24(&header, 1)? as usize;
+            if body.len() >= hs_len {
+                body.truncate(hs_len);
+                return Ok(body);
             }
         }
 
-        pos = frag_start + record_len;
+        pos = next_pos;
     }
+}
+
+/// Parse the TLS record header at `pos` and return the record's handshake
+/// fragment plus the offset of the next record.
+fn handshake_record_fragment(buf: &[u8], pos: usize) -> Result<(&[u8], usize), SniParseError> {
+    let record_header = buf
+        .get(pos..pos + TLS_RECORD_HEADER_LEN)
+        .ok_or(SniParseError::NeedMoreData)?;
+    if *record_header.first().ok_or(SniParseError::NeedMoreData)? != CONTENT_TYPE_HANDSHAKE {
+        return Err(SniParseError::NotHandshake);
+    }
+    let record_len = read_u16(record_header, 3)? as usize;
+    let frag_start = pos + TLS_RECORD_HEADER_LEN;
+    let fragment = buf
+        .get(frag_start..frag_start + record_len)
+        .ok_or(SniParseError::NeedMoreData)?;
+    Ok((fragment, frag_start + record_len))
+}
+
+/// Copy up to the remaining handshake-header bytes from the front of
+/// `fragment` into `header`, returning the body remainder and the new
+/// fill count.
+fn fill_handshake_header<'frag>(
+    header: &mut [u8; HANDSHAKE_HEADER_LEN],
+    filled: usize,
+    fragment: &'frag [u8],
+) -> (&'frag [u8], usize) {
+    let take = fragment.len().min(HANDSHAKE_HEADER_LEN - filled);
+    let (head, rest) = fragment.split_at(take);
+    for (dst, src) in header.iter_mut().skip(filled).zip(head) {
+        *dst = *src;
+    }
+    (rest, filled + take)
 }
 
 // -----------------------------------------------------------------------------
@@ -410,13 +443,12 @@ fn reject_ip_literal(hostname: &str) -> Result<(), SniParseError> {
         return Err(SniParseError::InvalidHostname);
     }
 
-    let trimmed = hostname
-        .strip_prefix('[')
-        .and_then(|s| s.strip_suffix(']'))
-        .unwrap_or(hostname);
-
-    if trimmed.parse::<std::net::Ipv6Addr>().is_ok() {
-        return Err(SniParseError::InvalidHostname);
+    // The IpAddr parse above already tried the unbracketed IPv6 form;
+    // a second parse is only needed when brackets were actually stripped.
+    if let Some(trimmed) = hostname.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        if trimmed.parse::<std::net::Ipv6Addr>().is_ok() {
+            return Err(SniParseError::InvalidHostname);
+        }
     }
 
     Ok(())
@@ -1019,6 +1051,24 @@ mod tests {
             result.sni.as_deref(),
             Some("shard.example.net"),
             "SNI should span three records"
+        );
+    }
+
+    #[test]
+    fn client_hello_header_split_across_records_parses_sni() {
+        // The first record carries only half of the 4-byte handshake
+        // header, so reassembly must accumulate the header itself across
+        // record boundaries before it can size the message.
+        let ext = build_sni_extension("split.example.org");
+        let hello = build_client_hello(&[], &[0x00, 0xFF], &[0x00], &ext);
+        let handshake = build_handshake_message(&hello);
+        let mut buf = wrap_fragment_in_record(handshake.get(..2).expect("head"));
+        buf.extend_from_slice(&wrap_fragment_in_record(handshake.get(2..).expect("tail")));
+        let result = parse_sni(&buf).expect("ClientHello with a split handshake header should parse");
+        assert_eq!(
+            result.sni.as_deref(),
+            Some("split.example.org"),
+            "SNI should be extracted when the handshake header spans records"
         );
     }
 
