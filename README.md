@@ -7,12 +7,8 @@
 [![MSRV: 1.96](https://img.shields.io/badge/MSRV-1.96-brightgreen.svg)](https://blog.rust-lang.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Praxis is a high-performance, security-first **proxy framework**
-built on a composable filter pipeline. Use it for ingress or
-egress traffic with routing, load balancing, and security
-filters. AI Gateway capabilities ship in
-[praxis-ai](https://github.com/praxis-proxy/ai); see
-[AI Gateway overview](https://github.com/praxis-proxy/ai/blob/main/docs/features.md).
+Praxis is a Rust-based high-performance security-focused framework for
+building **proxy servers**.
 
 ## Getting Started
 
@@ -61,3 +57,7 @@ All participants are expected to follow the
 [CNCF Slack]:https://slack.cncf.io
 [#praxis]:https://cloud-native.slack.com/archives/C0BK0RSP5RC
 [proposal process]:https://github.com/praxis-proxy/enhancements
+
+## License
+
+Apache 2.0
