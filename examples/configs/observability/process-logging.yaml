@@ -1,7 +1,8 @@
-# Process Logging: File Output with Size Rotation
+# Process Logging: Non-Blocking File Output
 #
-# Non-blocking process logs written to a rotating file. Size-based rotation
-# keeps the active file at file_path; rolled copies use proxy.log.1, proxy.log.2, …
+# Non-blocking process logs written to a file. Praxis does not rotate the file;
+# use journald, logrotate, or a container log driver for rotation and retention,
+# or log to stdout/stderr and let the platform capture it.
 #
 # Usage:
 #   RUST_LOG=info cargo run -p praxis-proxy -- -c examples/configs/observability/process-logging.yaml
@@ -11,8 +12,6 @@ runtime:
   logging:
     output: file
     file_path: /tmp/praxis-process.log
-    rotation: size:1mb
-    max_files: 7
     non_blocking: true
     buffer_size: 8192
 

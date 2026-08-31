@@ -450,25 +450,20 @@ runtime:
   logging:
     output: stdout        # stdout (default) | stderr | file
     file_path: /var/log/praxis/proxy.log
-    rotation: daily       # omit for no rotation; or size:100mb
-    max_files: 7
     non_blocking: true
     buffer_size: 8192     # buffered lines; default 128000
 ```
 
 Defaults keep today's behavior: non-blocking stdout,
 text or JSON via `PRAXIS_LOG_FORMAT`, lossy overflow
-when the buffer is full. File output supports:
+when the buffer is full.
 
-- **No rotation** — omit `rotation`; the file at
-  `file_path` grows in place.
-- **Daily rotation** — `rotation: daily`; files are
-  named `{prefix}.{YYYY-MM-DD}{suffix}` in the log
-  directory (for example `proxy.2026-08-17.log`).
-- **Size rotation** — `rotation: size:100mb`; the
-  active file is exactly `file_path`; rolled copies are
-  `proxy.log.1`, `proxy.log.2`, … with oldest archives
-  pruned to `max_files`.
+Praxis does not rotate log files. With `output: file`
+the log grows in place at `file_path`; rotation and
+retention are the platform's responsibility (journald,
+`logrotate`, or a container log driver). The simplest
+setup is to log to `stdout`/`stderr` and let the
+platform capture and rotate.
 
 Changing `runtime.logging` requires a process restart;
 reload validates the block but does not re-init the

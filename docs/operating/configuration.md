@@ -80,7 +80,7 @@ continues serving with the old config.
 
 **Requires restart (logged as warning):**
 
-- `runtime.logging` destination, rotation, retention, or buffering
+- `runtime.logging` destination or buffering
 - Listener add, remove, or address rebind
 - Protocol changes (HTTP to TCP)
 - Compression module addition

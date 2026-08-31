@@ -3,7 +3,7 @@
 
 //! Process logging example schema tests.
 
-use praxis_core::config::{LogOutput, LogRotation};
+use praxis_core::config::LogOutput;
 
 #[test]
 fn process_logging_example_parses() {
@@ -15,8 +15,8 @@ fn process_logging_example_parses() {
     let config = praxis_core::config::Config::from_yaml(&yaml).expect("parse example");
     assert_eq!(config.runtime.logging.output, LogOutput::File);
     assert_eq!(
-        config.runtime.logging.rotation,
-        Some(LogRotation::Size { max_bytes: 1_048_576 })
+        config.runtime.logging.file_path.as_deref(),
+        Some("/tmp/praxis-process.log")
     );
     assert!(config.runtime.logging.non_blocking);
 }

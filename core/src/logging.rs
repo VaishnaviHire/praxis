@@ -12,7 +12,6 @@
 //! Per-module overrides come from `runtime.log_overrides` in the config YAML.
 
 mod log_level;
-mod size_rotation;
 
 use std::sync::Arc;
 
@@ -170,20 +169,17 @@ pub fn validate_logging(config: &Config) -> Result<(), ProxyError> {
 mod writer {
     //! Builds tracing fmt-layer writers for `runtime.logging`.
     use std::{
+        fs,
         io::{self, Write},
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
     };
 
-    use tracing_appender::{
-        non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard},
-        rolling::{RollingFileAppender, Rotation},
-    };
+    use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
     use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
-    use super::size_rotation::{SizeRotatingWriter, ensure_parent_dir};
     use crate::{
-        config::{LogOutput, LogRotation, LoggingConfig},
+        config::{LogOutput, LoggingConfig},
         errors::ProxyError,
     };
 
@@ -233,19 +229,11 @@ mod writer {
         })?;
         let path = PathBuf::from(path);
 
-        let raw: Box<dyn Write + Send + Sync> =
-            match cfg.rotation {
-                None => {
-                    ensure_parent_dir(&path)?;
-                    Box::new(open_append_file(&path).map_err(|e| {
-                        ProxyError::Config(format!("failed to open log file '{}': {e}", path.display()))
-                    })?)
-                },
-                Some(LogRotation::Daily) => Box::new(open_daily_appender(&path, cfg.max_files)?),
-                Some(LogRotation::Size { max_bytes }) => {
-                    Box::new(SizeRotatingWriter::open(path, max_bytes, cfg.max_files)?)
-                },
-            };
+        ensure_parent_dir(&path)?;
+        let raw: Box<dyn Write + Send + Sync> = Box::new(
+            open_append_file(&path)
+                .map_err(|e| ProxyError::Config(format!("failed to open log file '{}': {e}", path.display())))?,
+        );
 
         if cfg.non_blocking {
             let (non_blocking, guard) = wrap_non_blocking(raw, cfg);
@@ -271,45 +259,23 @@ mod writer {
     }
 
     /// Open a log file for append-only writes.
-    fn open_append_file(path: &Path) -> io::Result<std::fs::File> {
-        std::fs::OpenOptions::new().create(true).append(true).open(path)
+    fn open_append_file(path: &Path) -> io::Result<fs::File> {
+        fs::OpenOptions::new().create(true).append(true).open(path)
     }
 
-    /// Build a daily-rotating appender matching `tracing-appender` semantics.
-    fn open_daily_appender(path: &Path, max_files: u32) -> Result<RollingFileAppender, ProxyError> {
-        let (dir, prefix, suffix) = split_log_path(path)?;
-        let mut builder = RollingFileAppender::builder()
-            .rotation(Rotation::DAILY)
-            .filename_prefix(prefix)
-            .max_log_files(max_files as usize);
-        if !suffix.is_empty() {
-            builder = builder.filename_suffix(suffix);
+    /// Create parent directories for `path` when needed.
+    fn ensure_parent_dir(path: &Path) -> Result<(), ProxyError> {
+        let Some(parent) = path.parent() else {
+            return Err(ProxyError::Config(format!(
+                "log file path '{}' has no parent directory",
+                path.display()
+            )));
+        };
+        if parent.as_os_str().is_empty() {
+            return Ok(());
         }
-        builder
-            .build(dir)
-            .map_err(|e| ProxyError::Config(format!("failed to open daily log file: {e}")))
-    }
-
-    /// Split `path` into directory, stem prefix, and extension suffix.
-    fn split_log_path(path: &Path) -> Result<(PathBuf, String, String), ProxyError> {
-        ensure_parent_dir(path)?;
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-
-        let stem = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        // No leading dot: `RollingFileAppender` inserts its own `.` separators
-        // around the date (`{prefix}.{date}.{suffix}`).
-        let suffix = path
-            .extension()
-            .map(|ext| ext.to_string_lossy().into_owned())
-            .unwrap_or_default();
-
-        Ok((parent, stem, suffix))
+        fs::create_dir_all(parent)
+            .map_err(|e| ProxyError::Config(format!("failed to create log directory '{}': {e}", parent.display())))
     }
 
     /// Mutex-backed synchronous writer used when `non_blocking: false`.
@@ -838,7 +804,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::config::{LogOutput, LogRotation, LoggingConfig};
+    use crate::config::{LogOutput, LoggingConfig};
 
     #[test]
     fn empty_log_overrides_produces_valid_filter() {
@@ -1089,8 +1055,7 @@ runtime:
   logging:
     output: file
     file_path: /tmp/praxis.log
-    rotation: size:1mb
-    max_files: 5
+    buffer_size: 8192
 listeners:
   - name: test
     address: "127.0.0.1:8080"
@@ -1102,52 +1067,8 @@ filter_chains:
 "#;
         let config = Config::from_yaml(yaml).expect("logging config should parse");
         assert_eq!(config.runtime.logging.output, LogOutput::File);
-        assert_eq!(
-            config.runtime.logging.rotation,
-            Some(LogRotation::Size { max_bytes: 1_048_576 })
-        );
-        assert_eq!(config.runtime.logging.max_files, 5);
-    }
-
-    #[test]
-    fn daily_file_writer_opens_target_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("proxy.log");
-        let cfg = LoggingConfig {
-            output: LogOutput::File,
-            file_path: Some(path.to_string_lossy().into_owned()),
-            rotation: Some(LogRotation::Daily),
-            max_files: 3,
-            ..LoggingConfig::default()
-        };
-        writer::build_log_writer(&cfg).expect("daily file writer should build");
-        assert!(dir.path().exists());
-    }
-
-    #[test]
-    fn daily_file_writer_names_files_with_single_dot_separators() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("proxy.log");
-        let cfg = LoggingConfig {
-            output: LogOutput::File,
-            file_path: Some(path.to_string_lossy().into_owned()),
-            rotation: Some(LogRotation::Daily),
-            max_files: 3,
-            ..LoggingConfig::default()
-        };
-        let bundle = writer::build_log_writer(&cfg).expect("daily file writer should build");
-        let names: Vec<String> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        assert!(!names.is_empty(), "appender should create the active log file");
-        for name in &names {
-            assert!(
-                name.starts_with("proxy.") && name.ends_with(".log") && !name.contains(".."),
-                "expected proxy.<date>.log, got {name}"
-            );
-        }
-        drop(bundle.worker_guard);
+        assert_eq!(config.runtime.logging.file_path.as_deref(), Some("/tmp/praxis.log"));
+        assert_eq!(config.runtime.logging.buffer_size, Some(8192));
     }
 
     #[test]
@@ -1157,8 +1078,6 @@ filter_chains:
         let cfg = LoggingConfig {
             output: LogOutput::File,
             file_path: Some(path.to_string_lossy().into_owned()),
-            rotation: Some(LogRotation::Size { max_bytes: 32 }),
-            max_files: 3,
             ..LoggingConfig::default()
         };
         let bundle = writer::build_log_writer(&cfg).expect("file writer should build");

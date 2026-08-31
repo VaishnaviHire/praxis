@@ -138,7 +138,7 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub log_overrides: HashMap<String, String>,
 
-    /// Process log destination, rotation, retention, and buffering.
+    /// Process log destination and buffering.
     #[serde(default)]
     pub logging: super::logging::LoggingConfig,
 

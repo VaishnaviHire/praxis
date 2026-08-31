@@ -40,7 +40,7 @@ fn stop_child(mut child: std::process::Child) {
 // -----------------------------------------------------------------------------
 
 #[test]
-fn process_logging_writes_rotated_file() {
+fn process_logging_writes_to_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let log_path = dir.path().join("praxis-process.log");
     let port = free_port();
@@ -76,7 +76,7 @@ fn process_logging_writes_rotated_file() {
 
     let active = fs::read_to_string(&log_path).unwrap_or_default();
     assert!(
-        active.contains("INFO") || dir.path().join("praxis-process.log.1").exists(),
+        active.contains("INFO"),
         "example config should write process logs to disk"
     );
 }
