@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 Praxis Contributors
 
 //! Tests for proxy behavior when backends are unreachable, slow, or drop connections mid-request.

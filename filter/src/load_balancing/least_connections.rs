@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 Praxis Contributors
 
 //! Least-connections endpoint selection with in-flight tracking.

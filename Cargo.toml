@@ -28,7 +28,7 @@ version = "0.5.3"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Shane Utt <shaneutt@linux.com>"]
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/praxis-proxy/praxis"
 
 [workspace.dependencies]

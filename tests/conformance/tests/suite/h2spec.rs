@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 Praxis Contributors
 
 //! HTTP/2 conformance tests via [h2spec]. Runs all h2spec tests in strict mode.
