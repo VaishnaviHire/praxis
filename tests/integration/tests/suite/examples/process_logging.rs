@@ -47,6 +47,9 @@ fn process_logging_writes_to_file() {
     let yaml = fs::read_to_string(example_config_path("observability/process-logging.yaml")).expect("read example");
     let yaml = yaml.replace("/tmp/praxis-process.log", &log_path.display().to_string());
     let yaml = patch_yaml(&yaml, port, &std::collections::HashMap::new());
+    // Keep the graceful-shutdown drain short so the SIGTERM in stop_child()
+    // returns promptly instead of blocking on the default 30s timeout.
+    let yaml = format!("{yaml}\nshutdown_timeout_secs: 1\n");
 
     let config_path = dir.path().join("praxis.yaml");
     fs::write(&config_path, &yaml).expect("write config");
