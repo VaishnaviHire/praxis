@@ -7,11 +7,9 @@ use std::{
     fs, io,
     net::TcpStream,
     process::{Command, Stdio},
-    thread,
-    time::Duration,
 };
 
-use praxis_test_utils::{example_config_path, free_port, patch_yaml, praxis_bin};
+use praxis_test_utils::{example_config_path, free_port, patch_yaml, praxis_bin, wait_for_tcp};
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -63,7 +61,7 @@ fn process_logging_writes_to_file() {
         .spawn()
         .expect("spawn praxis");
 
-    thread::sleep(Duration::from_millis(800));
+    wait_for_tcp(&format!("127.0.0.1:{port}"));
 
     let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).expect("connect");
     io::Write::write_all(

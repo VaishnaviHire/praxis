@@ -7,11 +7,9 @@ use std::{
     fs, io,
     net::TcpStream,
     process::{Command, Stdio},
-    thread,
-    time::Duration,
 };
 
-use praxis_test_utils::{free_port, praxis_bin};
+use praxis_test_utils::{free_port, praxis_bin, wait_for_tcp};
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -91,7 +89,7 @@ filter_chains:
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn praxis");
-    thread::sleep(Duration::from_millis(800));
+    wait_for_tcp(&format!("127.0.0.1:{port}"));
     ping_proxy(port);
     terminate_gracefully(child);
 
