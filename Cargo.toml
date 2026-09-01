@@ -123,6 +123,9 @@ lto = false
 opt-level = 2
 
 [workspace.lints.rust]
+# `coverage` is set by cargo-llvm-cov; declare it so `#[cfg(coverage)]` gates
+# don't trip the unexpected_cfgs lint under `-D warnings`.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 dead_code = "deny"
 unsafe_code = "forbid"
 missing_docs = "deny"
