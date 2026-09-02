@@ -222,7 +222,11 @@ mod writer {
         }
     }
 
-    /// Build a file-backed writer with rotation and buffering options.
+    /// Build an append-only, buffered file-backed writer.
+    ///
+    /// Praxis does not rotate log files; rotation and retention are
+    /// delegated to the platform (journald, `logrotate`, container
+    /// log drivers).
     fn build_file_writer(cfg: &LoggingConfig) -> Result<LogWriterBundle, ProxyError> {
         let path = cfg.file_path.as_ref().ok_or_else(|| {
             ProxyError::Config("runtime.logging.file_path is required when output is file".to_owned())
