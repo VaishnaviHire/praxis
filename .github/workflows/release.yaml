@@ -118,8 +118,16 @@ jobs:
   # ----------------------------------------------------------------------------
 
   test:
-    if: github.event_name == 'push' && needs.preflight.outputs.tests_already_green != 'true'
     needs: [validate, preflight]
+    # Skip only when the preflight positively confirmed the commit is already
+    # green. If the check was inconclusive (lookup error or the preflight job
+    # itself failing), fall back to running the tests so a draft is never cut on
+    # an unverified commit.
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && needs.validate.result == 'success'
+      && needs.preflight.outputs.tests_already_green != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
