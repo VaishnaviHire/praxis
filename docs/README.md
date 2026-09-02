@@ -28,6 +28,8 @@ and security. AI Gateway docs live in
   routing
 - [Security Hardening](operating/security-hardening.md):
   production deployment guidance
+- [Build Features](operating/build-features.md):
+  compile-time feature flags and when to toggle them
 
 ## Contributing
 
