@@ -30,6 +30,12 @@ must bind to a loopback address by default. Binding
 to a non-loopback address requires
 `insecure_options.allow_public_admin: true`.
 
+The admin surface (including `/metrics`) is compiled
+in by the `admin-api` build feature, on by default. A
+binary built without it exposes no admin endpoints
+regardless of `admin.address`. See
+[Build Features](build-features.md).
+
 ### Verbose Readiness
 
 By default, `/ready` returns aggregate counts only

@@ -71,6 +71,11 @@ rotated certificate.
 To explicitly disable hot-reload, set `hot_reload: false`.
 Multi-cert SNI configs auto-disable hot-reload.
 
+Hot-reload is compiled in by the `config-reload` build
+feature (on by default); a binary built without it serves
+the certificate statically. See
+[Build Features](build-features.md).
+
 **Constraints:**
 
 - Hot-reload applies only to single-cert listeners.
