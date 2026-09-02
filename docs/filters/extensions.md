@@ -602,6 +602,31 @@ lifecycle around each sub-request. The caller's filter
 registry and request extensions are preserved so external
 filters and pipeline-scoped resources remain available.
 
+### Streaming step responses
+
+By default a step buffers its complete sub-request response
+before transition rules run (`SubRequestResponseMode::Buffered`).
+A filter can instead opt a step into a pull-based streamed
+response by calling
+`ctx.set_subrequest_response_mode(SubRequestResponseMode::Streaming)`
+from `on_request`. Any filter that does so must also override
+`may_select_streaming_subrequest_response()` to return `true`:
+pipeline validation rejects a streaming step whose response
+pipeline requires `BodyMode::StreamBuffer`, and a runtime guard
+rejects an undeclared streaming action.
+
+Inside a step, a filter can inject additional bytes into the
+router-owned logical stream with `ctx.emit_stream_chunk(bytes)`.
+Emitted chunks are delivered in FIFO order ahead of the
+callback's own body output, and Praxis never inspects them.
+Emission is only valid inside an `iterative_request_router`
+step; the pending chunks are bounded together with the retained
+`IterationState`, so exceeding that limit returns an error and
+enqueues nothing.
+
+`SubRequestResponseMode` and the streaming helpers are exported
+from `praxis_filter` for external filter crates.
+
 See the
 [`iterative_request_router` reference](http/traffic_management/iterative_request_router.md)
 and [proposal 00786](https://github.com/praxis-proxy/enhancements/blob/main/proposals/00786_iterative-request-router.md)
