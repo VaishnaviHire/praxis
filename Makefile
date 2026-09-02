@@ -8,9 +8,6 @@ CONTAINER_ENGINE ?= $(shell command -v podman 2>/dev/null || command -v docker 2
 NIGHTLY_VERSION  := $(shell grep -m1 'rust-toolchain@' .github/actions/install-nightly-rust/action.yml | grep -oE 'nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}')
 V                ?=
 
-# Optional features that require separate test and lint passes.
-OPTIONAL_FEATURES := basic-auth-filter policy-engine otel
-
 UNAME_S := $(shell uname -s | tr A-Z a-z)
 UNAME_M := $(shell uname -m)
 
@@ -244,26 +241,19 @@ container-run: | require-container-engine
 # Test
 # -------------------------------------------------------------------
 
-test: $(H2SPEC)
-	PATH="$(BINUTILS_PATH):$(PATH)" cargo test --workspace $(_NOCAPTURE)
-	cargo test -p praxis-proxy-core --features otel $(_NOCAPTURE)
-	cargo test -p praxis-proxy-filter --features "basic-auth-filter policy-engine" $(_NOCAPTURE)
-	PATH="$(BINUTILS_PATH):$(PATH)" cargo test -p praxis-tests-integration --features "$(OPTIONAL_FEATURES)" $(_NOCAPTURE)
+# Runs the unit tests once (all crates, all flags) and each integration
+# suite separately.
+test: test-unit test-schema test-integration test-conformance test-security test-resilience
 
+# All unit tests across the workspace in a single pass, with every feature on.
 test-unit:
-	cargo test -p praxis-proxy-core $(_NOCAPTURE)
-	cargo test -p praxis-proxy-core --features otel $(_NOCAPTURE)
-	cargo test -p praxis-proxy-filter $(_NOCAPTURE)
-	cargo test -p praxis-proxy-filter --features "basic-auth-filter policy-engine" $(_NOCAPTURE)
-	cargo test -p praxis-proxy-protocol $(_NOCAPTURE)
-	cargo test -p praxis-proxy $(_NOCAPTURE)
+	cargo test --workspace --lib --all-features $(_NOCAPTURE)
 
 test-schema:
 	cargo test -p praxis-tests-schema $(_NOCAPTURE)
 
 test-integration:
-	cargo test -p praxis-tests-integration $(_NOCAPTURE)
-	cargo test -p praxis-tests-integration --features "$(OPTIONAL_FEATURES)" $(_NOCAPTURE)
+	cargo test -p praxis-tests-integration --all-features $(_NOCAPTURE)
 
 test-conformance: $(H2SPEC)
 	PATH="$(BINUTILS_PATH):$(PATH)" cargo test -p praxis-tests-conformance $(_NOCAPTURE)
@@ -303,8 +293,7 @@ bench: $(VEGETA) $(FORTIO_DEP)
 # -------------------------------------------------------------------
 
 lint:
-	cargo clippy --workspace --all-targets -- -D warnings
-	cargo clippy --workspace --all-targets --features "$(OPTIONAL_FEATURES)" -- -D warnings
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo clippy -p praxis-proxy --no-default-features --all-targets -- -D warnings
 	cargo +$(NIGHTLY_VERSION) fmt --all -- --check
 	cargo machete
