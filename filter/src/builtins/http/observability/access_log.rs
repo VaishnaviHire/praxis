@@ -1150,6 +1150,28 @@ conditions:
         assert_eq!(record.get("span_id"), Some(&"-".to_owned()));
     }
 
+    #[cfg(feature = "otel")]
+    #[test]
+    fn extract_otel_ids_returns_ids_with_active_otel_span() {
+        use opentelemetry::trace::TracerProvider as _;
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
+        let tracer = provider.tracer("test");
+        let layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let span = tracing::info_span!("test_span");
+        let _entered = span.enter();
+
+        let (trace_id, span_id) = extract_otel_ids().expect("ids should be present with an active OTel span");
+        assert_eq!(trace_id.len(), 32, "trace_id must be 32 hex chars, got {trace_id}");
+        assert_ne!(trace_id, "0".repeat(32), "trace_id must not be all-zero");
+        assert_eq!(span_id.len(), 16, "span_id must be 16 hex chars, got {span_id}");
+        assert_ne!(span_id, "0".repeat(16), "span_id must not be all-zero");
+    }
+
     #[test]
     fn sanitize_strips_newlines() {
         assert_eq!(
