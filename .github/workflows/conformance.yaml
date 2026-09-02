@@ -25,7 +25,8 @@ jobs:
   # Conformance tests (h2spec, RFC compliance)
   # ----------------------------------------------------------------------------
 
-  http2-conformance:
+  test:
+    name: test (conformance)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:

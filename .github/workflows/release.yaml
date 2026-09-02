@@ -73,11 +73,11 @@ jobs:
   # Phase 1 (tag push): skip the redundant test run when this commit is already
   # green
   #
-  # The full `make test` suite is split on main across the "Tests",
-  # "Tests (Integration)", and "Conformance" workflows. When all three already
-  # concluded successfully for this exact commit, re-running them for the tag is
-  # pure duplication -- and the monolithic `make test` had been overrunning the
-  # job timeout -- so the `test` job below is skipped.
+  # The test suite is split on main across the "Tests", "Tests (Integration)",
+  # and "Conformance" workflows. When all three already concluded successfully
+  # for this exact commit, re-running them for the tag is pure duplication, so
+  # the `test` job below is skipped. Otherwise it runs the unit, integration,
+  # and conformance suites directly.
   # ----------------------------------------------------------------------------
 
   preflight:
@@ -144,7 +144,10 @@ jobs:
         run: make target/praxis-binutils/h2spec
 
       - name: Run all tests
-        run: make test
+        run: |
+          make test
+          make test-integration
+          make test-conformance
 
   # ----------------------------------------------------------------------------
   # Phase 1 (tag push): verify crates package cleanly (publish dry run)

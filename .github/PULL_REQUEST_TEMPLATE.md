@@ -9,7 +9,7 @@ Fixes #
 - [ ] Signed off all commits (`git commit -s`)
 - [ ] Tests added or updated
 - [ ] Documentation updated (if applicable)
-- [ ] `make lint && make test` passes locally
+- [ ] `make lint && make test && make test-integration` passes locally
 
 ### Does this introduce a breaking change?
 

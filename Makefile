@@ -15,7 +15,7 @@ UNAME_M := $(shell uname -m)
 # All
 # -------------------------------------------------------------------
 
-all: build fmt lint lint-extra test audit container
+all: build fmt lint lint-extra test test-integration test-conformance audit container
 
 # -------------------------------------------------------------------
 # Prerequisites
@@ -241,19 +241,38 @@ container-run: | require-container-engine
 # Test
 # -------------------------------------------------------------------
 
-# Runs the unit tests once (all crates, all flags) and each integration
-# suite separately.
-test: test-unit test-schema test-integration test-conformance test-security test-resilience
+# Tests are split into three groups, each a single cargo invocation with all
+# features enabled and its own CI job:
+#   test              unit tests, i.e. everything outside tests/ (the product
+#                     crates: server, core, filter, protocol, tls)
+#   test-integration  the heavier suites under tests/ (schema, security,
+#                     resilience, integration)
+#   test-conformance  RFC conformance (needs the h2spec binary)
+test: test-unit
 
-# All unit tests across the workspace in a single pass, with every feature on.
+# Everything outside tests/, one pass, every feature on.
 test-unit:
-	cargo test --workspace --lib --all-features $(_NOCAPTURE)
+	cargo test --workspace --all-features \
+		--exclude praxis-tests-schema \
+		--exclude praxis-tests-security \
+		--exclude praxis-tests-resilience \
+		--exclude praxis-tests-integration \
+		--exclude praxis-tests-conformance \
+		--exclude praxis-test-utils \
+		$(_NOCAPTURE)
 
 test-schema:
 	cargo test -p praxis-tests-schema $(_NOCAPTURE)
 
+# Everything under tests/ (schema, security, resilience, integration) in a
+# single pass, every feature on. Conformance is separate (test-conformance).
 test-integration:
-	cargo test -p praxis-tests-integration --all-features $(_NOCAPTURE)
+	cargo test --all-features \
+		-p praxis-tests-schema \
+		-p praxis-tests-security \
+		-p praxis-tests-resilience \
+		-p praxis-tests-integration \
+		$(_NOCAPTURE)
 
 test-conformance: $(H2SPEC)
 	PATH="$(BINUTILS_PATH):$(PATH)" cargo test -p praxis-tests-conformance $(_NOCAPTURE)
@@ -402,11 +421,11 @@ help:
 	@echo "  clean                cargo clean"
 	@echo ""
 	@echo "Test:"
-	@echo "  test                 run all tests (default + optional features)"
-	@echo "  test-unit            unit tests (core, filter, protocol, praxis)"
+	@echo "  test                 tests outside tests/ (single pass, all features)"
+	@echo "  test-unit            alias for test"
 	@echo "  test-schema   config validation + example tests"
-	@echo "  test-integration     integration tests only"
-	@echo "  test-conformance     conformance tests only"
+	@echo "  test-integration     all tests/ suites: schema, security, resilience, integration"
+	@echo "  test-conformance     conformance tests only (needs h2spec)"
 	@echo "  test-security        security test suite"
 	@echo "  test-security-suite  security tests only"
 	@echo "  test-resilience      resilience tests only"

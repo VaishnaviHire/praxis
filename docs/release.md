@@ -14,7 +14,7 @@ workspace crates inherit this version.
 Before tagging a release:
 
 - [ ] Lints are clean (`make lint`)
-- [ ] All tests pass locally (`make test`)
+- [ ] All tests pass locally (`make test && make test-integration && make test-conformance`)
 - [ ] Dependency audit passes (`make audit`)
 - [ ] SemVer compliance verified (`make semver`)
 - [ ] Benchmarks have been run; performance is similar

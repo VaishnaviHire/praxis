@@ -50,4 +50,4 @@ RUN addgroup -S tester && adduser -S -G tester -h /home/tester tester \
 USER tester
 WORKDIR /src
 
-CMD ["sh", "-c", "make tools && make test"]
+CMD ["sh", "-c", "make tools && make test && make test-integration && make test-conformance"]

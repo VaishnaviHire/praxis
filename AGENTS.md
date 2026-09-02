@@ -19,7 +19,7 @@ to the human contributor responsible for the change.
 ```console
 make setup-hooks    # install git pre-commit hook (fmt + lint)
 make build          # workspace build (includes benches)
-make test           # all tests (downloads h2spec if needed)
+make test           # tests outside tests/ (single pass, all features)
 make fmt            # format with nightly rustfmt
 make lint           # clippy + nightly fmt check + xtask lint-deps
 make doc            # rustdoc with -D warnings, including private items
@@ -39,9 +39,9 @@ make test-integration V=1   # with --nocapture
 Individual test suites:
 
 ```console
-make test-unit          # core, filter, protocol, server
+make test-unit          # alias for make test (everything outside tests/)
 make test-schema        # config parsing + example validation
-make test-integration   # end-to-end filter and proxy tests
+make test-integration   # all tests/ suites: schema, security, resilience, integration
 make test-conformance   # RFC conformance (h2spec, HTTP semantics)
 make test-security      # request smuggling, header injection
 make test-resilience    # load, failure recovery, throughput
