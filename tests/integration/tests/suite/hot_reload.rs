@@ -52,7 +52,7 @@ fn reload_route_change_shifts_traffic() {
     assert_eq!(status, 200, "initial request should succeed");
     assert_eq!(body, "backend1", "should route to backend1 initially");
 
-    proxy.reload(&proxy_yaml(proxy_port, backend2.port()));
+    proxy.write_config(&proxy_yaml(proxy_port, backend2.port()));
 
     let (status, body) = get_eventually(proxy.addr(), "/", |_, b| b == "backend2");
     assert_eq!(status, 200, "reloaded request should succeed");
@@ -70,7 +70,7 @@ fn reload_adding_health_checks_restarts_health_tasks() {
     assert_eq!(status, 200, "initial request should succeed");
     assert_eq!(body, "healthy-backend", "initial route should hit the backend");
 
-    proxy.reload(&health_checked_yaml(proxy_port, backend.port()));
+    proxy.write_config(&health_checked_yaml(proxy_port, backend.port()));
 
     let (status, body) = get_eventually(&addr, "/", |code, b| code == 200 && b == "healthy-backend");
     assert_eq!(
@@ -94,7 +94,7 @@ fn reload_endpoint_swap_shifts_traffic() {
     let (_, body) = http_get(proxy.addr(), "/", None);
     assert_eq!(body, "endpoint-a", "should hit endpoint-a initially");
 
-    proxy.reload(&proxy_yaml(proxy_port, backend2.port()));
+    proxy.write_config(&proxy_yaml(proxy_port, backend2.port()));
 
     let (_, body) = get_eventually(proxy.addr(), "/", |_, b| b == "endpoint-b");
     assert_eq!(body, "endpoint-b", "should hit endpoint-b after reload");
@@ -111,7 +111,7 @@ fn reload_adds_filter() {
     assert_eq!(status, 200);
     assert_eq!(body, "proxied", "should proxy to backend initially");
 
-    proxy.reload(&static_yaml(proxy_port, "intercepted"));
+    proxy.write_config(&static_yaml(proxy_port, "intercepted"));
 
     let (status, body) = get_eventually(proxy.addr(), "/", |_, b| b == "intercepted");
     assert_eq!(status, 200);
@@ -132,7 +132,7 @@ fn reload_removes_filter() {
     assert_eq!(status, 200);
     assert_eq!(body, "static-body", "static_response should serve initially");
 
-    proxy.reload(&proxy_yaml(proxy_port, backend.port()));
+    proxy.write_config(&proxy_yaml(proxy_port, backend.port()));
 
     let (status, body) = get_eventually(proxy.addr(), "/", |_, b| b == "backend-response");
     assert_eq!(status, 200);
@@ -206,7 +206,7 @@ fn reload_recovers_after_invalid_then_valid() {
     let (_, body) = http_get(proxy.addr(), "/", None);
     assert_eq!(body, "v1", "still serving v1 after garbage config");
 
-    proxy.reload(&proxy_yaml(proxy_port, backend2.port()));
+    proxy.write_config(&proxy_yaml(proxy_port, backend2.port()));
 
     let (_, body) = get_eventually(proxy.addr(), "/", |_, b| b == "v2");
     assert_eq!(body, "v2", "should recover and serve v2 after valid config");
@@ -263,7 +263,7 @@ fn reload_resets_rate_limit_bucket() {
     let (s_limited, _) = http_get(proxy.addr(), "/", None);
     assert_eq!(s_limited, 429, "should be rate limited after burst exhausted");
 
-    proxy.reload(&rate_limit_yaml(proxy_port, backend.port(), 5));
+    proxy.write_config(&rate_limit_yaml(proxy_port, backend.port(), 5));
 
     let (s_after, _) = get_eventually(proxy.addr(), "/", |s, _| s == 200);
     assert_eq!(s_after, 200, "after reload, rate limit bucket should be fresh");
@@ -311,7 +311,7 @@ insecure_options:
     assert_eq!(s1, 200, "initial request should succeed");
     assert_eq!(body, "cb-v1");
 
-    proxy.reload(&cb_yaml(backend2.port()));
+    proxy.write_config(&cb_yaml(backend2.port()));
 
     let (s2, body) = get_eventually(proxy.addr(), "/", |_, b| b == "cb-v2");
     assert_eq!(s2, 200, "reloaded circuit breaker should be closed (fresh state)");
@@ -384,8 +384,11 @@ insecure_options:
         assert_eq!(body, "v1", "all traffic should go to v1 initially");
     }
 
-    proxy.reload(&both_yaml(v1.port(), v2.port()));
+    proxy.write_config(&both_yaml(v1.port(), v2.port()));
 
+    // Wait for the canary config to take effect (v2 becomes reachable), then
+    // confirm both backends receive traffic during the canary phase.
+    get_eventually(proxy.addr(), "/", |_, b| b == "v2");
     let mut saw_v1 = false;
     let mut saw_v2 = false;
     for _ in 0..20 {
@@ -402,13 +405,24 @@ insecure_options:
         "both v1 and v2 should receive traffic during canary phase"
     );
 
-    proxy.reload(&proxy_yaml(proxy_port, v2.port()));
+    proxy.write_config(&proxy_yaml(proxy_port, v2.port()));
 
-    for _ in 0..3 {
-        let (s, body) = http_get(proxy.addr(), "/", None);
-        assert_eq!(s, 200);
-        assert_eq!(body, "v2", "all traffic should go to v2 after completing rollout");
-    }
+    // Wait for the rollout to complete: v1 must leave the rotation. Poll until a
+    // run of consecutive responses is all v2, so a lingering canary hit does not
+    // race the assertion.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let converged = loop {
+        let all_v2 = (0..5).all(|_| {
+            let (s, body) = http_get(proxy.addr(), "/", None);
+            assert_eq!(s, 200);
+            body == "v2"
+        });
+        if all_v2 || Instant::now() >= deadline {
+            break all_v2;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(converged, "all traffic should go to v2 after completing rollout");
 }
 
 #[test]
@@ -424,11 +438,11 @@ fn reload_multiple_successive_changes() {
     let (_, body) = http_get(proxy.addr(), "/", None);
     assert_eq!(body, "iteration-1");
 
-    proxy.reload(&proxy_yaml(proxy_port, b2.port()));
+    proxy.write_config(&proxy_yaml(proxy_port, b2.port()));
     let (_, body) = get_eventually(proxy.addr(), "/", |_, b| b == "iteration-2");
     assert_eq!(body, "iteration-2", "second config should take effect");
 
-    proxy.reload(&proxy_yaml(proxy_port, b3.port()));
+    proxy.write_config(&proxy_yaml(proxy_port, b3.port()));
     let (_, body) = get_eventually(proxy.addr(), "/", |_, b| b == "iteration-3");
     assert_eq!(body, "iteration-3", "third config should take effect");
 
@@ -436,7 +450,7 @@ fn reload_multiple_successive_changes() {
     let (_, body) = http_get(proxy.addr(), "/", None);
     assert_eq!(body, "iteration-3", "invalid reload should keep iteration-3");
 
-    proxy.reload(&proxy_yaml(proxy_port, b4.port()));
+    proxy.write_config(&proxy_yaml(proxy_port, b4.port()));
     let (_, body) = get_eventually(proxy.addr(), "/", |_, b| b == "iteration-4");
     assert_eq!(body, "iteration-4", "fourth config should take effect after recovery");
 }
@@ -510,7 +524,7 @@ insecure_options:
         health_port = health_backend.port()
     );
 
-    proxy.reload(&two_routes);
+    proxy.write_config(&two_routes);
 
     let (s, body) = http_get(proxy.addr(), "/api/data", None);
     assert_eq!(s, 200);
