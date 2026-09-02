@@ -47,7 +47,9 @@ insecure_options:
     assert_eq!(status, 200, "fast backend should return 200 within timeout");
     assert_eq!(body, "fast", "fast backend response should pass through");
 
-    let slow_port = start_slow_backend("slow", Duration::from_secs(2));
+    // Only needs to exceed the 200ms timeout above so the proxy times out
+    // first; kept short so it is not waited out at teardown.
+    let slow_port = start_slow_backend("slow", Duration::from_secs(1));
     let proxy_port2 = free_port();
     let yaml2 = format!(
         r#"
