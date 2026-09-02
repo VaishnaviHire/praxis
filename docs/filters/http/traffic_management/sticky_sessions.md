@@ -33,18 +33,17 @@ On request: looks up session store for pinned endpoint, sets `ctx.pinned_endpoin
 
 ```yaml
 filter: sticky_sessions
-config:
-  clusters:
-    - name: app_backend
-      type: cookie
-      cookie_name: "_praxis_route"
-      ttl_secs: 3600
-      cookie_attributes:
-        path: "/"
-        http_only: true
-        secure: true
-        same_site: Lax
-      failover: true
-      max_entries: 100000
-      eviction: lru
+clusters:
+  - name: app_backend
+    type: cookie
+    cookie_name: "_praxis_route"
+    ttl_secs: 3600
+    cookie_attributes:
+      path: "/"
+      http_only: true
+      secure: true
+      same_site: Lax
+    failover: true
+    max_entries: 100000
+    eviction: lru
 ```

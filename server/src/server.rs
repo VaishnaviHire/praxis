@@ -23,10 +23,10 @@ use tracing::{debug, info};
 pub use crate::startup_checks::check_root_privilege;
 #[cfg(test)]
 use crate::startup_checks::insecure_warn;
-#[cfg(feature = "experimental")]
-use crate::startup_checks::warn_experimental_features;
 #[cfg(not(feature = "admin-api"))]
 use crate::startup_checks::warn_admin_configured_without_feature;
+#[cfg(feature = "experimental")]
+use crate::startup_checks::warn_experimental_features;
 use crate::{
     pipelines::resolve_pipelines,
     startup_checks::{
