@@ -41,9 +41,9 @@ pub fn http_send(addr: &str, request: &str) -> String {
 /// read timeout set by the caller remains a backstop for misbehaving peers.
 fn read_full_response(stream: &mut TcpStream) -> String {
     let mut data = Vec::new();
-    let mut buf = [0_u8; 4096];
 
     // Accumulate until the header terminator is seen (or the stream ends).
+    let mut buf = [0_u8; 4096];
     let header_end = loop {
         if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
             break pos + 4;
@@ -54,6 +54,15 @@ fn read_full_response(stream: &mut TcpStream) -> String {
         }
     };
 
+    read_body(stream, &mut data, header_end);
+    String::from_utf8_lossy(&data).into_owned()
+}
+
+/// Read the response body into `data`, using whatever framing the already-read
+/// headers advertise: the terminating zero-length chunk for
+/// `Transfer-Encoding: chunked`, exactly `Content-Length` body bytes for a
+/// fixed-size body, and read-to-EOF otherwise (connection-close framing).
+fn read_body(stream: &mut TcpStream, data: &mut Vec<u8>, header_end: usize) {
     let headers = String::from_utf8_lossy(&data[..header_end]).into_owned();
     let is_chunked = headers.lines().any(|line| {
         let lower = line.to_lowercase();
@@ -66,32 +75,25 @@ fn read_full_response(stream: &mut TcpStream) -> String {
         .and_then(|v| v.trim().parse::<usize>().ok());
 
     if is_chunked {
-        // Read until the terminating zero-length chunk is present.
-        while !data[header_end..].windows(5).any(|w| w == b"0\r\n\r\n") {
-            match stream.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => data.extend_from_slice(&buf[..n]),
-            }
-        }
+        read_until(stream, data, |d| d[header_end..].windows(5).any(|w| w == b"0\r\n\r\n"));
     } else if let Some(len) = content_length {
-        // Read exactly the advertised body length.
-        while data.len() < header_end + len {
-            match stream.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => data.extend_from_slice(&buf[..n]),
-            }
-        }
+        read_until(stream, data, |d| d.len() >= header_end + len);
     } else {
-        // No explicit framing: the peer signals completion by closing.
-        loop {
-            match stream.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => data.extend_from_slice(&buf[..n]),
-            }
+        read_until(stream, data, |_| false);
+    }
+}
+
+/// Read 4 KiB chunks from `stream` into `data` until `done` reports the message
+/// is complete or the stream ends. The caller's read timeout is the backstop
+/// for a misbehaving peer that never satisfies `done`.
+fn read_until(stream: &mut TcpStream, data: &mut Vec<u8>, done: impl Fn(&[u8]) -> bool) {
+    let mut buf = [0_u8; 4096];
+    while !done(data) {
+        match stream.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => data.extend_from_slice(&buf[..n]),
         }
     }
-
-    String::from_utf8_lossy(&data).into_owned()
 }
 
 // -----------------------------------------------------------------------------
