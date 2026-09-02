@@ -70,12 +70,56 @@ jobs:
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
   # ----------------------------------------------------------------------------
-  # Phase 1 (tag push): run the full test suite
+  # Phase 1 (tag push): skip the redundant test run when this commit is already
+  # green
+  #
+  # The full `make test` suite is split on main across the "Tests",
+  # "Tests (Integration)", and "Conformance" workflows. When all three already
+  # concluded successfully for this exact commit, re-running them for the tag is
+  # pure duplication -- and the monolithic `make test` had been overrunning the
+  # job timeout -- so the `test` job below is skipped.
+  # ----------------------------------------------------------------------------
+
+  preflight:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      tests_already_green: ${{ steps.check.outputs.tests_already_green }}
+    steps:
+      - name: Check whether the required test workflows already passed for this commit
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          all_green=true
+          for wf in "Tests" "Tests (Integration)" "Conformance"; do
+            conclusion=$(gh run list --repo "$REPO" --workflow "$wf" --limit 100 \
+              --json headSha,status,conclusion \
+              --jq "[.[] | select(.headSha==\"$SHA\" and .status==\"completed\")][0].conclusion // \"none\"" \
+              2>/dev/null) || conclusion="error"
+            echo "workflow '$wf' @ $SHA -> ${conclusion:-none}"
+            [ "$conclusion" = "success" ] || all_green=false
+          done
+          echo "tests_already_green=$all_green" >> "$GITHUB_OUTPUT"
+          if [ "$all_green" = "true" ]; then
+            echo "::notice::Required test workflows already passed for $SHA; skipping the tag test job."
+          else
+            echo "::notice::Test workflows not all green for $SHA; the tag test job will run."
+          fi
+
+  # ----------------------------------------------------------------------------
+  # Phase 1 (tag push): run the full test suite (skipped when already green)
   # ----------------------------------------------------------------------------
 
   test:
-    if: github.event_name == 'push'
-    needs: [validate]
+    if: github.event_name == 'push' && needs.preflight.outputs.tests_already_green != 'true'
+    needs: [validate, preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -123,8 +167,13 @@ jobs:
   # ----------------------------------------------------------------------------
 
   draft-release:
-    if: github.event_name == 'push'
     needs: [validate, test, publish-dry-run]
+    if: >-
+      github.event_name == 'push'
+      && !cancelled()
+      && needs.validate.result == 'success'
+      && needs.publish-dry-run.result == 'success'
+      && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
