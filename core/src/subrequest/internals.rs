@@ -320,18 +320,11 @@ pub(super) fn record_header_termination(termination: &'static str) {
 // Header sanitization
 // ---------------------------------------------------------------------------
 
-/// Headers that apply only to one HTTP connection and must not be
-/// forwarded across a sub-request boundary.
-pub(super) const HOP_BY_HOP_HEADERS: &[&str] = &[
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-];
+/// Headers that apply only to one HTTP connection and must not be forwarded
+/// across a sub-request boundary. Re-exported from the canonical
+/// [`crate::reserved_headers::HOP_BY_HOP_HEADERS`] so the sub-request and
+/// protocol paths share one source of truth.
+pub(super) use crate::reserved_headers::HOP_BY_HOP_HEADERS;
 
 /// Collect the `Connection`-nominated header names, borrowed from the
 /// map's own `Connection` values. Costs nothing when the header is

@@ -62,3 +62,23 @@ pub fn is_reserved(name: &str) -> bool {
             .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
     })
 }
+
+/// [RFC 9110] hop-by-hop headers: connection-specific headers that apply to a
+/// single transport hop and must not be forwarded across a proxy boundary.
+///
+/// This is the canonical set shared by sub-request stripping in `praxis-core`
+/// and the protocol request handlers in `praxis-protocol`, so the two cannot
+/// drift. Response stripping uses this set minus `proxy-authorization`, which
+/// is a request-only credential header.
+///
+/// [RFC 9110]: https://datatracker.ietf.org/doc/html/rfc9110
+pub const HOP_BY_HOP_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
