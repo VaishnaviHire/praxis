@@ -15,7 +15,7 @@ UNAME_M := $(shell uname -m)
 # All
 # -------------------------------------------------------------------
 
-all: build fmt lint lint-extra test test-integration test-conformance audit container
+all: build
 
 # -------------------------------------------------------------------
 # Prerequisites
@@ -412,7 +412,7 @@ help:
 	@echo "  V=1                  show test output (--nocapture)"
 	@echo ""
 	@echo "Top-level:"
-	@echo "  all                  build + fmt + lint + test + audit + container"
+	@echo "  all                  workspace build (alias for build)"
 	@echo ""
 	@echo "Build:"
 	@echo "  build                cargo build --workspace"

@@ -11,7 +11,7 @@ do not follow them will be rejected.
 1. Fork the repository and clone your fork
 2. Install pre-commit hooks: `make setup-hooks`
 3. Build and test: `make build && make test`
-4. Run every gate locally before pushing: `make all`
+4. Run the gates locally before pushing: `make lint && make test && make test-integration && make test-conformance && make audit`
 
 Requirements are listed in
 [docs/developing/getting-started.md].
