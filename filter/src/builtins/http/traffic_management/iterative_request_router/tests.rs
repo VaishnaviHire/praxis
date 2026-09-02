@@ -1096,6 +1096,64 @@ impl crate::HttpFilter for UndeclaredStreamingSelectorFilter {
     }
 }
 
+/// A step filter that declares a referenced document, used to prove the router
+/// surfaces step-pipeline documents for config hot reload.
+struct StepFileRefFilter;
+
+#[async_trait::async_trait]
+impl crate::HttpFilter for StepFileRefFilter {
+    fn name(&self) -> &'static str {
+        "test_step_file_ref"
+    }
+
+    fn referenced_files(&self) -> Vec<std::path::PathBuf> {
+        vec![std::path::PathBuf::from("/etc/praxis/irr-step-doc.yaml")]
+    }
+
+    async fn on_request(
+        &self,
+        _ctx: &mut crate::HttpFilterContext<'_>,
+    ) -> Result<crate::FilterAction, crate::FilterError> {
+        Ok(crate::FilterAction::Continue)
+    }
+}
+
+#[test]
+fn referenced_files_collects_step_pipeline_documents() {
+    let mut registry = crate::FilterRegistry::with_builtins();
+    registry
+        .register(
+            "test_step_file_ref",
+            crate::FilterFactory::Http(std::sync::Arc::new(|_| Ok(Box::new(StepFileRefFilter)))),
+        )
+        .unwrap();
+
+    let yaml: serde_yaml::Value = serde_yaml::from_str(
+        "
+initial_step: s
+steps:
+  - name: s
+    filters:
+      - filter: test_step_file_ref
+      - filter: static_response
+        status: 200
+    on_result:
+      - default: true
+        done: true
+",
+    )
+    .unwrap();
+    let filter = super::IterativeRequestRouterFilter::from_config_with_registry(&yaml, &registry)
+        .expect("from_config should succeed");
+
+    assert!(
+        filter
+            .referenced_files()
+            .contains(&std::path::PathBuf::from("/etc/praxis/irr-step-doc.yaml")),
+        "IRR must surface documents referenced by step-pipeline filters for config hot reload"
+    );
+}
+
 /// Build a default-done transition.
 fn make_default_done() -> config::StepTransition {
     config::StepTransition {

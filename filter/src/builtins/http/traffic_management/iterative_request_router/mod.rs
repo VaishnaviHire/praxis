@@ -331,6 +331,18 @@ impl HttpFilter for IterativeRequestRouterFilter {
         }
     }
 
+    /// Documents referenced by filters inside the step pipelines. The top-level
+    /// pipeline walk that drives config hot reload does not recurse into nested
+    /// pipelines, so the router surfaces its step-filter documents here;
+    /// otherwise editing them (e.g. a policy document) would not trigger a
+    /// reload.
+    fn referenced_files(&self) -> Vec<std::path::PathBuf> {
+        self.step_pipelines
+            .values()
+            .flat_map(|pipeline| pipeline.referenced_files())
+            .collect()
+    }
+
     /// Validate the request, then run the iteration at the router's normal
     /// request-header position after preceding filters have completed.
     async fn on_request(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
