@@ -202,7 +202,7 @@ fn carry_over_health_state(
     let mut carried: usize = 0;
     for cluster in &new_config.clusters {
         let unchanged_check = old_by_name.get(cluster.name.as_ref()).is_some_and(|old_c| {
-            serde_yaml::to_string(&old_c.health_check).ok() == serde_yaml::to_string(&cluster.health_check).ok()
+            !crate::reload_diagnostics::config_value_changed(&old_c.health_check, &cluster.health_check)
         });
         if !unchanged_check {
             continue;

@@ -162,15 +162,24 @@ fn detect_tls_toggles_with(new: &Config, old_by_name: &ListenersByName<'_>) {
     }
 }
 
+/// Whether two config values differ. A serialization failure counts as
+/// "changed" so a real change is never silently missed: the earlier
+/// `serde_yaml::to_string(..).ok()` compares reported `None == None` (both
+/// serializations failed) as unchanged.
+pub(crate) fn config_value_changed<T: serde::Serialize>(old: &T, new: &T) -> bool {
+    match (serde_yaml::to_string(old), serde_yaml::to_string(new)) {
+        (Ok(a), Ok(b)) => a != b,
+        _ => true,
+    }
+}
+
 /// Warn when the contents of an existing listener `tls` block changed.
 fn warn_tls_block_change(
     listener: &str,
     old_tls: &praxis_core::config::ListenerTls,
     new_tls: &praxis_core::config::ListenerTls,
 ) {
-    let old_yaml = serde_yaml::to_string(old_tls).ok();
-    let new_yaml = serde_yaml::to_string(new_tls).ok();
-    if old_yaml != new_yaml {
+    if config_value_changed(old_tls, new_tls) {
         warn!(
             listener = %listener,
             "listener TLS configuration changed; requires restart \
@@ -432,8 +441,7 @@ pub(crate) fn log_config_change_audit(old: &Config, new: &Config) {
     let (ca, cr, cm) = diff_named_items(&old.clusters, &new.clusters, |c| &c.name);
     let (fa, fr, fm) = diff_named_items(&old.filter_chains, &new.filter_chains, |c| &c.name);
 
-    let insecure_changed =
-        serde_yaml::to_string(&old.insecure_options).ok() != serde_yaml::to_string(&new.insecure_options).ok();
+    let insecure_changed = config_value_changed(&old.insecure_options, &new.insecure_options);
 
     info!(
         listeners_added = la,
@@ -496,6 +504,28 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
+
+    struct AlwaysFailsToSerialize;
+
+    impl serde::Serialize for AlwaysFailsToSerialize {
+        fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("intentional serialization failure"))
+        }
+    }
+
+    #[test]
+    fn config_value_changed_treats_serialization_failure_as_changed() {
+        assert!(
+            config_value_changed(&AlwaysFailsToSerialize, &AlwaysFailsToSerialize),
+            "values that both fail to serialize must count as changed, not silently unchanged"
+        );
+    }
+
+    #[test]
+    fn config_value_changed_detects_equal_and_differing_values() {
+        assert!(!config_value_changed(&1_u32, &1_u32), "equal values are unchanged");
+        assert!(config_value_changed(&1_u32, &2_u32), "differing values are changed");
+    }
 
     fn config_with_subrequest_max(max: Option<usize>) -> Config {
         let runtime = max.map_or_else(String::new, |n| format!("runtime:\n  subrequest_max_connections: {n}"));
