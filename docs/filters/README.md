@@ -165,10 +165,10 @@ category:
 ```text
 builtins/
   http/                       HTTP protocol filters
-    observability/            Access logs, request IDs
+    observability/            Access logs, request IDs, trace context
     payload_processing/       Compression, body field extraction, JSON-RPC
-    security/                 CORS, credential injection, CSRF, forwarded headers, guardrails, IP ACL, policy
-    traffic_management/       Circuit breaker, gRPC detection, router, load balancer, timeout, rate limit, redirect, static response
+    security/                 Basic auth, CORS, credential injection, CSRF, forwarded headers, guardrails, IP ACL, peer identity trust, policy
+    traffic_management/       Circuit breaker, endpoint selector, gRPC detection, iterative request router, load balancer, rate limit, redirect, router, sticky sessions, static response, timeout
     transformation/           Header, path rewrite, URL rewrite
   tcp/                        TCP protocol filters
     observability/            Connection logging
