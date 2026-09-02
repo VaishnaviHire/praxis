@@ -24,10 +24,74 @@ pub fn http_send(addr: &str, request: &str) -> String {
     stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     stream.write_all(request.as_bytes()).unwrap();
 
-    let mut response = String::new();
-    let _bytes = stream.read_to_string(&mut response);
+    read_full_response(&mut stream)
+}
 
-    response
+/// Read a complete HTTP/1.1 response from `stream`, returning the raw bytes
+/// as a string.
+///
+/// Uses whatever framing the response advertises so the read returns as soon
+/// as the message is complete: the terminating zero-length chunk for
+/// `Transfer-Encoding: chunked`, exactly `Content-Length` body bytes for a
+/// fixed-size body, and read-to-EOF otherwise (connection-close framing).
+///
+/// Reading to EOF unconditionally (the old behaviour) blocked on the socket
+/// read timeout whenever the proxy kept a keep-alive connection open after the
+/// response was already fully received, adding seconds to every such test. The
+/// read timeout set by the caller remains a backstop for misbehaving peers.
+fn read_full_response(stream: &mut TcpStream) -> String {
+    let mut data = Vec::new();
+    let mut buf = [0_u8; 4096];
+
+    // Accumulate until the header terminator is seen (or the stream ends).
+    let header_end = loop {
+        if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos + 4;
+        }
+        match stream.read(&mut buf) {
+            Ok(0) | Err(_) => return String::from_utf8_lossy(&data).into_owned(),
+            Ok(n) => data.extend_from_slice(&buf[..n]),
+        }
+    };
+
+    let headers = String::from_utf8_lossy(&data[..header_end]).into_owned();
+    let is_chunked = headers.lines().any(|line| {
+        let lower = line.to_lowercase();
+        lower.starts_with("transfer-encoding:") && lower.contains("chunked")
+    });
+    let content_length = headers
+        .lines()
+        .find(|l| l.to_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.split_once(':').map(|(_, v)| v))
+        .and_then(|v| v.trim().parse::<usize>().ok());
+
+    if is_chunked {
+        // Read until the terminating zero-length chunk is present.
+        while !data[header_end..].windows(5).any(|w| w == b"0\r\n\r\n") {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => data.extend_from_slice(&buf[..n]),
+            }
+        }
+    } else if let Some(len) = content_length {
+        // Read exactly the advertised body length.
+        while data.len() < header_end + len {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => data.extend_from_slice(&buf[..n]),
+            }
+        }
+    } else {
+        // No explicit framing: the peer signals completion by closing.
+        loop {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => data.extend_from_slice(&buf[..n]),
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&data).into_owned()
 }
 
 // -----------------------------------------------------------------------------
