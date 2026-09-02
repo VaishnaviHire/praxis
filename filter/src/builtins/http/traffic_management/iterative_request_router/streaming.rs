@@ -29,6 +29,7 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use praxis_core::subrequest::SubResponseBody;
+use tracing::warn;
 
 use crate::{
     FilterError, FilterPipeline, IterationState, NextIterationBody, StreamTermination, StreamTerminationCause,
@@ -354,6 +355,7 @@ impl IrrStreamingBody {
 
     /// Complete the step after a response-body filter failure.
     async fn handle_filter_error(&mut self, error: FilterError) -> Result<Option<Bytes>, FilterError> {
+        warn!("iterative_request_router: response body filter failed: {error}");
         if let Some(upstream_body) = self.upstream.take() {
             (*upstream_body).cancel().await;
         }
