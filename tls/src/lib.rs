@@ -27,7 +27,7 @@
 //! - Peer identity extracted from client certificates ([`TlsPeerIdentity`]).
 //!
 //! Certificate hot-reload support (the [`reload`] and [`watcher`]
-//! modules) is gated behind the `hot-reload` feature.
+//! modules) is gated behind the `config-reload` feature.
 
 mod cached;
 mod client_auth;
@@ -35,7 +35,7 @@ mod config;
 pub mod dns;
 mod error;
 mod identity;
-#[cfg(feature = "hot-reload")]
+#[cfg(feature = "config-reload")]
 pub mod reload;
 pub mod setup;
 pub mod sni;
@@ -44,7 +44,7 @@ pub mod sni_name;
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(clippy::unwrap_used, clippy::expect_used, reason = "test utilities")]
 mod test_utils;
-#[cfg(feature = "hot-reload")]
+#[cfg(feature = "config-reload")]
 pub mod watcher;
 
 pub use cached::{CachedCaCerts, CachedClientCert, CachedClusterTls};

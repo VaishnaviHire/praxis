@@ -17,7 +17,7 @@ name = "praxis_tls"
 workspace = true
 
 [features]
-hot-reload = ["dep:arc-swap", "dep:notify", "dep:tokio"]
+config-reload = ["dep:arc-swap", "dep:notify", "dep:tokio"]
 
 [dependencies]
 arc-swap = { workspace = true, optional = true }

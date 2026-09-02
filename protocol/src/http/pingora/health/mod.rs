@@ -3,20 +3,26 @@
 
 //! Health check infrastructure: admin endpoints, probes, and background runner.
 
-/// Listener metadata for `GET /api/pipelines`.
+/// Listener metadata for `GET /api/pipelines`. Kept ungated: the reload
+/// path maintains this store even when the admin API is not compiled in.
 pub mod listener_meta;
-/// `GET /api/pipelines` admin dispatch.
+/// `/api/log-level` admin dispatch.
+#[cfg(feature = "admin-api")]
 mod log_level_admin;
+#[cfg(feature = "admin-api")]
 mod pipelines_admin;
 /// Health check probe functions (HTTP and TCP).
 pub mod probe;
 /// Background health check runner.
 pub mod runner;
-/// Admin health-check HTTP service (`/ready`, `/healthy`).
+/// Admin HTTP service (`/ready`, `/healthy`, `/metrics`, `/api/*`).
+#[cfg(feature = "admin-api")]
 mod service;
 
 pub use listener_meta::{ListenerMeta, ListenerMetaStore, listener_meta_from_config, new_listener_meta_store};
+#[cfg(feature = "admin-api")]
 pub(in crate::http::pingora) use service::escape_json_string;
+#[cfg(feature = "admin-api")]
 pub use service::{
     AdminEndpointOptions, PingoraAdminService, PingoraHealthService, PrometheusAdminRecorder,
     add_admin_endpoints_to_pingora_server, add_admin_endpoints_to_pingora_server_with_recorder,

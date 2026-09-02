@@ -3,7 +3,7 @@
 
 //! Client certificate verifier construction for listener mTLS.
 //!
-//! When the `hot-reload` feature is enabled and a listener uses
+//! When the `config-reload` feature is enabled and a listener uses
 //! [`ReloadableClientVerifier`], CRL and CA files are monitored
 //! for changes and the verifier is atomically rebuilt on disk
 //! modifications.

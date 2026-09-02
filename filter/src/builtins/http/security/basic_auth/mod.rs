@@ -2,6 +2,10 @@
 // Copyright (c) 2026 Praxis Contributors
 
 //! HTTP Basic Authentication filter (RFC 7617).
+//!
+//! Deprecated: slated for removal in favor of the authentication support in the
+//! Praxis policy engine (<https://github.com/praxis-proxy/policy>). It stays
+//! gated behind the experimental `basic-auth-filter` cargo feature until then.
 
 mod config;
 mod filter;

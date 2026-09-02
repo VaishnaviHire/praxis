@@ -88,6 +88,9 @@ impl CredentialSource {
 
 /// HTTP Basic Authentication filter (RFC 7617).
 ///
+/// Deprecated: slated for removal in favor of the authentication support in the
+/// Praxis policy engine (<https://github.com/praxis-proxy/policy>).
+///
 /// Experimental: requires the `basic-auth-filter` cargo feature,
 /// which is off by default. Credentials are stored in plaintext;
 /// this filter is intended for development and testing only.

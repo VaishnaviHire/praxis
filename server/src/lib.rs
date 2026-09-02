@@ -28,10 +28,13 @@
 //! [`FilterPipeline`]: praxis_filter::FilterPipeline
 
 pub(crate) mod pipelines;
+#[cfg(feature = "config-reload")]
 pub(crate) mod reload;
+#[cfg(feature = "config-reload")]
 pub(crate) mod reload_diagnostics;
 mod server;
 pub(crate) mod startup_checks;
+#[cfg(feature = "config-reload")]
 pub(crate) mod watcher;
 pub use pipelines::{build_subrequest_client, resolve_pipelines};
 pub use praxis_core::{

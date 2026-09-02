@@ -25,6 +25,8 @@ pub use crate::startup_checks::check_root_privilege;
 use crate::startup_checks::insecure_warn;
 #[cfg(feature = "experimental")]
 use crate::startup_checks::warn_experimental_features;
+#[cfg(not(feature = "admin-api"))]
+use crate::startup_checks::warn_admin_configured_without_feature;
 use crate::{
     pipelines::resolve_pipelines,
     startup_checks::{
@@ -36,6 +38,8 @@ use crate::{
 fn run_startup_security_checks(config: &Config) {
     #[cfg(feature = "experimental")]
     warn_experimental_features();
+    #[cfg(not(feature = "admin-api"))]
+    warn_admin_configured_without_feature(config);
     enforce_root_check(config);
     warn_insecure_options(config);
     init_runtime_limits(&config.runtime);
@@ -116,6 +120,7 @@ pub fn run_server_with_registry(
 
     // Install before pipelines and health checks emit startup metrics. The same
     // handle is later shared by `/metrics` and the managed upkeep service.
+    #[cfg(feature = "admin-api")]
     let prometheus_recorder = config
         .admin
         .address
@@ -123,25 +128,20 @@ pub fn run_server_with_registry(
         .map(|_| praxis_protocol::http::pingora::health::install_prometheus_admin_recorder());
 
     let health_registry = build_health_registry(&config.clusters);
-    let state = build_server_state(&config, &registry, &health_registry, log_level.clone());
+    let state = build_server_state(&config, &registry, &health_registry, log_level);
 
     info!("initializing server");
     let mut server = PingoraServerRuntime::new(&config);
     let _cert_shutdowns = register_protocols(&mut server, &config, &state.pipelines);
-    register_admin_endpoints(
-        &mut server,
-        &config,
-        praxis_protocol::http::pingora::health::AdminEndpointOptions {
-            health_registry: Some(health_registry),
-            kv_registry: Some(state.kv_stores.clone()),
-            pipelines: Some((Arc::clone(&state.pipelines), Arc::clone(&state.listener_meta))),
-            log_level,
-            verbose: config.admin.verbose,
-        },
-        prometheus_recorder,
-    );
+    #[cfg(feature = "admin-api")]
+    register_admin_endpoints(&mut server, &config, health_registry, &state, prometheus_recorder);
 
+    #[cfg(feature = "config-reload")]
     let _watcher = spawn_watcher(config_path, config, registry, state);
+    // Without the config-reload feature there is no file watcher; consume the
+    // now-unused startup values so the server still runs, just without reload.
+    #[cfg(not(feature = "config-reload"))]
+    drop((config_path, config, registry, state));
 
     info!("starting server");
     server.run()
@@ -153,6 +153,10 @@ pub fn run_server_with_registry(
 
 /// State built during server initialization and shared with the
 /// file watcher for hot reload.
+#[cfg_attr(
+    not(feature = "config-reload"),
+    expect(dead_code, reason = "several fields feed only the config-reload watcher")
+)]
 struct ServerState {
     /// Resolved filter pipelines per listener.
     pipelines: Arc<ListenerPipelines>,
@@ -246,6 +250,7 @@ fn register_protocols(
 }
 
 /// Spawn the config file watcher if a config path is available.
+#[cfg(feature = "config-reload")]
 fn spawn_watcher(
     config_path: Option<PathBuf>,
     config: Config,
@@ -285,13 +290,22 @@ fn spawn_watcher(
 // -----------------------------------------------------------------------------
 
 /// Register admin/health endpoints with the Pingora server.
+#[cfg(feature = "admin-api")]
 fn register_admin_endpoints(
     server: &mut PingoraServerRuntime,
     config: &Config,
-    options: praxis_protocol::http::pingora::health::AdminEndpointOptions,
+    health_registry: HealthRegistry,
+    state: &ServerState,
     prometheus_recorder: Option<praxis_protocol::http::pingora::health::PrometheusAdminRecorder>,
 ) {
     if let (Some(admin_addr), Some(prometheus_recorder)) = (&config.admin.address, prometheus_recorder) {
+        let options = praxis_protocol::http::pingora::health::AdminEndpointOptions {
+            health_registry: Some(health_registry),
+            kv_registry: Some(state.kv_stores.clone()),
+            pipelines: Some((Arc::clone(&state.pipelines), Arc::clone(&state.listener_meta))),
+            log_level: state.log_level.clone(),
+            verbose: config.admin.verbose,
+        };
         praxis_protocol::http::pingora::health::add_admin_endpoints_to_pingora_server_with_recorder(
             server.server_mut(),
             admin_addr,

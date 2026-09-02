@@ -15,6 +15,16 @@ name = "praxis_protocol"
 
 [features]
 default = []
+# Certificate + config hot-reload (filesystem watching). Enables the
+# reload/watcher machinery in praxis-tls. Off => static TLS, no notify.
+# Off by default at the library level; the `praxis-proxy` binary turns it
+# on via its own default so lean builds (--no-default-features) can drop it.
+config-reload = ["praxis-tls/config-reload"]
+# Admin HTTP surface: management API (/api/*), Prometheus /metrics, and the
+# /healthy + /ready endpoints. Off => none of those endpoints are compiled in
+# (the proxy data path and background health checks are unaffected). Library
+# default is off; the `praxis-proxy` binary and the test harness turn it on.
+admin-api = []
 
 [lints]
 workspace = true
@@ -32,7 +42,7 @@ pingora-http = { workspace = true }
 pingora-proxy = { workspace = true }
 praxis-core = { workspace = true }
 praxis-filter = { workspace = true }
-praxis-tls = { workspace = true, features = ["hot-reload"] }
+praxis-tls = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

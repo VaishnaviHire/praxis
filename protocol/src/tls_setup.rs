@@ -14,9 +14,11 @@ use tokio::sync::watch;
 
 /// Build [`TlsSettings`] for a listener.
 ///
-/// When `hot_reload` is enabled, uses a [`ReloadableCertResolver`]
-/// and spawns a [`CertWatcher`] background task. Otherwise builds
-/// a static `ServerConfig` via [`build_server_config`].
+/// When `hot_reload` is enabled (and the `config-reload` feature is
+/// compiled in), uses a [`ReloadableCertResolver`] and spawns a
+/// [`CertWatcher`] background task. Otherwise, or in a build without
+/// `config-reload`, builds a static `ServerConfig` via
+/// [`build_server_config`].
 ///
 /// `context_label` appears in debug tracing to distinguish HTTP
 /// from TCP callers (e.g. `"HTTP"`, `"TCP"`).
@@ -42,6 +44,7 @@ pub(crate) fn build_tls_settings(
         }};
     }
 
+    #[cfg(feature = "config-reload")]
     if tls.is_hot_reload() {
         tracing::debug!(address, context_label, "building TLS ServerConfig with hot-reload");
         let result = praxis_tls::setup::build_reloadable_server_config(tls)
@@ -68,6 +71,18 @@ pub(crate) fn build_tls_settings(
 
         let settings = TlsSettings::with_server_config(result.config).map_err(|e| tls_err!(e))?;
         return Ok((settings, Some(shutdown_tx)));
+    }
+
+    // Built without the `config-reload` feature: honor the static cert but warn
+    // that a `hot_reload: true` listener will not actually watch for changes.
+    #[cfg(not(feature = "config-reload"))]
+    if tls.is_hot_reload() {
+        tracing::warn!(
+            address,
+            context_label,
+            "listener requests TLS hot_reload but this build lacks the `config-reload` feature; \
+             serving a static certificate"
+        );
     }
 
     tracing::debug!(address, context_label, "building TLS ServerConfig");

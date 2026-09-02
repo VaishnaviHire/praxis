@@ -68,7 +68,7 @@ pub(crate) fn gen_test_certs() -> TestCerts {
 }
 
 /// Generate new certs in an existing directory, overwriting existing files.
-#[cfg(feature = "hot-reload")]
+#[cfg(feature = "config-reload")]
 pub(crate) fn gen_test_certs_in(dir: &std::path::Path) -> TestCerts {
     let certs = gen_certs_at(dir, "Test CA 2");
     TestCerts {

@@ -82,7 +82,7 @@ pub fn build_server_config(tls: &ListenerTls) -> Result<Arc<ServerConfig>, TlsEr
 /// configured).
 ///
 /// [`ServerConfig`]: rustls::ServerConfig
-#[cfg(feature = "hot-reload")]
+#[cfg(feature = "config-reload")]
 pub struct ReloadableServerConfig {
     /// The built server config.
     pub config: Arc<ServerConfig>,
@@ -111,7 +111,7 @@ pub struct ReloadableServerConfig {
 /// [`TlsError`]: crate::TlsError
 /// [`ReloadableCertResolver`]: crate::reload::ReloadableCertResolver
 /// [`ReloadableServerConfig`]: ReloadableServerConfig
-#[cfg(feature = "hot-reload")]
+#[cfg(feature = "config-reload")]
 pub fn build_reloadable_server_config(tls: &ListenerTls) -> Result<ReloadableServerConfig, TlsError> {
     let builder = build_config_builder(tls)?;
 
@@ -153,7 +153,7 @@ pub fn build_reloadable_server_config(tls: &ListenerTls) -> Result<ReloadableSer
 /// own reloadable verifier.
 ///
 /// [`build_reloadable_server_config`]: crate::setup::build_reloadable_server_config
-#[cfg(feature = "hot-reload")]
+#[cfg(feature = "config-reload")]
 fn build_config_builder(
     tls: &ListenerTls,
 ) -> Result<rustls::ConfigBuilder<ServerConfig, rustls::WantsVerifier>, TlsError> {
@@ -692,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "hot-reload")]
+    #[cfg(feature = "config-reload")]
     fn build_reloadable_server_config_single_cert() {
         let certs = gen_test_certs();
         let tls = ListenerTls {
