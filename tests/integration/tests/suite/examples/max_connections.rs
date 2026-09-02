@@ -21,7 +21,9 @@ use praxis_test_utils::{
 
 #[test]
 fn max_connections_rejects_excess_http() {
-    let slow_port = start_slow_backend("slow", Duration::from_secs(3));
+    // The backend only needs to hold the two slots open past the 200ms probe
+    // below; a shorter delay keeps the proxy from waiting it out at teardown.
+    let slow_port = start_slow_backend("slow", Duration::from_secs(1));
     let proxy_port = free_port();
     let yaml = format!(
         r#"
@@ -135,7 +137,9 @@ fn max_connections_example_config_parses() {
 
 #[test]
 fn max_connections_example_functional() {
-    let slow_port = start_slow_backend("slow", Duration::from_secs(2));
+    // Only needs to outlast the 200ms probe below; kept short so the proxy does
+    // not wait the backend out at teardown.
+    let slow_port = start_slow_backend("slow", Duration::from_secs(1));
     let proxy_port = free_port();
 
     let mut config = super::load_example_config(
