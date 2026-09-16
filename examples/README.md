@@ -179,6 +179,7 @@ page.
 
 | File | Description |
 | ------ | ------------- |
+| [grpc-status-errors.yaml](configs/transformation/grpc-status-errors.yaml) | Answers proxy-generated errors in the shape gRPC clients expect. gRPC carries a call's outcome in a `grpc-status` header on an HTTP 200, not in the HTTP status, so a client that meets Praxis's own 403 or 502 sees a bare transport failure with no usable status |
 | [header-manipulation.yaml](configs/transformation/header-manipulation.yaml) | Add, overwrite, and remove headers on requests and responses |
 | [path-rewriting.yaml](configs/transformation/path-rewriting.yaml) | Rewrite request paths before forwarding to upstream |
 | [url-rewriting.yaml](configs/transformation/url-rewriting.yaml) | Regex-based path transformation and query string manipulation |

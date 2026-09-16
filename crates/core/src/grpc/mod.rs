@@ -16,5 +16,5 @@ mod status;
 mod timeout;
 
 pub use content_type::GrpcKind;
-pub use status::{GrpcCompletion, GrpcStatusCode, UnknownGrpcStatusCode};
+pub use status::{GrpcCompletion, GrpcStatusCode, UnknownGrpcStatusCode, encode_grpc_message};
 pub use timeout::{GrpcDeadline, GrpcTimeout, GrpcTimeoutParseError, GrpcTimeoutUnit, MAX_DEADLINE_MS};

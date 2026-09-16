@@ -56,6 +56,7 @@ Built-in filters organized by protocol and category.
 
 | Filter | Feature | Description |
 |--------|---------|-------------|
+| [`grpc_status`](http/transformation/grpc_status.md) | - | Answers proxy-generated errors in the shape gRPC clients expect. |
 | [`headers`](http/transformation/headers.md) | - | Adds, sets, or removes headers on upstream requests and downstream responses. |
 | [`path_rewrite`](http/transformation/path_rewrite.md) | - | Rewrites the request path before forwarding to the upstream. |
 | [`url_rewrite`](http/transformation/url_rewrite.md) | - | Rewrites request URLs using regex substitution and query parameter manipulation before the request reaches upstream. |

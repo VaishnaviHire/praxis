@@ -18,6 +18,14 @@ const MAX_MESSAGE_BYTES: usize = 1_024; // 1 KiB
 /// Base64-encoded `google.rpc.Status` details are unbounded on the wire.
 const MAX_STATUS_DETAILS_BYTES: usize = 4_096; // 4 KiB
 
+/// Bytes that must be percent-encoded in a `grpc-message` value.
+///
+/// The gRPC HTTP/2 wire spec leaves `%x20-%x24` and `%x26-%x7E` literal
+/// and percent-encodes everything else. `CONTROLS` covers `%x00-%x1F`
+/// and `%x7F`; adding `%` completes the set, and `percent_encoding`
+/// always escapes non-ASCII bytes.
+const GRPC_MESSAGE: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS.add(b'%');
+
 // -----------------------------------------------------------------------------
 // GrpcStatusCode
 // -----------------------------------------------------------------------------
@@ -148,6 +156,68 @@ impl GrpcStatusCode {
             Self::Unavailable => "UNAVAILABLE",
             Self::DataLoss => "DATA_LOSS",
             Self::Unauthenticated => "UNAUTHENTICATED",
+        }
+    }
+
+    /// The `grpc-status` header value for this code.
+    pub fn as_header_value(self) -> http::HeaderValue {
+        http::HeaderValue::from_static(match self {
+            Self::Ok => "0",
+            Self::Cancelled => "1",
+            Self::Unknown => "2",
+            Self::InvalidArgument => "3",
+            Self::DeadlineExceeded => "4",
+            Self::NotFound => "5",
+            Self::AlreadyExists => "6",
+            Self::PermissionDenied => "7",
+            Self::ResourceExhausted => "8",
+            Self::FailedPrecondition => "9",
+            Self::Aborted => "10",
+            Self::OutOfRange => "11",
+            Self::Unimplemented => "12",
+            Self::Internal => "13",
+            Self::Unavailable => "14",
+            Self::DataLoss => "15",
+            Self::Unauthenticated => "16",
+        })
+    }
+
+    /// The gRPC status an HTTP error status maps to, per the [gRPC HTTP
+    /// mapping].
+    ///
+    /// Deliberately not the inverse of [`to_http_status`]: the spec maps
+    /// `404` to `UNIMPLEMENTED`, while `UNIMPLEMENTED` maps back to
+    /// `501`. Anything the table does not name is `UNKNOWN` — inventing
+    /// closer-looking codes (`413` to `RESOURCE_EXHAUSTED`, say) would
+    /// depart from the spec that clients implement.
+    ///
+    /// ```
+    /// use praxis_core::grpc::GrpcStatusCode;
+    ///
+    /// assert_eq!(
+    ///     GrpcStatusCode::from_http_status(403),
+    ///     GrpcStatusCode::PermissionDenied
+    /// );
+    /// assert_eq!(
+    ///     GrpcStatusCode::from_http_status(404),
+    ///     GrpcStatusCode::Unimplemented
+    /// );
+    /// assert_eq!(
+    ///     GrpcStatusCode::from_http_status(418),
+    ///     GrpcStatusCode::Unknown
+    /// );
+    /// ```
+    ///
+    /// [gRPC HTTP mapping]: https://github.com/grpc/grpc/blob/master/doc/http-grpc-status-mapping.md
+    /// [`to_http_status`]: Self::to_http_status
+    pub fn from_http_status(status: u16) -> Self {
+        match status {
+            400 => Self::Internal,
+            401 => Self::Unauthenticated,
+            403 => Self::PermissionDenied,
+            404 => Self::Unimplemented,
+            429 | 502..=504 => Self::Unavailable,
+            _ => Self::Unknown,
         }
     }
 
@@ -325,6 +395,26 @@ impl GrpcCompletion {
 // Helpers
 // -----------------------------------------------------------------------------
 
+/// Percent-encode text for a `grpc-message` header.
+///
+/// The wire form escapes control characters, which is what keeps a
+/// server-supplied message from injecting into a header or a log line.
+///
+/// ```
+/// use praxis_core::grpc::encode_grpc_message;
+///
+/// assert_eq!(encode_grpc_message("no such user"), "no such user");
+/// assert_eq!(encode_grpc_message("bad\r\ninput"), "bad%0D%0Ainput");
+/// ```
+pub fn encode_grpc_message(message: &str) -> std::borrow::Cow<'_, str> {
+    // Cap the unencoded message first: an oversized value would push the
+    // header past the client's SETTINGS_MAX_HEADER_LIST_SIZE and cost the
+    // response its status. Percent-encoding trebles the length worst case,
+    // so the encoded header stays within 3x the cap. Matches the read-back cap.
+    let message = truncate_on_char_boundary(message, MAX_MESSAGE_BYTES);
+    percent_encoding::utf8_percent_encode(message, GRPC_MESSAGE).into()
+}
+
 /// Read a header as UTF-8 text, truncated to `max_bytes` on a character
 /// boundary.
 ///
@@ -474,7 +564,6 @@ mod tests {
 
     #[test]
     fn truncation_lands_on_a_character_boundary() {
-        // Every char is 3 bytes, so a byte cap of 4 falls mid-character.
         let snowmen = "☃☃☃";
         let truncated = truncate_on_char_boundary(snowmen, 4);
         assert_eq!(truncated, "☃", "truncation must not split a character");
@@ -492,13 +581,108 @@ mod tests {
 
     #[test]
     fn non_ascii_message_is_dropped() {
-        // `grpc-message` is percent-encoded ASCII on the wire; a value
-        // that is not readable as text is dropped rather than mangled.
         let mut map = trailers(&[("grpc-status", "2")]);
         let _prev = map.insert("grpc-message", http::HeaderValue::from_bytes(&[0xFF, 0xFE]).unwrap());
         let completion = GrpcCompletion::from_headers(&map).unwrap();
         assert_eq!(completion.raw_code(), 2, "the status still parses");
         assert_eq!(completion.message(), None, "an unreadable message is dropped");
+    }
+
+    #[test]
+    fn http_statuses_map_to_the_spec_table() {
+        for (http, expected) in [
+            (400, GrpcStatusCode::Internal),
+            (401, GrpcStatusCode::Unauthenticated),
+            (403, GrpcStatusCode::PermissionDenied),
+            (404, GrpcStatusCode::Unimplemented),
+            (429, GrpcStatusCode::Unavailable),
+            (502, GrpcStatusCode::Unavailable),
+            (503, GrpcStatusCode::Unavailable),
+            (504, GrpcStatusCode::Unavailable),
+        ] {
+            assert_eq!(
+                GrpcStatusCode::from_http_status(http),
+                expected,
+                "HTTP {http} should map to {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unlisted_http_statuses_map_to_unknown() {
+        for http in [405, 408, 409, 413, 415, 500, 501] {
+            assert_eq!(
+                GrpcStatusCode::from_http_status(http),
+                GrpcStatusCode::Unknown,
+                "HTTP {http} is not in the mapping table, so it is UNKNOWN"
+            );
+        }
+    }
+
+    #[test]
+    fn the_two_status_mappings_are_deliberately_not_inverses() {
+        let forward = GrpcStatusCode::from_http_status(404);
+        assert_eq!(forward, GrpcStatusCode::Unimplemented, "404 maps to UNIMPLEMENTED");
+        assert_eq!(forward.to_http_status(), 501, "UNIMPLEMENTED maps back to 501, not 404");
+    }
+
+    #[test]
+    fn reverse_mapping_covers_every_code() {
+        for raw in 0..=16_u32 {
+            let code = GrpcStatusCode::try_from(raw).unwrap();
+            let http = code.to_http_status();
+            assert!(
+                (200..=599).contains(&http),
+                "{code:?} maps to {http}, which is not a usable HTTP status"
+            );
+        }
+        assert_eq!(GrpcStatusCode::Cancelled.to_http_status(), 499, "nginx's convention");
+    }
+
+    #[test]
+    fn header_values_match_the_numeric_codes() {
+        for raw in 0..=16_u32 {
+            let code = GrpcStatusCode::try_from(raw).unwrap();
+            assert_eq!(
+                code.as_header_value().to_str().unwrap(),
+                raw.to_string(),
+                "{code:?} header value should be its numeric code"
+            );
+        }
+    }
+
+    #[test]
+    fn grpc_message_encoding_escapes_control_characters() {
+        assert_eq!(
+            encode_grpc_message("plain message"),
+            "plain message",
+            "printable ASCII passes through unescaped"
+        );
+        assert_eq!(
+            encode_grpc_message("split\r\nheader"),
+            "split%0D%0Aheader",
+            "CRLF must not survive into a header"
+        );
+        assert_eq!(encode_grpc_message("100%"), "100%25", "a literal percent is escaped");
+        assert!(
+            !encode_grpc_message("héllo").contains('é'),
+            "non-ASCII must be percent-encoded"
+        );
+    }
+
+    #[test]
+    fn grpc_message_encoding_caps_oversized_input() {
+        let unescaped = "x".repeat(MAX_MESSAGE_BYTES.saturating_add(500));
+        assert!(
+            encode_grpc_message(&unescaped).len() <= MAX_MESSAGE_BYTES,
+            "printable input is capped to the byte limit before it can overflow the header list"
+        );
+
+        let all_escaped = "\n".repeat(MAX_MESSAGE_BYTES.saturating_add(500));
+        assert!(
+            encode_grpc_message(&all_escaped).len() <= MAX_MESSAGE_BYTES.saturating_mul(3),
+            "every byte escaping to three keeps even the worst case within 3x the cap"
+        );
     }
 
     #[test]

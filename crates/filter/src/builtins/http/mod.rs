@@ -31,5 +31,6 @@ pub use traffic_management::{
     sticky_sessions::{SessionStore, SessionStoreRegistry},
 };
 pub use transformation::{
-    HeaderFilter, PathRewriteFilter, UrlRewriteFilter, has_dot_dot_traversal, normalize_rewritten_path,
+    GrpcStatusFilter, HeaderFilter, PathRewriteFilter, UrlRewriteFilter, has_dot_dot_traversal,
+    normalize_rewritten_path,
 };

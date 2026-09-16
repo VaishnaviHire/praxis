@@ -26,6 +26,7 @@ mod grpc_access_log;
 mod grpc_condition;
 mod grpc_detection;
 mod grpc_http2_upstream;
+mod grpc_status_errors;
 mod grpc_timeout;
 mod guardrails;
 mod guardrails_per_model;

@@ -54,6 +54,7 @@ mod extensions;
 mod factory;
 mod filter;
 mod filtered_subrequest;
+mod grpc_response;
 pub(crate) mod load_balancing;
 mod metrics;
 pub(crate) mod path_match;
@@ -102,6 +103,7 @@ pub use filtered_subrequest::{
     CalloutOutcome, CalloutResponse, FilteredSubrequestExecutor, StagedUpstream, StagedUpstreamFallback,
     SubrequestRuntime,
 };
+pub use grpc_response::GrpcErrorMapping;
 pub use pipeline::{
     FilterPipeline, PipelineExtension,
     introspection::{BodyAccessInfo, BranchConditionInfo, BranchIntrospection, FilterIntrospection},
