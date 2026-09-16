@@ -22,6 +22,7 @@ mod csrf;
 mod default_config;
 mod endpoint_selector;
 mod errors_total;
+mod grpc_access_log;
 mod grpc_condition;
 mod grpc_detection;
 mod grpc_http2_upstream;

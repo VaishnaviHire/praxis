@@ -95,6 +95,22 @@ pub trait HttpFilter: Send + Sync {
         Vec::new()
     }
 
+    /// Emit this filter's end-of-request record from the logging phase.
+    ///
+    /// The access log normally emits from its own completion hooks, but
+    /// some responses never reach them: a request rejected before the
+    /// upstream, a stream aborted mid-body, or a gRPC response whose
+    /// body ends with trailers rather than an end-of-stream body chunk.
+    /// The protocol layer calls this from the logging phase for those,
+    /// where late-arriving facts — the `grpc-status` trailer among them
+    /// — are finally available.
+    ///
+    /// Returns whether a record was emitted. Filters that log nothing
+    /// leave the default.
+    fn emit_deferred_record(&self, _ctx: &HttpFilterContext<'_>, _status: u16) -> bool {
+        false
+    }
+
     /// The cluster names this filter can load balance.
     ///
     /// Load-balancing filters override this so validation can compare

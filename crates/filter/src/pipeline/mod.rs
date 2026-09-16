@@ -418,6 +418,21 @@ impl FilterPipeline {
             .any(|pf| crate::condition::should_execute(&pf.conditions, request))
     }
 
+    /// Ask each filter to emit its end-of-request record, returning
+    /// whether any did.
+    ///
+    /// Used by the protocol layer's logging phase for requests that never
+    /// reached a filter's own completion hooks. Filters that log nothing
+    /// are no-ops, so this is cheap for pipelines without an access log.
+    pub fn emit_deferred_records(&self, ctx: &crate::HttpFilterContext<'_>, status: u16) -> bool {
+        // Short-circuits on the first filter that claims the record: one
+        // access record per request, matching the completion hooks, which
+        // mark the request logged after the first emit.
+        self.filters
+            .iter()
+            .any(|pf| pf.filter.emit_deferred_record(ctx, status))
+    }
+
     /// Compression configuration, if a compression filter is present.
     pub fn compression_config(&self) -> Option<&CompressionConfig> {
         self.compression.as_ref()
