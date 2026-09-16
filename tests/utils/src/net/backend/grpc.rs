@@ -51,6 +51,12 @@ pub struct GrpcBackend {
     /// `grpc-status-details-bin` trailer, omitted when `None`.
     status_details_bin: Option<String>,
 
+    /// Answer `grpc.health.v1.Health/Check` with this serving status.
+    ///
+    /// `None` leaves health calls answered like any other method, which
+    /// is what a server without the health service registered does.
+    serving_status: Option<u8>,
+
     /// Send a Trailers-Only response: one HEADERS frame carrying the
     /// gRPC status, with `END_STREAM` set and no body.
     trailers_only: bool,
@@ -65,6 +71,7 @@ impl Default for GrpcBackend {
             grpc_message: None,
             grpc_status: 0,
             http_status: 200,
+            serving_status: None,
             status_details_bin: None,
             trailers_only: false,
         }
@@ -121,6 +128,20 @@ impl GrpcBackend {
     #[must_use]
     pub fn status_details(mut self, value: &str) -> Self {
         self.status_details_bin = Some(value.to_owned());
+        self
+    }
+
+    /// Serve `grpc.health.v1.Health/Check`, reporting `SERVING`.
+    #[must_use]
+    pub fn serving(mut self) -> Self {
+        self.serving_status = Some(1);
+        self
+    }
+
+    /// Serve `grpc.health.v1.Health/Check`, reporting `NOT_SERVING`.
+    #[must_use]
+    pub fn not_serving(mut self) -> Self {
+        self.serving_status = Some(2);
         self
     }
 
@@ -291,6 +312,7 @@ async fn serve_stream(
     mut respond: h2::server::SendResponse<Bytes>,
     backend: &GrpcBackend,
 ) {
+    let is_health_check = request.uri().path() == "/grpc.health.v1.Health/Check";
     // Drain the request body so flow control does not stall the client.
     let mut body = request.into_body();
     while let Some(Ok(chunk)) = body.data().await {
@@ -299,6 +321,11 @@ async fn serve_stream(
 
     if let Some(delay) = backend.delay {
         tokio::time::sleep(delay).await;
+    }
+
+    if is_health_check && let Some(status) = backend.serving_status {
+        answer_health_check(&mut respond, status);
+        return;
     }
 
     let Some(response) = build_response(backend) else {
@@ -316,6 +343,33 @@ async fn serve_stream(
         return;
     }
     let _sent = send.send_trailers(build_trailers(backend));
+}
+
+/// Answer a `Health/Check` call with a framed `HealthCheckResponse`.
+fn answer_health_check(respond: &mut h2::server::SendResponse<Bytes>, status: u8) {
+    let Ok(response) = http::Response::builder()
+        .status(200)
+        .header("content-type", "application/grpc")
+        .body(())
+    else {
+        return;
+    };
+    let Ok(mut send) = respond.send_response(response, false) else {
+        return;
+    };
+    // Length-prefixed protobuf: identity flag, 2-byte body, field 1 = status.
+    let body = Bytes::from_static(&[0, 0, 0, 0, 2, 0x08, 0]);
+    let mut framed = body.to_vec();
+    // Overwrite the status byte, which `from_static` cannot vary.
+    if let Some(last) = framed.last_mut() {
+        *last = status;
+    }
+    if send.send_data(Bytes::from(framed), false).is_err() {
+        return;
+    }
+    let mut trailers = http::HeaderMap::new();
+    let _prev = trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
+    let _sent = send.send_trailers(trailers);
 }
 
 /// Build the response header block.

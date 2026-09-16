@@ -3318,6 +3318,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
+ "h2",
  "http",
  "metrics",
  "metrics-exporter-prometheus",
