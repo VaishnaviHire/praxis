@@ -33,18 +33,26 @@ fn example(proxy_port: u16, admin_port: u16, serving: u16, other: u16) -> Config
     )
 }
 
-/// Poll `/ready` until the cluster reports `expected` healthy
-/// endpoints, or give up and return whatever it last said.
+/// Poll `/ready` until the `grpc-backend` cluster's per-endpoint detail
+/// matches `needle` exactly, or give up and return whatever it last said.
 ///
 /// The example enables `admin.verbose`, which adds the per-cluster
-/// healthy/unhealthy breakdown this needs.
-fn wait_for_healthy_count(admin_addr: &str, expected: usize) -> String {
-    let needle = format!("\"healthy\":{expected},");
+/// `"grpc-backend":{"healthy":N,"unhealthy":N,"total":N}` detail this
+/// matches on — not the outer `clusters.healthy` field, which only
+/// says "at least one endpoint in some cluster is up" and goes to `1`
+/// on the very first poll, well before the per-endpoint counts have
+/// converged. Matching that field instead would return prematurely.
+///
+/// The budget is generous (60s) because the example's 1000ms probe
+/// interval competes for CPU with hundreds of other tests when the
+/// full suite runs in parallel, which can delay a probe task's first
+/// wake-up well past its interval.
+fn wait_for_ready_detail(admin_addr: &str, needle: &str) -> String {
     let mut last = String::new();
-    for _ in 0..100 {
+    for _ in 0..600 {
         let (_status, body) = http_get(admin_addr, "/ready", None);
         last = body;
-        if last.contains("\"detail\"") && last.contains(&needle) {
+        if last.contains(needle) {
             return last;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -67,10 +75,11 @@ fn a_serving_backend_is_marked_healthy() {
 
     let admin_addr = format!("127.0.0.1:{admin_port}");
     wait_for_http(&admin_addr);
-    let body = wait_for_healthy_count(&admin_addr, 2);
+    let needle = r#""grpc-backend":{"healthy":2,"unhealthy":0"#;
+    let body = wait_for_ready_detail(&admin_addr, needle);
 
     assert!(
-        body.contains(r#""healthy":2,"unhealthy":0"#),
+        body.contains(needle),
         "both SERVING backends should be marked healthy: {body}"
     );
 }
@@ -89,10 +98,11 @@ fn a_reachable_but_not_serving_backend_is_marked_unhealthy() {
 
     let admin_addr = format!("127.0.0.1:{admin_port}");
     wait_for_http(&admin_addr);
-    let body = wait_for_healthy_count(&admin_addr, 1);
+    let needle = r#""grpc-backend":{"healthy":1,"unhealthy":1"#;
+    let body = wait_for_ready_detail(&admin_addr, needle);
 
     assert!(
-        body.contains(r#""healthy":1,"unhealthy":1"#),
+        body.contains(needle),
         "the NOT_SERVING backend should be marked unhealthy despite being perfectly reachable: {body}"
     );
 }
@@ -111,10 +121,11 @@ fn a_backend_without_the_health_service_is_marked_unhealthy() {
 
     let admin_addr = format!("127.0.0.1:{admin_port}");
     wait_for_http(&admin_addr);
-    let body = wait_for_healthy_count(&admin_addr, 1);
+    let needle = r#""grpc-backend":{"healthy":1,"unhealthy":1"#;
+    let body = wait_for_ready_detail(&admin_addr, needle);
 
     assert!(
-        body.contains(r#""healthy":1,"unhealthy":1"#),
+        body.contains(needle),
         "an UNIMPLEMENTED health call means the probe cannot vouch for the backend: {body}"
     );
 }
