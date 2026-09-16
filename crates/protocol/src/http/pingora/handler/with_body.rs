@@ -395,6 +395,7 @@ impl ProxyHttp for PingoraHttpHandler {
         // so the replayed bytes match the re-stamped Content-Length above (a
         // no-op on the first attempt and when no body writer ran).
         upstream_request::reseed_retry_body(ctx);
+        upstream_request::apply_grpc_deadline_header(upstream_request, ctx);
         let client_ver = ctx.client_http_version.unwrap_or(http::Version::HTTP_11);
         via::append_request_via(upstream_request, client_ver);
         Ok(())

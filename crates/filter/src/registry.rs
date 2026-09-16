@@ -453,8 +453,8 @@ impl FilterRegistry {
 fn register_http_builtins(filters: &mut HashMap<String, FilterRegistration>) {
     use crate::builtins::{
         AccessLogFilter, CircuitBreakerFilter, CompressionFilter, CorsFilter, CredentialInjectionFilter, CsrfFilter,
-        ForwardedHeadersFilter, GrpcDetectionFilter, HeaderFilter, IpAclFilter, JsonBodyFieldFilter, JsonRpcFilter,
-        PathRewriteFilter, PeerIdentityTrustFilter, RateLimitFilter, RedirectFilter, RequestIdFilter,
+        ForwardedHeadersFilter, GrpcDetectionFilter, GrpcTimeoutFilter, HeaderFilter, IpAclFilter, JsonBodyFieldFilter,
+        JsonRpcFilter, PathRewriteFilter, PeerIdentityTrustFilter, RateLimitFilter, RedirectFilter, RequestIdFilter,
         StaticResponseFilter, TimeoutFilter, TraceContextFilter, UrlRewriteFilter,
     };
 
@@ -476,6 +476,7 @@ fn register_http_builtins(filters: &mut HashMap<String, FilterRegistration>) {
     register_http(filters, "headers", HeaderFilter::from_config);
     register_http_security(filters, "forwarded_headers", ForwardedHeadersFilter::from_config);
     register_http(filters, "grpc_detection", GrpcDetectionFilter::from_config);
+    register_http(filters, "grpc_timeout", GrpcTimeoutFilter::from_config);
     register_http_security(filters, "guardrails", crate::GuardrailsFilter::from_config);
     register_http_security(filters, "ip_acl", IpAclFilter::from_config);
     register_http_with_registry(
@@ -615,6 +616,7 @@ mod tests {
             "forwarded_headers should be registered"
         );
         assert!(names.contains(&"grpc_detection"), "grpc_detection should be registered");
+        assert!(names.contains(&"grpc_timeout"), "grpc_timeout should be registered");
         assert!(names.contains(&"guardrails"), "guardrails should be registered");
         assert!(names.contains(&"headers"), "headers should be registered");
         assert!(names.contains(&"ip_acl"), "ip_acl should be registered");

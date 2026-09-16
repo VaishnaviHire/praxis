@@ -25,7 +25,7 @@ pub use security::{
 #[cfg(feature = "policy-engine")]
 pub use security::{PolicyFilter, PolicyPluginFactoryFn, register_policy_plugin_factory};
 pub use traffic_management::{
-    CircuitBreakerFilter, EndpointReselector, EndpointSelectorFilter, GrpcDetectionFilter,
+    CircuitBreakerFilter, EndpointReselector, EndpointSelectorFilter, GrpcDetectionFilter, GrpcTimeoutFilter,
     IterativeRequestRouterFilter, LoadBalancerFilter, RateLimitFilter, RateLimitMode, RedirectFilter, RedirectStatus,
     RouterFilter, StaticResponseFilter, StickySessionsFilter, TimeoutFilter,
     sticky_sessions::{SessionStore, SessionStoreRegistry},

@@ -9,7 +9,11 @@
 //! gRPC message followed by `grpc-status` trailers, so the proxy's
 //! HTTP/2 upstream path can be exercised end to end.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use tokio::net::TcpListener;
@@ -31,6 +35,9 @@ pub struct GrpcBackend {
 
     /// `content-type` sent on the response.
     content_type: String,
+
+    /// How long to stall before answering, for deadline tests.
+    delay: Option<Duration>,
 
     /// `grpc-message` trailer, omitted when `None`.
     grpc_message: Option<String>,
@@ -54,6 +61,7 @@ impl Default for GrpcBackend {
         Self {
             body: Bytes::from_static(&[0, 0, 0, 0, 0]),
             content_type: "application/grpc".to_owned(),
+            delay: None,
             grpc_message: None,
             grpc_status: 0,
             http_status: 200,
@@ -83,6 +91,15 @@ impl GrpcBackend {
     #[must_use]
     pub fn body<B: Into<Bytes>>(mut self, body: B) -> Self {
         self.body = body.into();
+        self
+    }
+
+    /// Stall for `delay` before answering.
+    ///
+    /// Lets a test drive a deadline past its expiry without racing it.
+    #[must_use]
+    pub fn delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
         self
     }
 
@@ -133,6 +150,9 @@ pub struct GrpcBackendGuard {
     /// The port the backend is listening on.
     port: u16,
 
+    /// `grpc-timeout` values seen on incoming requests, in arrival order.
+    seen_timeouts: Arc<Mutex<Vec<String>>>,
+
     /// Shutdown signal sender.
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -142,6 +162,31 @@ impl GrpcBackendGuard {
     #[must_use]
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// The `grpc-timeout` values the backend has received so far.
+    ///
+    /// A request without the header records the empty string, so a test
+    /// can tell "not propagated" from "never arrived".
+    ///
+    /// # Panics
+    ///
+    /// Panics if a serving task panicked while holding the lock.
+    #[must_use]
+    pub fn seen_timeouts(&self) -> Vec<String> {
+        self.seen_timeouts.lock().expect("grpc backend lock").clone()
+    }
+
+    /// Take the recorded `grpc-timeout` values, leaving the log empty.
+    ///
+    /// Useful for discarding whatever a proxy's readiness probe sent
+    /// before the request under test.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a serving task panicked while holding the lock.
+    pub fn drain_seen_timeouts(&self) -> Vec<String> {
+        std::mem::take(&mut *self.seen_timeouts.lock().expect("grpc backend lock"))
     }
 }
 
@@ -171,6 +216,8 @@ pub fn start_grpc_backend(backend: GrpcBackend) -> GrpcBackendGuard {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
     let backend = Arc::new(backend);
+    let seen_timeouts = Arc::new(Mutex::new(Vec::new()));
+    let server_timeouts = Arc::clone(&seen_timeouts);
 
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -183,7 +230,7 @@ pub fn start_grpc_backend(backend: GrpcBackend) -> GrpcBackendGuard {
             debug!(port, "grpc backend listening");
             let _ready = ready_tx.send(());
             tokio::select! {
-                () = accept_loop(&listener, &backend) => {},
+                () = accept_loop(&listener, &backend, &server_timeouts) => {},
                 _ = shutdown_rx => debug!(port, "grpc backend shutting down"),
             }
         });
@@ -191,37 +238,46 @@ pub fn start_grpc_backend(backend: GrpcBackend) -> GrpcBackendGuard {
 
     // Block until the listener is bound so a test cannot race the backend.
     ready_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(5))
         .expect("grpc backend failed to bind");
 
     GrpcBackendGuard {
         port,
+        seen_timeouts,
         shutdown: Some(shutdown_tx),
     }
 }
 
 /// Accept h2c connections until the task is cancelled.
 #[expect(clippy::infinite_loop, reason = "server accept loop runs until task cancellation")]
-async fn accept_loop(listener: &TcpListener, backend: &Arc<GrpcBackend>) {
+async fn accept_loop(listener: &TcpListener, backend: &Arc<GrpcBackend>, seen: &Arc<Mutex<Vec<String>>>) {
     loop {
         let Ok((stream, peer)) = listener.accept().await else {
             continue;
         };
         debug!(%peer, "grpc backend accepted connection");
         let backend = Arc::clone(backend);
+        let seen = Arc::clone(seen);
         tokio::spawn(async move {
-            serve_connection(stream, &backend).await;
+            serve_connection(stream, &backend, &seen).await;
         });
     }
 }
 
 /// Serve every stream on one h2c connection.
-async fn serve_connection(stream: tokio::net::TcpStream, backend: &GrpcBackend) {
+async fn serve_connection(stream: tokio::net::TcpStream, backend: &GrpcBackend, seen: &Arc<Mutex<Vec<String>>>) {
     let Ok(mut connection) = h2::server::handshake(stream).await else {
         debug!("grpc backend h2 handshake failed");
         return;
     };
     while let Some(Ok((request, respond))) = connection.accept().await {
+        let timeout = request
+            .headers()
+            .get("grpc-timeout")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        seen.lock().expect("grpc backend lock").push(timeout);
         let backend = backend.clone();
         tokio::spawn(async move {
             serve_stream(request, respond, &backend).await;
@@ -241,16 +297,11 @@ async fn serve_stream(
         let _release = body.flow_control().release_capacity(chunk.len());
     }
 
-    let mut builder = http::Response::builder()
-        .status(backend.http_status)
-        .header("content-type", backend.content_type.as_str());
-    if backend.trailers_only {
-        builder = builder.header("grpc-status", backend.grpc_status.to_string());
-        if let Some(message) = &backend.grpc_message {
-            builder = builder.header("grpc-message", message.as_str());
-        }
+    if let Some(delay) = backend.delay {
+        tokio::time::sleep(delay).await;
     }
-    let Ok(response) = builder.body(()) else {
+
+    let Some(response) = build_response(backend) else {
         return;
     };
 
@@ -265,6 +316,23 @@ async fn serve_stream(
         return;
     }
     let _sent = send.send_trailers(build_trailers(backend));
+}
+
+/// Build the response header block.
+///
+/// A Trailers-Only answer carries the gRPC status here, since it sends
+/// no trailer frame at all.
+fn build_response(backend: &GrpcBackend) -> Option<http::Response<()>> {
+    let mut builder = http::Response::builder()
+        .status(backend.http_status)
+        .header("content-type", backend.content_type.as_str());
+    if backend.trailers_only {
+        builder = builder.header("grpc-status", backend.grpc_status.to_string());
+        if let Some(message) = &backend.grpc_message {
+            builder = builder.header("grpc-message", message.as_str());
+        }
+    }
+    builder.body(()).ok()
 }
 
 /// Build the response trailers for a non-Trailers-Only answer.

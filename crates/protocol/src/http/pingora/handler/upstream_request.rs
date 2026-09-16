@@ -112,6 +112,37 @@ pub(crate) fn apply_rewritten_path(req: &mut RequestHeader, ctx: &PingoraRequest
 }
 
 // -----------------------------------------------------------------------------
+// gRPC Deadline
+// -----------------------------------------------------------------------------
+
+/// Rewrite `grpc-timeout` with the budget left for this attempt.
+///
+/// Pingora replays the buffered request header on every retry, so a
+/// value written once during the request phase would tell the upstream
+/// on the third attempt the same deadline it heard on the first. This
+/// runs per attempt and re-encodes what is actually left.
+///
+/// A request with no gRPC deadline installed is untouched, so pipelines
+/// without the `grpc_timeout` filter pay one type lookup.
+pub(crate) fn apply_grpc_deadline_header(req: &mut RequestHeader, ctx: &PingoraRequestCtx) {
+    let Some(deadline) = ctx.extensions.get::<praxis_core::grpc::GrpcDeadline>() else {
+        return;
+    };
+    // `propagate: false` forwards the client's header untouched; the proxy
+    // still bounds the attempt through the shrunk transport timeouts.
+    if !deadline.propagate() {
+        return;
+    }
+    let Some(remaining) = deadline.remaining() else {
+        return;
+    };
+    let encoded = praxis_core::grpc::GrpcTimeout::encode(remaining);
+    if let Err(error) = req.insert_header("grpc-timeout", encoded.as_str()) {
+        debug!(%error, "could not set grpc-timeout on the upstream request");
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Authority Override
 // -----------------------------------------------------------------------------
 
@@ -590,6 +621,44 @@ mod tests {
             attempt2.uri.path(),
             "/rewritten",
             "retried attempt must also carry the rewritten path"
+        );
+    }
+
+    #[test]
+    fn grpc_deadline_header_propagates_when_enabled() {
+        let mut req = RequestHeader::build("POST", b"/pkg.Svc/Method", None).unwrap();
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.extensions.insert(praxis_core::grpc::GrpcDeadline::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+            false,
+            true,
+        ));
+
+        apply_grpc_deadline_header(&mut req, &ctx);
+
+        assert!(
+            req.headers.get("grpc-timeout").is_some(),
+            "propagate: true should rewrite grpc-timeout with the remaining budget"
+        );
+    }
+
+    #[test]
+    fn grpc_deadline_header_left_untouched_when_propagation_disabled() {
+        let mut req = RequestHeader::build("POST", b"/pkg.Svc/Method", None).unwrap();
+        let _prev = req.insert_header("grpc-timeout", "5S");
+        let mut ctx = PingoraRequestCtx::default();
+        ctx.extensions.insert(praxis_core::grpc::GrpcDeadline::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+            false,
+            false,
+        ));
+
+        apply_grpc_deadline_header(&mut req, &ctx);
+
+        assert_eq!(
+            req.headers.get("grpc-timeout").unwrap(),
+            "5S",
+            "propagate: false must forward the client's header untouched"
         );
     }
 

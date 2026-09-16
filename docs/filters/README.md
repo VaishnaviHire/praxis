@@ -167,7 +167,7 @@ builtins/
     observability/            Access logs, request IDs, trace context
     payload_processing/       Compression, body field extraction, JSON-RPC
     security/                 Basic auth, CORS, credential injection, CSRF, forwarded headers, guardrails, IP ACL, peer identity trust, policy
-    traffic_management/       Circuit breaker, endpoint selector, gRPC detection, iterative request router, load balancer, rate limit, redirect, router, sticky sessions, static response, timeout
+    traffic_management/       Circuit breaker, endpoint selector, gRPC detection, gRPC deadlines, iterative request router, load balancer, rate limit, redirect, router, sticky sessions, static response, timeout
     transformation/           Header, path rewrite, URL rewrite
   tcp/                        TCP protocol filters
     observability/            Connection logging

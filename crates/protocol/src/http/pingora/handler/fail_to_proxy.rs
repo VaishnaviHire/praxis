@@ -8,7 +8,7 @@ use http::HeaderValue;
 use pingora_core::ErrorType;
 use pingora_proxy::{FailToProxy, Session};
 use praxis_filter::{ErrorResponseContext, ErrorResponseFormatterHandle, FormattedErrorResponse, Rejection};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::http::pingora::context::PingoraRequestCtx;
 
@@ -63,6 +63,18 @@ pub(super) async fn execute(
         return handle_downstream(session, &etype, formatter).await;
     }
 
+    // An upstream timeout on a call whose gRPC deadline has passed is that
+    // deadline firing, not a generic 504: the client asked for the call to
+    // be abandoned, and it expects DEADLINE_EXCEEDED rather than a
+    // transport error.
+    if let Some(rejection) = grpc_deadline_rejection(&etype, ctx)
+        && !final_response_written(session)
+    {
+        warn!("upstream attempt cancelled by the gRPC deadline");
+        crate::http::pingora::convert::send_rejection(session, rejection).await;
+        return done(200);
+    }
+
     let err = classify_error(&etype, source);
 
     let upstream_address = ctx
@@ -86,6 +98,38 @@ pub(super) async fn execute(
     }
 
     write_error_response(session, err, formatter).await
+}
+
+/// Build a `DEADLINE_EXCEEDED` response when an upstream timeout is the
+/// gRPC deadline firing.
+///
+/// Only timeouts qualify: a connection refused mid-deadline is still a
+/// connection refused, and reporting it as `DEADLINE_EXCEEDED` would
+/// hide a real upstream failure.
+fn grpc_deadline_rejection(etype: &ErrorType, ctx: &PingoraRequestCtx) -> Option<Rejection> {
+    if !matches!(
+        *etype,
+        ErrorType::ReadTimedout | ErrorType::WriteTimedout | ErrorType::ConnectTimedout
+    ) {
+        return None;
+    }
+    let deadline = ctx.extensions.get::<praxis_core::grpc::GrpcDeadline>()?;
+    if !deadline.is_expired() {
+        return None;
+    }
+    Some(
+        Rejection::status(200)
+            .with_header("content-type", "application/grpc")
+            // An HTTP/1.1 client would otherwise read this body-less 200
+            // until an EOF that keepalive never delivers.
+            .with_header("content-length", "0")
+            .with_header(
+                "grpc-status",
+                praxis_core::grpc::GrpcStatusCode::DeadlineExceeded.as_u32().to_string(),
+            )
+            .with_header("grpc-message", "deadline exceeded")
+            .preserving_keepalive(),
+    )
 }
 
 /// Structured response for explicit HTTP status errors.

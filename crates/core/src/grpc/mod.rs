@@ -13,6 +13,8 @@
 
 mod content_type;
 mod status;
+mod timeout;
 
 pub use content_type::GrpcKind;
 pub use status::{GrpcCompletion, GrpcStatusCode, UnknownGrpcStatusCode};
+pub use timeout::{GrpcDeadline, GrpcTimeout, GrpcTimeoutParseError, GrpcTimeoutUnit, MAX_DEADLINE_MS};
