@@ -351,6 +351,11 @@ not fails to connect. `auto` has nothing to negotiate with
 over plaintext either and stays on HTTP/1.1 there — it is
 only meaningful for TLS upstreams.
 
+Response trailers ride on the HTTP/2 leg only, so any
+feature that reads them — the `grpc_status` access log
+fields, the `grpc_web` filter — needs `h2` here to do
+anything at all.
+
 ## Complete Example
 
 A production-like configuration with multiple

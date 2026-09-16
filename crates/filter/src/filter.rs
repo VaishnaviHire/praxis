@@ -385,6 +385,37 @@ pub trait HttpFilter: Send + Sync {
         let _ = (ctx, body);
         Ok(SelectedUpstreamBodyOutcome::Continue)
     }
+
+    /// Whether this filter rewrites upstream response trailers.
+    ///
+    /// Declaring `false` (the default) lets the protocol layer skip the
+    /// trailer hook entirely for pipelines that do not need it.
+    fn response_trailer_access(&self) -> bool {
+        false
+    }
+
+    /// Called once with the upstream response trailers, before they are
+    /// forwarded downstream.
+    ///
+    /// Returning `Some(bytes)` replaces the downstream trailers with
+    /// those bytes, appended to the response body as its final chunk.
+    /// That is how a gRPC call's status reaches a client that cannot
+    /// read HTTP trailers at all.
+    ///
+    /// Trailers exist only on an HTTP/2 upstream leg, so this never
+    /// fires for a cluster left on the default HTTP/1.1.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FilterError`] if the trailers cannot be processed.
+    fn on_response_trailers(
+        &self,
+        ctx: &mut HttpFilterContext<'_>,
+        trailers: &mut http::HeaderMap,
+    ) -> Result<Option<Bytes>, FilterError> {
+        let _ = (ctx, trailers);
+        Ok(None)
+    }
 }
 
 /// Boxed error type for filter results.

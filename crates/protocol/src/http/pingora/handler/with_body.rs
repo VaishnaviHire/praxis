@@ -31,7 +31,8 @@ use super::{
     connected_to_upstream, emit_request_metrics, fail_to_proxy, handle_connect_failure,
     hop_by_hop::RemoveHeader as _,
     logging_cleanup, record_passive_health, record_response_span_attributes, release_retry_state, request_body_filter,
-    request_filter, response_body_filter, response_filter, response_trailers, upstream_peer, upstream_request, via,
+    request_filter, response_body_filter, response_filter, response_trailer_filter, response_trailers, upstream_peer,
+    upstream_request, via,
 };
 use crate::http::pingora::{context::PingoraRequestCtx, metrics};
 
@@ -258,6 +259,24 @@ impl ProxyHttp for PingoraHttpHandler {
         let _entered = span.enter();
         response_trailers::capture(upstream_trailers, ctx);
         Ok(())
+    }
+
+    async fn response_trailer_filter(
+        &self,
+        _session: &mut Session,
+        upstream_trailers: &mut http::HeaderMap,
+        ctx: &mut Self::CTX,
+    ) -> Result<Option<Bytes>>
+    where
+        Self::CTX: Send + Sync,
+    {
+        let pipeline = ctx.pipeline(&self.pipeline);
+        if !pipeline.needs_response_trailers() {
+            return Ok(None);
+        }
+        let span = ctx.request_span.clone();
+        let _entered = span.enter();
+        Ok(response_trailer_filter::execute(&pipeline, upstream_trailers, ctx))
     }
 
     fn response_body_filter(

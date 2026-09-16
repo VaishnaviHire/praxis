@@ -30,6 +30,7 @@ Supported strategies: - `round_robin` (default): cycles through endpoints in ord
 | `clusters[].health_check` | HealthCheckConfig | no | Active health check configuration for this cluster. |
 | `clusters[].health_check.type` | `http` \| `tcp` \| `grpc` | yes | Probe type: [`Http`], [`Tcp`], or [`Grpc`]. |
 | `clusters[].health_check.expected_status` | integer | no | Expected HTTP status code for a healthy response. |
+| `clusters[].health_check.grpc_service` | string | no | gRPC service name to check. Only used by the `grpc` probe. Empty (the default) asks for the server's overall serving status, which is what the `grpc.health.v1.Health` contract defines an empty name to mean. |
 | `clusters[].health_check.healthy_threshold` | integer | no | Consecutive successes required to mark an endpoint healthy. |
 | `clusters[].health_check.interval_ms` | integer | no | Probe interval in milliseconds. |
 | `clusters[].health_check.passive_healthy_threshold` | integer | no | Consecutive successes to mark an endpoint healthy again via passive observation. `None` disables passive recovery (active checks must recover it). |

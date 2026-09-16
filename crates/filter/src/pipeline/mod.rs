@@ -165,6 +165,8 @@ pub struct FilterPipeline {
     /// Mirrors `insecure_options.allow_private_upstreams`; consumed by the
     /// upstream peer builders when they resolve a hostname.
     allow_private_upstreams: bool,
+    /// Indices into `filters` of filters declaring response-trailer access.
+    response_trailer_filter_indices: Vec<usize>,
 }
 
 #[expect(
@@ -431,6 +433,14 @@ impl FilterPipeline {
         self.filters
             .iter()
             .any(|pf| pf.filter.emit_deferred_record(ctx, status))
+    }
+
+    /// Whether any filter in this pipeline rewrites response trailers.
+    ///
+    /// Lets the protocol layer skip the trailer hook entirely for the
+    /// pipelines — nearly all of them — that do not need it.
+    pub fn needs_response_trailers(&self) -> bool {
+        self.body_capabilities.needs_response_trailers
     }
 
     /// Compression configuration, if a compression filter is present.

@@ -49,6 +49,8 @@ mod reserved_headers;
 mod response_body_filter;
 /// Response filter hook.
 mod response_filter;
+/// Response trailer hook: filter-driven trailer rewriting.
+mod response_trailer_filter;
 /// Response trailer hook: gRPC completion capture.
 mod response_trailers;
 /// Policy-aware retry decision engine.

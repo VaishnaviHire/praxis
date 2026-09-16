@@ -29,6 +29,7 @@ mod grpc_health_check;
 mod grpc_http2_upstream;
 mod grpc_status_errors;
 mod grpc_timeout;
+mod grpc_web;
 mod guardrails;
 mod guardrails_per_model;
 mod header_manipulation;
