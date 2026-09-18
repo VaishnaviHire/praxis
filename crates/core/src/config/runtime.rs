@@ -88,7 +88,7 @@ impl SubRequestCircuitBreakerConfig {
 /// let cfg = RuntimeConfig::default();
 /// assert_eq!(cfg.threads, 0);
 /// assert!(cfg.work_stealing);
-/// assert_eq!(cfg.global_queue_interval, Some(61));
+/// assert!(cfg.global_queue_interval.is_none());
 /// assert!(cfg.log_overrides.is_empty());
 /// assert_eq!(cfg.subrequest_pool_size, Some(128));
 /// assert_eq!(cfg.upstream_keepalive_pool_size, Some(64));
@@ -103,22 +103,24 @@ impl SubRequestCircuitBreakerConfig {
 pub struct RuntimeConfig {
     /// Tokio scheduler global queue check interval, in ticks.
     ///
-    /// Controls how often worker threads check the global task
-    /// queue. The default of 61 (a prime) reduces contention
-    /// under proxy workloads where most tasks are I/O-bound.
-    /// Set to `null` to use the tokio default. Valid range is
-    /// any positive `u32`.
+    /// Currently a no-op: the async runtime is managed by
+    /// Pingora, which does not expose this setting, so the value
+    /// cannot be applied. Defaults to `null` (unset). Setting it
+    /// to any value parses and validates but logs a startup
+    /// warning that it has no effect. The field is retained so a
+    /// future runtime that exposes the knob can honour it without
+    /// a config break.
     ///
     /// ```
     /// use praxis_core::config::RuntimeConfig;
     ///
     /// let cfg = RuntimeConfig::default();
-    /// assert_eq!(cfg.global_queue_interval, Some(61));
+    /// assert!(cfg.global_queue_interval.is_none());
     ///
     /// let cfg: RuntimeConfig = serde_yaml::from_str("global_queue_interval: 128").unwrap();
     /// assert_eq!(cfg.global_queue_interval, Some(128));
     /// ```
-    #[serde(default = "default_global_queue_interval")]
+    #[serde(default)]
     pub global_queue_interval: Option<u32>,
 
     /// Per-module log level overrides.
@@ -301,7 +303,7 @@ impl Default for RuntimeConfig {
             subrequest_pool_size: default_subrequest_pool_size(),
             threads: 0,
             work_stealing: default_work_stealing(),
-            global_queue_interval: default_global_queue_interval(),
+            global_queue_interval: None,
             log_overrides: HashMap::new(),
             logging: super::logging::LoggingConfig::default(),
             upstream_ca_file: None,
@@ -328,12 +330,6 @@ fn default_subrequest_pool_size() -> Option<usize> {
 #[expect(clippy::unnecessary_wraps, reason = "serde default")]
 fn default_upstream_keepalive_pool_size() -> Option<usize> {
     Some(64)
-}
-
-/// Serde default for [`RuntimeConfig::global_queue_interval`].
-#[expect(clippy::unnecessary_wraps, reason = "serde default")]
-fn default_global_queue_interval() -> Option<u32> {
-    Some(61)
 }
 
 // -----------------------------------------------------------------------------
@@ -415,9 +411,12 @@ log_overrides:
     }
 
     #[test]
-    fn global_queue_interval_defaults_to_61() {
+    fn global_queue_interval_defaults_to_none() {
         let cfg = RuntimeConfig::default();
-        assert_eq!(cfg.global_queue_interval, Some(61), "default interval should be 61");
+        assert!(
+            cfg.global_queue_interval.is_none(),
+            "default interval must be unset so a stock config never warns about the no-op knob"
+        );
     }
 
     #[test]

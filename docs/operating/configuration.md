@@ -484,9 +484,12 @@ runtime:
   auto-detected from available CPUs.
 - `work_stealing`: allow work-stealing between worker
   threads of the same service. Enabled by default.
-- `global_queue_interval`: fixed global queue interval
-  for the tokio scheduler. `Option<u32>`, defaults to
-  `Some(61)`. Set to `null` to use tokio's default.
+- `global_queue_interval`: intended global queue check
+  interval for the tokio scheduler. **Currently a no-op**:
+  the async runtime is managed by Pingora, which exposes no
+  way to apply this value, so it is ignored. `Option<u32>`,
+  defaults to `null` (unset); setting it logs a startup
+  warning that it has no effect.
 - `upstream_keepalive_pool_size`: maximum number of idle
   upstream connections kept per thread. `Option<usize>`,
   defaults to `Some(64)`. Set to `null` to disable
@@ -524,7 +527,6 @@ runtime:
 runtime:
   threads: 4
   work_stealing: true
-  global_queue_interval: 61
   upstream_keepalive_pool_size: 64
   max_connections: 10000         # process-wide limit
   max_memory_bytes: 1073741824   # 1 GiB

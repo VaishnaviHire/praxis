@@ -15,7 +15,7 @@
 /// let opts = RuntimeOptions::default();
 /// assert_eq!(opts.threads, 0);
 /// assert!(opts.work_stealing);
-/// assert_eq!(opts.global_queue_interval, Some(61));
+/// assert!(opts.global_queue_interval.is_none());
 /// assert!(opts.upstream_ca_file.is_none());
 /// assert!(opts.upstream_keepalive_pool_size.is_none());
 ///
@@ -34,7 +34,9 @@ pub struct RuntimeOptions {
     /// Allow work-stealing between threads.
     pub work_stealing: bool,
 
-    /// Fixed global queue interval for the tokio scheduler.
+    /// Global queue interval for the tokio scheduler. Currently a
+    /// no-op (Pingora manages the runtime); a set value is logged
+    /// as ineffective at startup.
     pub global_queue_interval: Option<u32>,
 
     /// PEM CA file for all upstream TLS connections. Replaces the
@@ -51,7 +53,7 @@ impl Default for RuntimeOptions {
         Self {
             threads: 0,
             work_stealing: true,
-            global_queue_interval: Some(61),
+            global_queue_interval: None,
             upstream_ca_file: None,
             upstream_keepalive_pool_size: None,
         }
@@ -83,10 +85,9 @@ mod tests {
         let opts = RuntimeOptions::default();
         assert_eq!(opts.threads, 0, "default threads should be 0 (auto-detect)");
         assert!(opts.work_stealing, "work_stealing should default to true");
-        assert_eq!(
-            opts.global_queue_interval,
-            Some(61),
-            "default global_queue_interval should be 61"
+        assert!(
+            opts.global_queue_interval.is_none(),
+            "default global_queue_interval should be unset"
         );
     }
 

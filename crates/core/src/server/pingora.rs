@@ -118,12 +118,17 @@ fn apply_upstream_ca(conf: &mut ServerConf, runtime: &RuntimeOptions) {
     }
 }
 
-/// Warn if `global_queue_interval` is configured but unsupported.
+/// Warn if `global_queue_interval` is set, since it is a no-op.
+///
+/// Pingora owns the Tokio runtime and exposes no seam to apply
+/// this interval, so a configured value is silently ineffective.
+/// The default is unset, so a stock config never triggers this.
 fn warn_unsupported_global_queue_interval(runtime: &RuntimeOptions) {
-    if runtime.global_queue_interval.is_some() {
+    if let Some(interval) = runtime.global_queue_interval {
         tracing::warn!(
-            interval = ?runtime.global_queue_interval,
-            "global_queue_interval is configured but not yet supported by Pingora's ServerConf"
+            interval,
+            "global_queue_interval is set but has no effect: the async runtime is \
+             managed by Pingora, which does not expose this setting; the value is ignored"
         );
     }
 }
@@ -146,6 +151,12 @@ fn resolve_thread_count(configured: usize) -> usize {
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
+#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "tests use expect/unwrap for brevity"
+)]
 mod tests {
     use super::*;
 
@@ -173,5 +184,68 @@ mod tests {
             "thread count should match configured value"
         );
         assert!(!server.configuration.work_stealing, "work stealing should be disabled");
+    }
+
+    #[test]
+    fn stock_config_does_not_warn_about_global_queue_interval() {
+        let opts = RuntimeOptions::from(&crate::config::RuntimeConfig::default());
+
+        let (_conf, logs) = capture_warnings(|| build_server_conf(30, 1, &opts));
+
+        assert!(
+            !logs.contains("global_queue_interval"),
+            "a stock config must not warn about the no-op global_queue_interval knob: {logs}"
+        );
+    }
+
+    #[test]
+    fn explicit_global_queue_interval_warns_it_has_no_effect() {
+        let opts = RuntimeOptions {
+            global_queue_interval: Some(128),
+            ..RuntimeOptions::default()
+        };
+
+        let (_conf, logs) = capture_warnings(|| build_server_conf(30, 1, &opts));
+
+        assert!(
+            logs.contains("global_queue_interval") && logs.contains("no effect"),
+            "explicitly setting global_queue_interval should warn it is ignored: {logs}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Test Utilities
+    // -------------------------------------------------------------------------
+
+    /// Run `f` under a thread-local subscriber that records everything
+    /// logged at WARN or above, returning the value and captured output.
+    fn capture_warnings<T, F: FnOnce() -> T>(f: F) -> (T, String) {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Buffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("buffer lock").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        let out = tracing::subscriber::with_default(subscriber, f);
+        let bytes = buffer.0.lock().expect("buffer lock").clone();
+
+        (out, String::from_utf8_lossy(&bytes).into_owned())
     }
 }
