@@ -121,9 +121,9 @@ pub(crate) fn apply_rewritten_path(req: &mut RequestHeader, ctx: &PingoraRequest
 /// replaces the request's `Host` header and normalizes the URI
 /// authority component. Both updates are required:
 ///
-/// - **Host header**: Praxis currently uses HTTP/1.1 for all upstream connections, so the `Host` header is sent
-///   directly. Pingora's HTTP/2 upstream path (`proxy_h2.rs`) would remove `Host` and rebuild the URI `:authority` from
-///   it, so setting `Host` here covers both protocols.
+/// - **Host header**: on an HTTP/1.1 upstream leg the `Host` header is sent directly. On an HTTP/2 leg (`clusters[].
+///   http.version: h2`) Pingora's `proxy_h2.rs` removes `Host` and rebuilds the URI `:authority` from it, so setting
+///   `Host` here covers both protocols.
 ///
 /// - **URI authority**: Defence-in-depth for absolute-form requests whose URI already contains an authority. Without
 ///   this, a pre-existing URI authority could survive into the upstream request if Pingora's internal flow changes.

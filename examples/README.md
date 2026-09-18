@@ -94,6 +94,7 @@ page.
 
 | File | Description |
 | ------ | ------------- |
+| [grpc-http2-upstream.yaml](configs/protocols/grpc-http2-upstream.yaml) | Praxis proxies to upstreams over HTTP/1.1 by default. gRPC backends speak HTTP/2 only, and a call's outcome (`grpc-status`) arrives in response trailers, which no HTTP/1.1 leg can carry |
 | [mixed-protocol.yaml](configs/protocols/mixed-protocol.yaml) | HTTP and TCP listeners run on a single server instance |
 | [tcp-consistent-hash.yaml](configs/protocols/tcp-consistent-hash.yaml) | TCP consistent-hash load balancing (client IP affinity) |
 | [tcp-least-connections.yaml](configs/protocols/tcp-least-connections.yaml) | TCP least-connections load balancing |

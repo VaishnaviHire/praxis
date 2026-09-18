@@ -24,6 +24,7 @@ mod endpoint_selector;
 mod errors_total;
 mod grpc_condition;
 mod grpc_detection;
+mod grpc_http2_upstream;
 mod guardrails;
 mod guardrails_per_model;
 mod header_manipulation;
