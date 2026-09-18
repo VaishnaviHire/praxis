@@ -360,8 +360,16 @@ audit:
 	cargo audit
 	cargo deny check
 
+# Package check for crates.io. By default this build-verifies every crate,
+# which the release pipeline relies on: it bumps the version first, so a
+# dependent crate resolves its siblings from the local (not-yet-published)
+# packages. The per-push gate on main instead passes
+# PUBLISH_DRY_RUN_FLAGS=--no-verify, because there the workspace version is
+# already on crates.io, so verifying a dependent crate would build it against
+# the older published siblings and fail. --locked still catches a stale lock.
+PUBLISH_DRY_RUN_FLAGS ?=
 publish-dry-run:
-	cargo publish --workspace --dry-run --locked
+	cargo publish --workspace --dry-run --locked $(PUBLISH_DRY_RUN_FLAGS)
 
 # Real crates.io publish, in dependency order. Requires a crates.io token
 # in CARGO_REGISTRY_TOKEN (set from the RUST_CRATES_PUBLISH_TOKEN secret in

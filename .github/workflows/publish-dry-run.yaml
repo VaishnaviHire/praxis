@@ -39,4 +39,8 @@ jobs:
         uses: praxis-proxy/conventions/.github/actions/setup-rust@f636950733882cf65b15cdc3efab570158feea4a # v0.1.0
 
       - name: Publish dry run
-        run: make publish-dry-run
+        # On main the workspace version is already published, so a full verify
+        # would build dependent crates against the older published siblings and
+        # fail. Skip the per-crate build here; the release pipeline (which bumps
+        # the version first) runs the full verification.
+        run: make publish-dry-run PUBLISH_DRY_RUN_FLAGS=--no-verify
