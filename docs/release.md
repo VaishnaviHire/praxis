@@ -30,7 +30,6 @@ Before tagging a release:
   working tree, run `cargo publish --workspace
   --dry-run --locked --allow-dirty` directly, since the
   make target takes no extra flags)
-- [ ] `SECURITY.md` lists the new minor version
 - [ ] GitHub Release changelog is drafted (see below)
 
 When the Tests, Tests (Integration), Conformance, Supply
