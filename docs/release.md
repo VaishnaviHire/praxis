@@ -78,14 +78,24 @@ Phase 1 runs on the tag push:
 
 Phase 2 runs when a maintainer publishes the draft:
 
-7. Publish every release crate to crates.io, in
-   dependency order
+7. Re-validate the tag against `Cargo.toml`, then
+   publish the workspace to crates.io in one
+   dependency-ordered run (`cargo publish --workspace
+   --locked`)
+8. For a stable (non pre-release) release, advance the
+   moving `:<major>.<minor>` and `:latest` container
+   tags
 
 Review and edit the draft notes, then publish the
-release from the GitHub UI. Publishing performs the real
-crates.io publish using the `RUST_CRATES_PUBLISH_TOKEN`
-secret; nothing reaches crates.io until you publish the
-release.
+release from the GitHub UI. Publishing the release is
+what performs the real crates.io publish (nothing
+reaches crates.io until you do), and it re-validates the
+tag against `Cargo.toml` before publishing. The crates
+job runs in a protected `release` GitHub Environment and
+authenticates with the `RUST_CRATES_PUBLISH_TOKEN`
+secret; crates.io OIDC trusted publishing is the
+recommended future replacement for that long-lived
+token.
 
 ## Publishing Container Images
 
