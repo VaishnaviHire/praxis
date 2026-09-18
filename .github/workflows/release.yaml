@@ -262,16 +262,20 @@ jobs:
   # ----------------------------------------------------------------------------
   # Phase 1 (tag push): build and publish the container image to GHCR
   #
-  # The image ships before the release is published so the release references
-  # an image that already exists.
+  # The image ships before the release is published so the release references an
+  # image that already exists. Phase 1 pushes only immutable tags (the
+  # :<version> and :sha- tags); the moving :<major>.<minor> tag is advanced
+  # later in Phase 2, and only once a stable release is actually published (see
+  # the container-tags job).
   # ----------------------------------------------------------------------------
 
   container:
-    needs: [validate, test, lint, audit, coverage]
+    needs: [validate, test, lint, audit, coverage, publish-dry-run]
     if: >-
       github.event_name == 'push'
       && !cancelled()
       && needs.validate.result == 'success'
+      && needs.publish-dry-run.result == 'success'
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
       && (needs.lint.result == 'success' || needs.lint.result == 'skipped')
       && (needs.audit.result == 'success' || needs.audit.result == 'skipped')
@@ -287,10 +291,59 @@ jobs:
           persist-credentials: false
           ref: ${{ github.ref_name }}
 
-      - name: Build and publish container
-        uses: praxis-proxy/conventions/.github/actions/ghcr-publish@b702da784117b57488343273579932c3d432fa32 # v0.1.0
+      # Guard against overwriting the immutable :<version> image if Phase 1 is
+      # re-run after the release was already published (for example a
+      # force-repushed tag or a manual re-run of this job).
+      - name: Skip rebuild if the release is already published
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          skip=false
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo missing)" = "false" ]; then
+            echo "::notice::$TAG already has a published release; not rebuilding or overwriting its image."
+            skip=true
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: steps.guard.outputs.skip != 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          image-name: ${{ github.repository }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Buildx
+        if: steps.guard.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Derive image metadata (immutable tags only)
+        id: meta
+        if: steps.guard.outputs.skip != 'true'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # Suppress the default moving :latest tag; Phase 1 pushes only
+          # immutable tags. :latest is advanced in Phase 2 (container-tags).
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha
+
+      - name: Build and push container
+        if: steps.guard.outputs.skip != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Containerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # ----------------------------------------------------------------------------
   # Phase 1 (tag push): cut the draft pre-release
@@ -357,3 +410,62 @@ jobs:
             exit 1
           fi
           make publish
+
+  # ----------------------------------------------------------------------------
+  # Phase 2 (release published): advance the moving :<major>.<minor> and :latest
+  # tags
+  #
+  # Phase 1 pushed only immutable tags. Here we retag the already-published
+  # :<version> image so :<major>.<minor> and :latest point at the same digest,
+  # without rebuilding, and only for stable releases. Pre-releases intentionally
+  # keep only the immutable :<version> and :sha- tags. For an out-of-order
+  # backport (publishing an older patch after a newer release is already out), a
+  # maintainer should not publish it as the newest release, since :latest here
+  # follows whatever release is published.
+  # ----------------------------------------------------------------------------
+
+  container-tags:
+    # Depends on crates-publish so the moving tags only advance once the
+    # environment-gated crates publish has actually succeeded; otherwise a
+    # rejected or failed publish could still repoint :latest.
+    needs: [crates-publish]
+    if: >-
+      github.event_name == 'release'
+      && github.event.release.prerelease == false
+      && needs.crates-publish.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Advance the major.minor and latest tags
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          # Only advance moving tags for a stable version tag (vX.Y.Z). Skip a
+          # pre-release tag, or any other published release, cleanly rather than
+          # failing or computing a garbage major.minor.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::$TAG is not a stable version tag; leaving the moving tags unchanged."
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          MAJOR_MINOR="$(echo "$VERSION" | cut -d. -f1,2)"
+          # The immutable :<version> image must already exist from Phase 1.
+          if ! docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "::error::${IMAGE}:${VERSION} was not found; Phase 1 must publish it before the release is published."
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${MAJOR_MINOR}" \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}:${VERSION}"
