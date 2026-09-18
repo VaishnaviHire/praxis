@@ -16,25 +16,41 @@ Before tagging a release:
 - [ ] Lints are clean (`make lint`)
 - [ ] All tests pass locally (`make test && make test-integration && make test-conformance`)
 - [ ] Dependency audit passes (`make audit`)
-- [ ] SemVer compliance verified (`make semver`)
+- [ ] Coverage meets the threshold (`make coverage-check`)
+- [ ] SemVer compliance checked locally with `make
+  semver` (a manual step for now: the SemVer CI workflow
+  runs manual-only, not on push or PR, until 1.x)
 - [ ] Benchmarks have been run; performance is similar
   or better than the previous release
 - [ ] Version in root `Cargo.toml` is bumped
   (both `workspace.package.version` and
   `workspace.dependencies` inter-crate versions)
 - [ ] `Cargo.lock` is regenerated with the new version
-- [ ] `make publish-dry-run` succeeds (add
-  `--allow-dirty` when running against uncommitted
-  changes)
+- [ ] `make publish-dry-run` succeeds (for a dirty
+  working tree, run `cargo publish --workspace
+  --dry-run --locked --allow-dirty` directly, since the
+  make target takes no extra flags)
 - [ ] `SECURITY.md` lists the new minor version
 - [ ] GitHub Release changelog is drafted (see below)
+
+When the Tests, Tests (Integration), Conformance, Supply
+Chain, and Coverage workflows are not already green for
+the tagged commit, the release re-runs lint, the test
+suites, the dependency audit, and the coverage check
+before cutting a draft, so this checklist mainly catches
+problems before you push the tag. Other main-branch
+checks (MSRV, Documentation, Coding Conventions) are not
+re-run by the release, so tag a commit that has already
+passed them on `main`.
 
 ## Tagging a Release
 
 Tags follow the format `v<MAJOR>.<MINOR>.<PATCH>` (e.g.
-`v0.1.0`) and must match `workspace.package.version`;
-the release workflow rejects mismatched tags. Push the
-tag to the repository:
+`v0.1.0`), optionally with a pre-release suffix (e.g.
+`v1.0.0-rc.1`), and must match
+`workspace.package.version`; the release workflow rejects
+mismatched tags. A pre-release tag cuts a pre-release
+draft. Push the tag to the repository:
 
 ```console
 git tag v0.1.0
@@ -47,16 +63,22 @@ The release runs in two phases
 Phase 1 runs on the tag push:
 
 1. Validate the tag against the workspace version
-2. Run the full test suite (skipped when the commit is
-   already green on main)
-3. Verify every release crate packages cleanly
-   (publish dry run)
-4. Build and publish the container image to GHCR
-5. Cut a draft pre-release with generated notes
+2. Preflight: check whether the Tests, Tests
+   (Integration), Conformance, Supply Chain, and Coverage
+   workflows already concluded green for this commit
+3. When they are not all green, run lint, the test
+   suites, the dependency audit, and the coverage check
+   before continuing
+4. Verify every release crate packages cleanly (a
+   publish dry run that build-verifies each crate)
+5. Build and publish the container image to GHCR with
+   the immutable `:<version>` and `:sha-<hash>` tags
+6. Cut a draft release (a pre-release draft for a
+   pre-release tag) with generated notes
 
 Phase 2 runs when a maintainer publishes the draft:
 
-6. Publish every release crate to crates.io, in
+7. Publish every release crate to crates.io, in
    dependency order
 
 Review and edit the draft notes, then publish the
