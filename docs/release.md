@@ -84,17 +84,31 @@ tag dispatch with only `:sha-<hash>`).
 
 ### Image Tags
 
-The publish workflow produces these tags per run:
+Two workflows push image tags, and they do not push the
+same set. Both use inline, SHA-pinned steps, so the tag
+set and timing are controlled here rather than by an
+external action. The release workflow (`release.yaml`)
+pushes the tags below across Phase 1 and Phase 2. The
+manual **Publish** workflow (`publish.yaml`) pushes only
+ref-identifying tags: the immutable `:sha-<hash>` plus
+the branch name. It never advances the moving `:latest`
+or `:<major>.<minor>` tags, so a manual run cannot
+repoint consumers.
 
-| Pattern | Example | Description |
+| Pattern | Example | Pushed |
 | --------- | --------- | ------------- |
-| `sha-<hash>` | `sha-abc1234` | Git commit SHA |
-| `<branch>` | `main` | Branch name |
-| `<version>` | `0.1.0` | Full semver (from git tag) |
-| `<major>.<minor>` | `0.1` | Major.minor shorthand |
+| `sha-<hash>` | `sha-abc1234` | Phase 1 releases and manual Publish runs |
+| `<version>` | `0.1.0` | Phase 1, every release |
+| `<major>.<minor>` | `0.1` | Phase 2, stable releases only |
+| `latest` | `latest` | Phase 2, stable releases only |
+| `<branch>` | `main` | Manual Publish runs only |
 
-Semver tags are only generated when the workflow runs
-against a semver git tag.
+Phase 1 publishes only the immutable `:<version>` and
+`:sha-<hash>` tags. The moving `:<major>.<minor>` and
+`:latest` tags are advanced in Phase 2, and only after a
+stable (non pre-release) release is published, so they
+never point at a pre-release build. A pre-release
+therefore gets only `:<version>` and `:sha-<hash>`.
 
 ## Changelog
 
