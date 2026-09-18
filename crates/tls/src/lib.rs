@@ -26,7 +26,7 @@
 //!   [`CachedClientCert`]).
 //! - Peer identity extracted from client certificates ([`TlsPeerIdentity`]).
 //!
-//! Certificate hot-reload support (the [`reload`] and [`watcher`]
+//! Certificate hot-reload support (the `reload` and `watcher`
 //! modules) is gated behind the `config-reload` feature.
 
 mod cached;
@@ -40,6 +40,8 @@ pub mod reload;
 pub mod setup;
 pub mod sni;
 pub mod sni_name;
+#[cfg(feature = "spiffe")]
+pub(crate) mod spiffe;
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(clippy::unwrap_used, clippy::expect_used, reason = "test utilities")]

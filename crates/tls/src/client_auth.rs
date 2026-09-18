@@ -4,20 +4,25 @@
 //! Client certificate verifier construction for listener mTLS.
 //!
 //! When the `config-reload` feature is enabled and a listener uses
-//! [`ReloadableClientVerifier`], CRL and CA files are monitored
+//! `ReloadableClientVerifier`, CRL and CA files are monitored
 //! for changes and the verifier is atomically rebuilt on disk
 //! modifications.
-//!
-//! [`ReloadableClientVerifier`]: crate::reload::ReloadableClientVerifier
 
 use std::sync::Arc;
 
+#[cfg(feature = "spiffe")]
+use rustls::{
+    DistinguishedName, SignatureScheme, client::danger::HandshakeSignatureValid, pki_types::UnixTime,
+    server::danger::ClientCertVerified,
+};
 use rustls::{
     RootCertStore,
     pki_types::{CertificateDer, CertificateRevocationListDer, pem::PemObject as _},
     server::{WebPkiClientVerifier, danger::ClientCertVerifier},
 };
 
+#[cfg(feature = "spiffe")]
+use crate::spiffe::{PeerAuth, authorize_peer};
 use crate::{ClientCertMode, TlsError};
 
 // -----------------------------------------------------------------------------
@@ -28,6 +33,10 @@ use crate::{ClientCertMode, TlsError};
 ///
 /// When `crl_paths` is non-empty, the verifier checks presented client
 /// certificates against the provided CRLs and rejects revoked certificates.
+///
+/// For `ClientCertMode::RequireNamed`, `trusted_spiffe_ids` is the set of
+/// SPIFFE IDs authorized at the handshake. An empty set accepts any valid
+/// X.509-SVID leaf; a non-empty set requires the peer's SPIFFE ID to be a member.
 ///
 /// # Errors
 ///
@@ -43,6 +52,7 @@ use crate::{ClientCertMode, TlsError};
 ///     "/etc/ssl/client-ca.pem",
 ///     ClientCertMode::Require,
 ///     &[],
+///     &[],
 /// )
 /// .expect("valid CA file");
 /// ```
@@ -50,10 +60,18 @@ use crate::{ClientCertMode, TlsError};
 /// [`ClientCertVerifier`]: rustls::server::danger::ClientCertVerifier
 /// [`TlsError`]: crate::TlsError
 /// [`ClientCertMode::None`]: crate::ClientCertMode::None
+#[cfg_attr(
+    not(feature = "spiffe"),
+    expect(
+        unused_variables,
+        reason = "trusted_spiffe_ids is consumed only under the spiffe feature"
+    )
+)]
 pub(crate) fn build_client_verifier(
     ca_path: &str,
     mode: ClientCertMode,
     crl_paths: &[String],
+    trusted_spiffe_ids: &[String],
 ) -> Result<Arc<dyn ClientCertVerifier>, TlsError> {
     let root_store = load_ca_root_store(ca_path)?;
     let mut builder = WebPkiClientVerifier::builder(Arc::new(root_store));
@@ -76,7 +94,119 @@ pub(crate) fn build_client_verifier(
         ClientCertMode::Require => builder
             .build()
             .map_err(|e| verifier_err(format!("failed to build verifier: {e}"))),
+        #[cfg(feature = "spiffe")]
+        ClientCertMode::RequireNamed => builder
+            .build()
+            .map(|inner| named_verifier(inner, trusted_spiffe_ids))
+            .map_err(|e| verifier_err(format!("failed to build verifier: {e}"))),
         ClientCertMode::None => Err(TlsError::ClientVerifierNotRequired),
+    }
+}
+
+/// Wrap an inner verifier in a [`NamedPeerVerifier`].
+///
+/// Warns when the allowlist is empty: `RequireNamed` then accepts any valid
+/// X.509-SVID the client CA signs, which is a safe default but easy to set
+/// unintentionally.
+#[cfg(feature = "spiffe")]
+fn named_verifier(inner: Arc<dyn ClientCertVerifier>, trusted_spiffe_ids: &[String]) -> Arc<dyn ClientCertVerifier> {
+    if trusted_spiffe_ids.is_empty() {
+        tracing::warn!(
+            "client_cert_mode is require_named with an empty trusted_spiffe_ids: \
+             any valid SVID the client CA signs is accepted"
+        );
+    }
+    let allowed: Arc<[Arc<str>]> = trusted_spiffe_ids.iter().map(|id| Arc::from(id.as_str())).collect();
+    Arc::new(NamedPeerVerifier { inner, allowed })
+}
+
+// -----------------------------------------------------------------------------
+// NamedPeerVerifier
+// -----------------------------------------------------------------------------
+
+/// Authorizes a peer at the handshake by the SPIFFE ID in its client certificate.
+///
+/// Chain is verified first, so the name is read only from a certificate that
+/// already validated against the configured authority. Rejecting here ends the
+/// handshake, before any request.
+#[cfg(feature = "spiffe")]
+#[derive(Debug)]
+struct NamedPeerVerifier {
+    /// Verifier that validates the chain before the name is read.
+    inner: Arc<dyn ClientCertVerifier>,
+
+    /// Authorized SPIFFE IDs, immutable and shared. Empty accepts any valid
+    /// X.509-SVID leaf. Read-only on the verify path, so no lock is taken.
+    allowed: Arc<[Arc<str>]>,
+}
+
+#[cfg(feature = "spiffe")]
+impl ClientCertVerifier for NamedPeerVerifier {
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        self.inner.root_hint_subjects()
+    }
+
+    fn verify_client_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        // RFC 5280 §6: chain before name.
+        let verified = self.inner.verify_client_cert(end_entity, intermediates, now)?;
+
+        // X509-SVID leaf, then allowlist. Log why a peer was rejected so an
+        // operator can tell an invalid SVID from an allowlist miss; the peer sees
+        // only a generic alert.
+        match authorize_peer(end_entity.as_ref(), &self.allowed) {
+            PeerAuth::Allowed => Ok(verified),
+            PeerAuth::InvalidLeaf => {
+                tracing::warn!("peer certificate is not a valid X.509-SVID leaf");
+                Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::ApplicationVerificationFailure,
+                ))
+            },
+            PeerAuth::NotAllowed(id) => {
+                tracing::warn!(peer_id = %id, "peer SPIFFE ID not in trusted_spiffe_ids");
+                Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::ApplicationVerificationFailure,
+                ))
+            },
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        self.inner.client_auth_mandatory()
+    }
+
+    fn offer_client_auth(&self) -> bool {
+        self.inner.offer_client_auth()
+    }
+
+    fn requires_raw_public_keys(&self) -> bool {
+        self.inner.requires_raw_public_keys()
     }
 }
 
@@ -110,6 +240,32 @@ fn load_crls(paths: &[String]) -> Result<Vec<CertificateRevocationListDer<'stati
     Ok(crls)
 }
 
+/// Build a [`RootCertStore`] from a PEM bundle, returning an error detail string
+/// the caller maps to its own [`TlsError`] variant.
+///
+/// # Errors
+///
+/// Returns a detail string when the PEM is malformed, contains no certificates,
+/// or a certificate is rejected as a trust anchor.
+///
+/// [`RootCertStore`]: rustls::RootCertStore
+fn roots_from_pem(pem: &[u8]) -> Result<RootCertStore, String> {
+    let certs: Vec<_> = CertificateDer::pem_slice_iter(pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to parse PEM: {e}"))?;
+    if certs.is_empty() {
+        return Err("no certificates found in PEM".to_owned());
+    }
+
+    let mut root_store = RootCertStore::empty();
+    for cert in certs {
+        root_store
+            .add(cert)
+            .map_err(|e| format!("failed to add CA cert: {e}"))?;
+    }
+    Ok(root_store)
+}
+
 /// Load CA certificates from a PEM file into a [`RootCertStore`].
 ///
 /// [`RootCertStore`]: rustls::RootCertStore
@@ -118,30 +274,10 @@ fn load_ca_root_store(ca_path: &str) -> Result<RootCertStore, TlsError> {
         path: ca_path.to_owned(),
         detail: e.to_string(),
     })?);
-
-    let certs: Vec<_> = CertificateDer::pem_slice_iter(&ca_pem)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| TlsError::FileLoadError {
-            path: ca_path.to_owned(),
-            detail: format!("failed to parse PEM: {e}"),
-        })?;
-
-    if certs.is_empty() {
-        return Err(TlsError::FileLoadError {
-            path: ca_path.to_owned(),
-            detail: "no certificates found in PEM file".to_owned(),
-        });
-    }
-
-    let mut root_store = RootCertStore::empty();
-    for cert in certs {
-        root_store.add(cert).map_err(|e| TlsError::FileLoadError {
-            path: ca_path.to_owned(),
-            detail: format!("failed to add CA cert: {e}"),
-        })?;
-    }
-
-    Ok(root_store)
+    roots_from_pem(&ca_pem).map_err(|detail| TlsError::FileLoadError {
+        path: ca_path.to_owned(),
+        detail,
+    })
 }
 
 // -----------------------------------------------------------------------------
@@ -161,7 +297,7 @@ mod tests {
         let ca = gen_ca_file();
         let ca_path = ca.ca_path.to_str().expect("ca path should be valid UTF-8");
 
-        let verifier = build_client_verifier(ca_path, ClientCertMode::Require, &[])
+        let verifier = build_client_verifier(ca_path, ClientCertMode::Require, &[], &[])
             .expect("require mode with valid CA should succeed");
         assert!(
             verifier.client_auth_mandatory(),
@@ -175,7 +311,7 @@ mod tests {
         let ca = gen_ca_file();
         let ca_path = ca.ca_path.to_str().expect("ca path should be valid UTF-8");
 
-        let verifier = build_client_verifier(ca_path, ClientCertMode::Request, &[])
+        let verifier = build_client_verifier(ca_path, ClientCertMode::Request, &[], &[])
             .expect("request mode with valid CA should succeed");
         assert!(
             !verifier.client_auth_mandatory(),
@@ -189,7 +325,8 @@ mod tests {
         let ca = gen_ca_file();
         let ca_path = ca.ca_path.to_str().expect("ca path should be valid UTF-8");
 
-        let err = build_client_verifier(ca_path, ClientCertMode::None, &[]).expect_err("mode=None should return error");
+        let err =
+            build_client_verifier(ca_path, ClientCertMode::None, &[], &[]).expect_err("mode=None should return error");
         assert!(
             matches!(err, TlsError::ClientVerifierNotRequired),
             "error should be ClientVerifierNotRequired, got: {err}"
@@ -198,7 +335,7 @@ mod tests {
 
     #[test]
     fn build_client_verifier_invalid_ca_path_returns_error() {
-        let err = build_client_verifier("/nonexistent/ca.pem", ClientCertMode::Require, &[])
+        let err = build_client_verifier("/nonexistent/ca.pem", ClientCertMode::Require, &[], &[])
             .expect_err("nonexistent CA should fail");
         assert!(
             matches!(err, TlsError::FileLoadError { .. }),
@@ -303,6 +440,7 @@ mod tests {
             ca_path.to_str().expect("ca path should be valid UTF-8"),
             ClientCertMode::Require,
             &[crl_path.to_str().expect("crl path should be valid UTF-8").to_owned()],
+            &[],
         )
         .expect("require mode with valid CA and CRL should succeed");
         assert!(
@@ -336,6 +474,175 @@ mod tests {
         assert!(
             matches!(&err, TlsError::FileLoadError { detail, .. } if detail.contains("failed to add CA cert")),
             "error should mention the failing add, got: {err}"
+        );
+    }
+
+    // ---- NamedPeerVerifier ----
+
+    #[cfg(feature = "spiffe")]
+    #[test]
+    fn require_named_mode_mandates_client_auth() {
+        ensure_crypto_provider();
+        let ca = gen_ca_file();
+        let ca_path = ca.ca_path.to_str().expect("ca path should be valid UTF-8");
+
+        let verifier = build_client_verifier(ca_path, ClientCertMode::RequireNamed, &[], &[])
+            .expect("require-named mode with valid CA should succeed");
+        assert!(
+            verifier.client_auth_mandatory(),
+            "require-named mode should mandate client auth"
+        );
+    }
+
+    #[cfg(feature = "spiffe")]
+    #[test]
+    fn require_named_mode_with_allowlist_mandates_client_auth() {
+        ensure_crypto_provider();
+        let ca = gen_ca_file();
+        let ca_path = ca.ca_path.to_str().expect("ca path should be valid UTF-8");
+
+        let verifier = build_client_verifier(
+            ca_path,
+            ClientCertMode::RequireNamed,
+            &[],
+            &["spiffe://grid.internal/site/pool-a".to_owned()],
+        )
+        .expect("require-named mode with an allowlist should succeed");
+        assert!(
+            verifier.client_auth_mandatory(),
+            "require-named mode with an allowlist should mandate client auth"
+        );
+    }
+
+    // ---- NamedPeerVerifier authorization decision ----
+
+    /// Mint a CA (written to a temp PEM) and a client leaf it signs carrying
+    /// `leaf_uris` as URI SANs with a clientAuth EKU. Returns the temp dir (kept
+    /// alive so the CA file outlives the call), the CA path, and the leaf DER.
+    #[cfg(feature = "spiffe")]
+    fn mint_client(leaf_uris: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, CertificateDer<'static>) {
+        use rcgen::{
+            BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+            KeyUsagePurpose, SanType,
+        };
+
+        let ca_key = KeyPair::generate().expect("ca key");
+        let mut ca_params = CertificateParams::new(Vec::<String>::new()).expect("ca params");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.distinguished_name.push(DnType::CommonName, "Grid CA");
+        let ca_cert = ca_params.self_signed(&ca_key).expect("ca cert");
+        let issuer = Issuer::new(ca_params, ca_key);
+
+        let leaf_key = KeyPair::generate().expect("leaf key");
+        let mut leaf_params = CertificateParams::new(Vec::<String>::new()).expect("leaf params");
+        leaf_params.distinguished_name.push(DnType::CommonName, "peer");
+        for uri in leaf_uris {
+            leaf_params
+                .subject_alt_names
+                .push(SanType::URI((*uri).try_into().expect("uri san")));
+        }
+        // A conforming X.509-SVID leaf: critical keyUsage with digitalSignature and
+        // an EKU with both serverAuth and clientAuth.
+        leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        leaf_params.extended_key_usages =
+            vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
+        let leaf_der = leaf_params
+            .signed_by(&leaf_key, &issuer)
+            .expect("leaf cert")
+            .der()
+            .clone();
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let ca_path = dir.path().join("ca.pem");
+        std::fs::write(&ca_path, ca_cert.pem()).expect("write ca pem");
+        (dir, ca_path, leaf_der)
+    }
+
+    /// Build a `RequireNamed` verifier over `ca_path` + `allowlist` and run the
+    /// leaf through `verify_client_cert` (chain, then X509-SVID §5.2, then allowlist).
+    #[cfg(feature = "spiffe")]
+    fn named_verify(
+        ca_path: &std::path::Path,
+        allowlist: &[String],
+        leaf: &CertificateDer<'_>,
+    ) -> Result<(), rustls::Error> {
+        ensure_crypto_provider();
+        let verifier = build_client_verifier(
+            ca_path.to_str().expect("ca path utf-8"),
+            ClientCertMode::RequireNamed,
+            &[],
+            allowlist,
+        )
+        .expect("build require-named verifier");
+        verifier
+            .verify_client_cert(leaf, &[], UnixTime::now())
+            .map(|_verified| ())
+    }
+
+    #[cfg(feature = "spiffe")]
+    #[test]
+    fn a_named_peer_in_the_allowlist_is_accepted() {
+        let id = "spiffe://grid.internal/site/pool-a";
+        let (_dir, ca_path, leaf) = mint_client(&[id]);
+        named_verify(&ca_path, &[id.to_owned()], &leaf).expect("an allowlisted SVID is accepted");
+    }
+
+    #[cfg(feature = "spiffe")]
+    #[test]
+    fn a_named_peer_outside_the_allowlist_is_refused() {
+        let (_dir, ca_path, leaf) = mint_client(&["spiffe://grid.internal/site/pool-b"]);
+        let err = named_verify(&ca_path, &["spiffe://grid.internal/site/pool-a".to_owned()], &leaf)
+            .expect_err("a CA-signed but unlisted SVID is refused");
+        assert!(
+            matches!(
+                err,
+                rustls::Error::InvalidCertificate(rustls::CertificateError::ApplicationVerificationFailure)
+            ),
+            "an unlisted peer should fail application verification, got: {err}"
+        );
+    }
+
+    #[cfg(feature = "spiffe")]
+    #[test]
+    fn a_named_peer_in_a_foreign_trust_domain_is_refused() {
+        // Same path, different trust domain: the allowlist match is over the
+        // whole id, so a foreign domain is not a member.
+        let (_dir, ca_path, leaf) = mint_client(&["spiffe://evil.example/site/pool-a"]);
+        named_verify(&ca_path, &["spiffe://grid.internal/site/pool-a".to_owned()], &leaf)
+            .expect_err("a foreign trust domain is not an allowlist member");
+    }
+
+    #[cfg(feature = "spiffe")]
+    #[test]
+    fn an_empty_allowlist_accepts_any_ca_signed_svid() {
+        let (_dir, ca_path, leaf) = mint_client(&["spiffe://grid.internal/site/anyone"]);
+        named_verify(&ca_path, &[], &leaf).expect("an empty allowlist accepts any valid SVID the CA signs");
+    }
+
+    #[cfg(feature = "spiffe")]
+    #[test]
+    fn a_listed_non_spiffe_leaf_is_refused() {
+        // A clientAuth leaf that chains, but whose only SAN is a non-SPIFFE URI:
+        // it fails the X509-SVID §5.2 leaf gate before the allowlist is consulted,
+        // even though the exact string is listed.
+        let (_dir, ca_path, leaf) = mint_client(&["https://grid.internal/not-spiffe"]);
+        named_verify(&ca_path, &["https://grid.internal/not-spiffe".to_owned()], &leaf)
+            .expect_err("a non-SPIFFE leaf is refused even when its URI string is listed");
+    }
+
+    #[cfg(feature = "spiffe")]
+    #[test]
+    fn a_leaf_off_the_trusted_ca_is_refused() {
+        // The rogue leaf carries the right name and is listed, but is signed by a
+        // different CA: chain-before-name rejects it before the allowlist.
+        let id = "spiffe://grid.internal/site/pool-a";
+        let (_rogue_dir, _rogue_ca, rogue_leaf) = mint_client(&[id]);
+        let (_dir, trusted_ca, _unused) = mint_client(&[id]);
+        let err =
+            named_verify(&trusted_ca, &[id.to_owned()], &rogue_leaf).expect_err("a leaf off the trusted CA is refused");
+        assert!(
+            matches!(err, rustls::Error::InvalidCertificate(_)),
+            "an off-CA leaf should be a certificate error, got: {err}"
         );
     }
 }
