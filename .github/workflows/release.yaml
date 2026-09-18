@@ -71,14 +71,17 @@ jobs:
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
   # ----------------------------------------------------------------------------
-  # Phase 1 (tag push): skip the redundant test run when this commit is already
+  # Phase 1 (tag push): skip the redundant checks when this commit is already
   # green
   #
-  # The test suite is split on main across the "Tests", "Tests (Integration)",
-  # and "Conformance" workflows. When all three already concluded successfully
-  # for this exact commit, re-running them for the tag is pure duplication, so
-  # the `test` job below is skipped. Otherwise it runs the unit, integration,
-  # and conformance suites directly.
+  # The release gate is split on main across the "Tests", "Tests (Integration)",
+  # "Conformance", "Supply Chain", and "Coverage" workflows. The "Tests"
+  # workflow already includes the lint job, so a green "Tests" also means lint
+  # passed for this commit. When all of these already concluded successfully for
+  # this exact commit, re-running them for the tag is pure duplication, so the
+  # fallback `test`, `lint`, `audit`, and `coverage` jobs below are skipped.
+  # Otherwise they run the unit, integration, conformance, lint, audit, and
+  # coverage checks directly.
   # ----------------------------------------------------------------------------
 
   preflight:
@@ -89,9 +92,9 @@ jobs:
       actions: read
       contents: read
     outputs:
-      tests_already_green: ${{ steps.check.outputs.tests_already_green }}
+      checks_already_green: ${{ steps.check.outputs.checks_already_green }}
     steps:
-      - name: Check whether the required test workflows already passed for this commit
+      - name: Check whether the required check workflows already passed for this commit
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,7 +102,9 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           all_green=true
-          for wf in "Tests" "Tests (Integration)" "Conformance"; do
+          # The "Tests" workflow already runs the lint job, so a green "Tests"
+          # here also means lint passed for this commit.
+          for wf in "Tests" "Tests (Integration)" "Conformance" "Supply Chain" "Coverage"; do
             conclusion=$(gh run list --repo "$REPO" --workflow "$wf" --limit 100 \
               --json headSha,status,conclusion \
               --jq "[.[] | select(.headSha==\"$SHA\" and .status==\"completed\")][0].conclusion // \"none\"" \
@@ -107,15 +112,22 @@ jobs:
             echo "workflow '$wf' @ $SHA -> ${conclusion:-none}"
             [ "$conclusion" = "success" ] || all_green=false
           done
-          echo "tests_already_green=$all_green" >> "$GITHUB_OUTPUT"
+          echo "checks_already_green=$all_green" >> "$GITHUB_OUTPUT"
           if [ "$all_green" = "true" ]; then
-            echo "::notice::Required test workflows already passed for $SHA; skipping the tag test job."
+            echo "::notice::Required check workflows already passed for $SHA; skipping the tag fallback jobs."
           else
-            echo "::notice::Test workflows not all green for $SHA; the tag test job will run."
+            echo "::notice::Check workflows not all green for $SHA; the tag fallback jobs will run."
           fi
 
   # ----------------------------------------------------------------------------
-  # Phase 1 (tag push): run the full test suite (skipped when already green)
+  # Phase 1 (tag push): fallback checks (skipped when already green)
+  #
+  # These four jobs (`test`, `lint`, `audit`, `coverage`) re-run the release
+  # gate directly whenever preflight could not confirm the commit is already
+  # green. The `test` job below runs the unit, integration, and conformance
+  # suites; the `lint`, `audit`, and `coverage` jobs cover the remaining gates.
+  # A green run of any of them (or a skip when preflight already confirmed
+  # green) lets the container build and draft release proceed.
   # ----------------------------------------------------------------------------
 
   test:
@@ -128,7 +140,7 @@ jobs:
       !cancelled()
       && github.event_name == 'push'
       && needs.validate.result == 'success'
-      && needs.preflight.outputs.tests_already_green != 'true'
+      && needs.preflight.outputs.checks_already_green != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -149,6 +161,81 @@ jobs:
           make test
           make test-integration
           make test-conformance
+
+  # ----------------------------------------------------------------------------
+  # Phase 1 (tag push): fallback lint (skipped when already green)
+  # ----------------------------------------------------------------------------
+
+  lint:
+    needs: [validate, preflight]
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && needs.validate.result == 'success'
+      && needs.preflight.outputs.checks_already_green != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust lint toolchain
+        uses: praxis-proxy/conventions/.github/actions/setup-rust-lint@9e74afe2bfce6db1d0e0df15b279d6e1e9dd6e2b # v0.1.0
+
+      - name: Install cargo-machete
+        run: cargo install cargo-machete --locked
+
+      - name: Lint
+        run: make lint
+
+  # ----------------------------------------------------------------------------
+  # Phase 1 (tag push): fallback supply-chain audit (skipped when already green)
+  # ----------------------------------------------------------------------------
+
+  audit:
+    needs: [validate, preflight]
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && needs.validate.result == 'success'
+      && needs.preflight.outputs.checks_already_green != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Supply chain audit
+        uses: praxis-proxy/conventions/.github/actions/supply-chain-audit@9e74afe2bfce6db1d0e0df15b279d6e1e9dd6e2b # v0.1.0
+
+  # ----------------------------------------------------------------------------
+  # Phase 1 (tag push): fallback coverage (skipped when already green)
+  # ----------------------------------------------------------------------------
+
+  coverage:
+    needs: [validate, preflight]
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && needs.validate.result == 'success'
+      && needs.preflight.outputs.checks_already_green != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Coverage check
+        uses: praxis-proxy/conventions/.github/actions/coverage-check@b702da784117b57488343273579932c3d432fa32 # v0.1.0
 
   # ----------------------------------------------------------------------------
   # Phase 1 (tag push): verify crates package cleanly (publish dry run)
@@ -180,12 +267,15 @@ jobs:
   # ----------------------------------------------------------------------------
 
   container:
-    needs: [validate, test]
+    needs: [validate, test, lint, audit, coverage]
     if: >-
       github.event_name == 'push'
       && !cancelled()
       && needs.validate.result == 'success'
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
+      && (needs.lint.result == 'success' || needs.lint.result == 'skipped')
+      && (needs.audit.result == 'success' || needs.audit.result == 'skipped')
+      && (needs.coverage.result == 'success' || needs.coverage.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -210,7 +300,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   draft-release:
-    needs: [validate, test, publish-dry-run, container]
+    needs: [validate, test, lint, audit, coverage, publish-dry-run, container]
     if: >-
       github.event_name == 'push'
       && !cancelled()
@@ -218,6 +308,9 @@ jobs:
       && needs.publish-dry-run.result == 'success'
       && needs.container.result == 'success'
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
+      && (needs.lint.result == 'success' || needs.lint.result == 'skipped')
+      && (needs.audit.result == 'success' || needs.audit.result == 'skipped')
+      && (needs.coverage.result == 'success' || needs.coverage.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
