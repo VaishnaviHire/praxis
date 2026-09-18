@@ -85,7 +85,7 @@ use crate::{
     actions::Rejection,
     context::PendingStreamChunks,
     credentials::{PendingCredentials, ResolvedDestination},
-    extensions::RequestExtensions,
+    extensions::{RequestExtensions, SelectedClusterApplication},
     results::RetainedFilterResults,
 };
 
@@ -275,7 +275,10 @@ impl FilteredSubrequestError {
     /// callers (the iterative request router's `IrrStepRunner`) keep their
     /// existing behavior, while callers that need the classification read it
     /// through [`too_large`](Self::too_large) first.
-    pub(crate) fn into_parts(self) -> (FilterError, RequestExtensions) {
+    pub(crate) fn into_parts(mut self) -> (FilterError, RequestExtensions) {
+        // #1138 Correction 1: never leak the child's selected-cluster application
+        // metadata back to the parent on any error path.
+        self.extensions.remove::<SelectedClusterApplication>();
         (self.error, self.extensions)
     }
 }
@@ -470,6 +473,15 @@ struct NoRetainedState;
 impl RetainedStateAccounting for NoRetainedState {
     fn exceeds_limit(&self, _extensions: &RequestExtensions) -> bool {
         false
+    }
+}
+
+/// Restore a caller-staged destination and discard metadata published for any
+/// load-balanced selection it replaces.
+fn repin_staged_upstream(ctx: &mut crate::HttpFilterContext<'_>, pinned_upstream: Option<&Upstream>) {
+    if let Some(upstream) = pinned_upstream {
+        ctx.upstream = Some(upstream.clone());
+        ctx.extensions.remove::<SelectedClusterApplication>();
     }
 }
 
@@ -880,6 +892,10 @@ impl FilteredSubrequestExecutor {
         };
         let mut filter_ctx = build_sub_filter_context(pipeline, &sub_req, resources);
         filter_ctx.extensions = std::mem::take(&mut extensions);
+        // #1138 decision B: a child must not inherit the parent's selected-cluster
+        // application metadata. `run`/`run_classified` thread the caller's
+        // extensions straight in (unlike the IRR, which clears at step entry).
+        filter_ctx.extensions.remove::<SelectedClusterApplication>();
         filter_ctx.extensions.insert(RetainedFilterResults::default());
         filter_ctx.enable_stream_chunk_emission(self.max_state_bytes);
         // A callout may stage a pre-resolved upstream (for example a URL prepared
@@ -975,9 +991,59 @@ impl FilteredSubrequestExecutor {
             // overrides any mid-chain rewrite so a staged credential — a header
             // credential, or for a body-authenticated provider the request body
             // itself — can only ever reach the authority it was prepared for.
-            if let Some(upstream) = &pinned_upstream {
-                filter_ctx.upstream = Some(upstream.clone());
+            // #1138 Correction 2: a staged upstream carries no application
+            // metadata. Any value a chain filter published for the discarded
+            // load-balancer selection would misdescribe the pinned destination,
+            // so the body phase must not read it.
+            repin_staged_upstream(&mut filter_ctx, pinned_upstream.as_ref());
+
+            // #1138: selected-upstream request-body phase. Mirrors the Pingora
+            // path (crates/protocol .../request_filter/mod.rs run_pipeline): after
+            // upstream selection and the staged re-pin, run any selected-upstream
+            // body filters over the buffered body before dialing. `request_body`
+            // is a step-local clone of `current_request.body`, so the adapted
+            // bytes flow into the SubRequest (built below) without disturbing the
+            // canonical iteration input (D5). The transport reframes from the
+            // adapted bytes, so no explicit Content-Length stamping is needed.
+            // Gated on participation and a selected upstream.
+            if pipeline.body_capabilities().needs_selected_upstream_request_body
+                && filter_ctx.upstream.is_some()
+            {
+                let action = pipeline
+                    .execute_http_selected_upstream_request_body(&mut filter_ctx, &mut request_body)
+                    .await?;
+                if let FilterAction::Reject(rejection) = action {
+                    return Ok(RawResponse::Rejected(rejection));
+                }
+                // A 413 is only meaningful when a writer may have grown the body;
+                // check against the same listener-clamped limit as every path.
+                if pipeline.body_capabilities().any_selected_upstream_request_body_writer
+                    && request_body.as_ref().map_or(0, Bytes::len)
+                        > pipeline.selected_upstream_request_body_limit()
+                {
+                    return Ok(RawResponse::Rejected(Rejection::status(413)));
+                }
+                // Enforce the retained-state ceiling before dialing, like every
+                // preceding filter boundary. A phase filter may have grown
+                // cross-sub-request state (for the IRR, the retained
+                // `IterationState`); an oversized retention must be rejected here
+                // rather than carried across a dial and held until the response or
+                // timeout.
+                if self.accounting.exceeds_limit(&filter_ctx.extensions) {
+                    return Ok(RawResponse::Rejected(Rejection::status(413)));
+                }
+                // Re-pin the staged upstream once more. This phase received a
+                // mutable `ctx` and may have rewritten `ctx.upstream` after the
+                // pre-phase re-pin, so reassert the prepared destination before the
+                // dial. Otherwise a body adapted for the pinned upstream — for a
+                // body-authenticated provider, the request body itself carries the
+                // credential — could be redirected to an authority the callout never
+                // prepared, the exact exfiltration the staged-upstream invariant
+                // blocks. Mirror the pre-phase re-pin: clear any discarded-selection
+                // metadata a rewrite may have republished.
+                repin_staged_upstream(&mut filter_ctx, pinned_upstream.as_ref());
             }
+
             let upstream = filter_ctx.upstream.as_ref().ok_or_else(|| -> FilterError {
                 format!("filtered_subrequest: step '{label}' did not resolve an upstream").into()
             })?;
