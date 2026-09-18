@@ -3,10 +3,11 @@
 
 //! SPIFFE identity read and validated from a certificate.
 //!
-//! One home for the SPIFFE domain logic. A SPIFFE certificate names its bearer
-//! with exactly one URI SAN. The listener validates the whole X.509-SVID leaf
-//! against the standard (standards/X509-SVID.md) and authorizes a peer whose
-//! identity is in an allowlist (`authorize_peer`).
+//! One home for the SPIFFE domain logic both verifiers share. A SPIFFE
+//! certificate names its bearer with exactly one URI SAN. Both validate the whole
+//! X.509-SVID leaf against the standard (standards/X509-SVID.md): the connecting
+//! side pins one exact identity (`svid_id_matches`), the listener side authorizes
+//! a peer whose identity is in an allowlist (`authorize_peer`).
 
 use std::sync::Arc;
 
@@ -64,6 +65,16 @@ pub(crate) fn authorize_peer(leaf_der: &[u8], allowed: &[Arc<str>]) -> PeerAuth 
     } else {
         PeerAuth::NotAllowed(id)
     }
+}
+
+/// Whether `leaf_der` is a valid X.509-SVID leaf whose SPIFFE ID equals
+/// `expected`. The connecting side's pin, allocation-free (the id is borrowed and
+/// compared in place). A parse failure or unmet rule returns `false` (fail closed).
+pub(crate) fn svid_id_matches(leaf_der: &[u8], expected: &str) -> bool {
+    let Ok((_, cert)) = X509Certificate::from_der(leaf_der) else {
+        return false;
+    };
+    validated_svid_id(&cert) == Some(expected)
 }
 
 /// The SPIFFE ID of `leaf_der` if it is a valid X.509-SVID leaf, owned so the
@@ -143,11 +154,17 @@ fn has_unusable_extension(cert: &X509Certificate<'_>) -> bool {
 /// The shared validity floor: the server pins one exact id, the client accepts
 /// any valid name.
 ///
-/// The `spiffe` parser follows RFC 3986 case-insensitive schemes and accepts an
-/// uppercase `SPIFFE://`. Requiring the canonical lowercase scheme keeps the
-/// accepted set equal to the exact-byte pin the server compares against.
+/// Only the canonical form is accepted. SPIFFE treats the scheme and trust domain
+/// case-insensitively and the path case-sensitively (SPIFFE-ID section 2.4), and
+/// the `spiffe` parser normalizes an uppercase scheme or trust domain rather than
+/// rejecting it. The pin and the SAN both flow through here and are then compared
+/// byte for byte, so requiring `id` to equal its own canonical string keeps a
+/// noncanonical form from silently failing to match its canonical twin.
 pub(crate) fn is_leaf_spiffe_id(id: &str) -> bool {
-    id.starts_with("spiffe://") && id.parse::<spiffe::SpiffeId>().is_ok_and(|sid| !sid.path().is_empty())
+    id.starts_with("spiffe://")
+        && id
+            .parse::<spiffe::SpiffeId>()
+            .is_ok_and(|sid| !sid.path().is_empty() && sid.to_string() == id)
 }
 
 #[cfg(test)]
@@ -194,6 +211,25 @@ mod tests {
         )
     }
 
+    /// A conforming leaf carrying the given URI and DNS SANs, to exercise SAN-shape
+    /// cases (extra, missing, or duplicated names).
+    fn conforming_with_sans(uris: &[&str], dns: &[&str]) -> Vec<u8> {
+        let key = KeyPair::generate().expect("key");
+        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
+        p.distinguished_name.push(DnType::CommonName, "peer");
+        for uri in uris {
+            p.subject_alt_names
+                .push(SanType::URI((*uri).try_into().expect("uri san")));
+        }
+        for d in dns {
+            p.subject_alt_names
+                .push(SanType::DnsName((*d).try_into().expect("dns san")));
+        }
+        p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
+        p.self_signed(&key).expect("self signed").der().to_vec()
+    }
+
     /// A leaf carrying a raw extension (OID 2.5.29.x content) plus a conforming
     /// keyUsage, to exercise one malformed or non-standard extension in isolation.
     fn leaf_with_custom_ext(uri: &str, ext: CustomExtension, with_key_usage: bool) -> Vec<u8> {
@@ -234,6 +270,16 @@ mod tests {
     #[test]
     fn a_conforming_svid_is_accepted() {
         assert!(svid_id_allowed(&conforming(EXPECTED), &[Arc::from(EXPECTED)]));
+    }
+
+    #[test]
+    fn svid_id_matches_the_pinned_id_and_rejects_another() {
+        let der = conforming(EXPECTED);
+        assert!(svid_id_matches(&der, EXPECTED), "the pinned id matches");
+        assert!(
+            !svid_id_matches(&der, "spiffe://grid.internal/other"),
+            "a different id does not match"
+        );
     }
 
     #[test]
@@ -387,20 +433,90 @@ mod tests {
     fn spiffe_id_shape_rules_accept_and_reject() {
         assert!(is_leaf_spiffe_id("spiffe://example.org/workload"));
         assert!(is_leaf_spiffe_id("spiffe://example.org/site/pool-a/node-1"));
+        // The path is case-sensitive: a mixed-case path is already canonical.
+        assert!(is_leaf_spiffe_id("spiffe://example.org/Workload"));
         for bad in [
-            "spiffe://example.org",            // no path
-            "spiffe://example.org/",           // empty path
-            "spiffe:///workload",              // empty trust domain
-            "https://example.org/workload",    // wrong scheme
-            "SPIFFE://example.org/workload",   // parser normalizes case, lowercase guard rejects
-            "spiffe://example.org/work\nload", // control byte
-            "spiffe://example.org/work\0load", // NUL byte
-            " spiffe://example.org/workload",  // leading space, no prefix match
-            "spiffe://",                       // nothing
-            "",                                // empty
+            "spiffe://example.org",                 // no path
+            "spiffe://example.org/",                // empty path
+            "spiffe:///workload",                   // empty trust domain
+            "https://example.org/workload",         // wrong scheme
+            "SPIFFE://example.org/workload",        // parser normalizes case, lowercase guard rejects
+            "spiffe://EXAMPLE.ORG/workload",        // parser lowercases the trust domain, noncanonical
+            "spiffe://Example.org/workload",        // mixed-case trust domain, noncanonical
+            "spiffe://example.org:8443/workload",   // a port is not part of a SPIFFE id
+            "spiffe://user@example.org/workload",   // userinfo is not part of a SPIFFE id
+            "spiffe://exam\u{0440}le.org/workload", // Cyrillic homograph, non-ASCII trust domain
+            "spiffe://example.org/work%6eoad",      // percent-encoding is not decoded
+            "spiffe://example.org/workload?x=1",    // query string smuggled onto the path
+            "spiffe://example.org/workload#frag",   // fragment smuggled onto the path
+            "spiffe://example.org//workload",       // empty path segment
+            "spiffe://example.org/work\nload",      // control byte
+            "spiffe://example.org/work\0load",      // NUL byte
+            " spiffe://example.org/workload",       // leading space, no prefix match
+            "spiffe://",                            // nothing
+            "",                                     // empty
         ] {
             assert!(!is_leaf_spiffe_id(bad), "must reject {bad:?}");
         }
+    }
+
+    #[test]
+    fn a_noncanonical_trust_domain_pin_is_rejected() {
+        // SPIFFE trust domains are case-insensitive and canonically lowercase, so
+        // the parser normalizes GRID.INTERNAL to grid.internal. Accepting the
+        // uppercase form as a pin would then reject a conforming lowercase SVID at
+        // the byte compare, so it is rejected at the boundary instead.
+        assert!(!is_leaf_spiffe_id("spiffe://GRID.INTERNAL/signals"));
+        assert!(is_leaf_spiffe_id(EXPECTED));
+    }
+
+    #[test]
+    fn a_cert_with_a_noncanonical_trust_domain_fails_closed() {
+        // A SAN carrying an uppercase trust domain is not a conforming SVID:
+        // validation rejects it rather than normalizing it into a match.
+        let der = conforming("spiffe://GRID.INTERNAL/signals");
+        assert!(!svid_id_matches(&der, EXPECTED), "must not match the canonical pin");
+        assert!(!svid_id_allowed(&der, &[]), "must be an invalid leaf");
+    }
+
+    #[test]
+    fn a_conforming_svid_with_an_extra_dns_san_still_matches() {
+        // A leaf MAY carry a DNS SAN, and only URI SANs are read, so the single
+        // SPIFFE URI still names the workload and the pin matches.
+        let der = conforming_with_sans(&[EXPECTED], &["peer.grid.internal"]);
+        assert!(svid_id_matches(&der, EXPECTED));
+    }
+
+    #[test]
+    fn a_spiffe_id_in_a_dns_san_is_not_the_identity() {
+        // The identity MUST be a URI SAN. A spiffe-looking value in a DNS SAN is
+        // ignored, so a leaf carrying it but no URI SAN is not a valid SVID.
+        let der = conforming_with_sans(&[], &[EXPECTED]);
+        assert!(!svid_id_matches(&der, EXPECTED), "a DNS SAN is not a SPIFFE id");
+        assert!(!svid_id_allowed(&der, &[]), "no URI SAN means no valid leaf");
+    }
+
+    #[test]
+    fn duplicate_uri_sans_name_nobody() {
+        // Two URI SANs name nobody even when identical: exactly one is required, so
+        // duplication cannot smuggle a second identity past the count.
+        let der = conforming_with_sans(&[EXPECTED, EXPECTED], &[]);
+        assert!(!svid_id_matches(&der, EXPECTED));
+        assert!(!svid_id_allowed(&der, &[]));
+    }
+
+    #[test]
+    fn a_path_is_matched_case_sensitively() {
+        // The path case is preserved, so it distinguishes two workloads.
+        let der = conforming("spiffe://grid.internal/Signals");
+        assert!(
+            svid_id_matches(&der, "spiffe://grid.internal/Signals"),
+            "exact path matches"
+        );
+        assert!(
+            !svid_id_matches(&der, "spiffe://grid.internal/signals"),
+            "a different path case is a different workload"
+        );
     }
 
     // ---- Allowlist + authorize_peer diagnostics --------------------------------
