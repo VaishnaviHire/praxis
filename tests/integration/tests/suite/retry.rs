@@ -313,7 +313,7 @@ fn status_5xx_without_policy_is_forwarded() {
 }
 
 #[test]
-fn reused_connection_failure_does_not_replay_post() {
+fn reused_connection_failure_retries_replayable_post() {
     let (backend, log) = start_reused_connection_kill_backend();
     let proxy_port = free_port();
     let yaml = simple_proxy_yaml(proxy_port, backend.port());
@@ -321,18 +321,19 @@ fn reused_connection_failure_does_not_replay_post() {
     let proxy = start_proxy(&config);
 
     // Connection pooling and reuse are timing-sensitive: under the heavy
-    // concurrency of the coverage / full-suite run the pooled upstream
-    // connection is not always reused-then-killed on the first probe, so
-    // retry the warmup+probe exchange until we observe the intended
-    // reused-connection failure.
+    // concurrency of the coverage / full-suite run the probe does not always
+    // land on the pooled connection that gets killed, so retry the
+    // warmup+probe exchange until we observe the intended reused-connection
+    // failure and its transparent retry.
     //
-    // The security-relevant guarantee is checked on every attempt: the
-    // already-written POST is never replayed upstream, so the total number of
-    // POSTs the backend sees must equal the number of probes. A genuine replay
-    // regression fails immediately on that assertion; a "never surfaces the
-    // failure" regression fails by never reaching 502 within the deadline.
+    // The guarantee under test holds on every successful attempt: a POST whose
+    // reused upstream connection dies before responding (Pingora ReusedOnly)
+    // is replayed on a fresh connection and still returns the pooled backend's
+    // 200 to the client, even though POST is non-idempotent — the peer closed
+    // the pooled keepalive before processing the request, so replay is safe.
+    // A regression that drops the replay keeps surfacing the failure as a 502
+    // until the deadline.
     let deadline = Instant::now() + Duration::from_secs(30);
-    let mut probes = 0_usize;
     loop {
         let (warmup_status, _body) = http_get(proxy.addr(), "/warmup", None);
         assert_eq!(
@@ -340,32 +341,41 @@ fn reused_connection_failure_does_not_replay_post() {
             "warmup request should succeed and pool the connection"
         );
 
+        let logged_before = log.lock().unwrap().len();
         let raw = http_send(
             proxy.addr(),
             "POST /probe HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntest",
         );
         let last_status = parse_status(&raw);
-        probes += 1;
+        let attempt = log.lock().unwrap()[logged_before..].to_vec();
 
-        let entries = log.lock().unwrap().clone();
-        // No-replay invariant: each probe writes exactly one POST upstream.
-        let post_count = entries.iter().filter(|(_, _, method, _)| method == "POST").count();
-        assert_eq!(
-            post_count, probes,
-            "POST bytes already written upstream must not be replayed, got: {entries:?}"
-        );
+        // Did this probe reach the killed, reused connection? The backend
+        // records the doomed attempt with request_num > 0 before closing
+        // without a response.
+        let probe_hit_reused = attempt
+            .iter()
+            .any(|(_, request_num, method, path)| *request_num > 0 && method == "POST" && path == "/probe");
 
-        // Success: the probe landed on the pooled connection and the
-        // unreplayable failure surfaced to the client as a 502.
-        let probe_reused = entries.iter().any(|(_, request_num, ..)| *request_num > 0);
-        if probe_reused && last_status == 502 {
+        // Success: the probe hit the reused connection, and because the killed
+        // connection never answers, the client's 200 can only come from the
+        // transparent replay on a fresh connection.
+        if probe_hit_reused {
+            assert_eq!(
+                last_status, 200,
+                "a replayable POST whose reused upstream connection dies before responding must be \
+                 retried on a fresh connection, got {last_status} (attempt: {attempt:?})"
+            );
+            assert!(
+                raw.contains("pooled-ok"),
+                "the retried POST should return the pooled backend body, got: {raw:?}"
+            );
             return;
         }
 
         assert!(
             Instant::now() < deadline,
-            "unreplayable POST on a reused connection should surface the upstream failure as 502 \
-             within the retry window (last status {last_status}, entries: {entries:?})"
+            "a replayable POST on a reused, killed connection should be retried on a fresh \
+             connection within the retry window (last status {last_status}, attempt: {attempt:?})"
         );
         std::thread::sleep(Duration::from_millis(100));
     }

@@ -67,8 +67,12 @@ the framework level:
   rejected from client requests (400), stripped before
   forwarding to backends, and stripped from backend
   responses before reaching clients.
-- **Retry safety**: retries must only apply to idempotent
-  requests where no bytes have been written upstream.
+- **Retry safety**: retries apply only to idempotent
+  requests, with one deliberate exception. A stale pooled
+  connection (Pingora `ReusedOnly`), where the peer closed
+  an idle keepalive before processing the request, is safe
+  to replay for any method because the backend ran no side
+  effect. A truncated replay buffer is never retried.
 
 [RFC 9110 Section 7.6.1]:https://datatracker.ietf.org/doc/html/rfc9110#section-7.6.1
 

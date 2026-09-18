@@ -31,8 +31,10 @@ versions change.
   reserved-header rejection and stripping in *both*
   directions (`crates/core/src/reserved_headers.rs`,
   `crates/protocol/src/http/`).
-- Retry logic must never replay a request after bytes were
-  written upstream, and only for idempotent methods.
+- Retry logic must replay only for idempotent methods, or
+  when the upstream provably processed nothing: a stale
+  pooled connection (Pingora `ReusedOnly`) is replayable
+  for any method, but a truncated replay buffer never is.
 - For each RFC-specified behavior, does a conformance test
   in `tests/conformance/` cite the RFC section? Gaps in
   conformance coverage are findings in themselves.

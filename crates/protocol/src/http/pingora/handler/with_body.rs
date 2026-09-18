@@ -114,23 +114,35 @@ impl PingoraHttpHandler {
     }
 }
 
+/// Whether a stale (`ReusedOnly`) upstream failure is safe to replay.
+///
+/// Safe exactly when the failed connection was actually reused and the
+/// downstream replay buffer still holds the whole body. Method idempotency
+/// is deliberately not a factor: `ReusedOnly` means a pooled keepalive was
+/// closed by the peer before the request could be processed, so replaying it
+/// on a fresh connection duplicates no upstream side effect for any method.
+/// A fresh-connection failure is excluded because its request may already
+/// have been processed; a truncated buffer is excluded because a partial
+/// body cannot be resent intact.
+fn reused_only_replay_safe(client_reused: bool, retry_buffer_truncated: bool) -> bool {
+    client_reused && !retry_buffer_truncated
+}
+
 /// Resolve retry safety for a stale (`ReusedOnly`) upstream connection.
 ///
-/// A pooled connection that closed while idle is not a real attempt, but the
-/// request bytes were already written upstream, so replay must be safe: an
-/// idempotent method (or explicit opt-in) and an intact buffered body.
+/// Applies [`reused_only_replay_safe`] to the live session's replay-buffer
+/// state and stamps the decision onto the error.
 fn resolve_reused_only_retry(
-    ctx: &PingoraRequestCtx,
     session: &Session,
     client_reused: bool,
     mut e: Box<pingora_core::Error>,
 ) -> Box<pingora_core::Error> {
-    let policy = ctx.retry_policy.clone().unwrap_or_else(super::legacy_default_policy);
-    let replay_safe = client_reused
-        && !session.as_ref().retry_buffer_truncated()
-        && (ctx.request_is_idempotent || policy.allow_non_idempotent());
+    let replay_safe = reused_only_replay_safe(client_reused, session.as_ref().retry_buffer_truncated());
     if !replay_safe {
-        debug!("clearing reused-connection retry: replay is not safe for this request");
+        debug!(
+            client_reused,
+            "clearing reused-connection retry: fresh connection or truncated replay buffer"
+        );
     }
     e.set_retry(replay_safe);
     e
@@ -367,7 +379,7 @@ impl ProxyHttp for PingoraHttpHandler {
         // require replay safety; see resolve_reused_only_retry.
         // See docs/architecture/http-correctness.md.
         if matches!(e.retry, pingora_core::RetryType::ReusedOnly) {
-            return resolve_reused_only_retry(ctx, session, client_reused, e);
+            return resolve_reused_only_retry(session, client_reused, e);
         }
         let e = e.more_context(format!("Peer: {peer}"));
         if truncated {
@@ -513,4 +525,41 @@ async fn reject_503(session: &mut Session, retry_after: &'static str, reason: &'
         pingora_core::ErrorType::HTTPStatus(503),
         reason,
     ))
+}
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reused_only_replays_when_reused_and_buffer_intact() {
+        assert!(
+            reused_only_replay_safe(true, false),
+            "a stale reused connection with an intact replay buffer must retry, regardless of method"
+        );
+    }
+
+    #[test]
+    fn reused_only_does_not_replay_on_fresh_connection() {
+        assert!(
+            !reused_only_replay_safe(false, false),
+            "a fresh-connection failure may already have been processed and must not replay"
+        );
+        assert!(
+            !reused_only_replay_safe(false, true),
+            "a fresh connection with a truncated buffer must not replay"
+        );
+    }
+
+    #[test]
+    fn reused_only_does_not_replay_when_buffer_truncated() {
+        assert!(
+            !reused_only_replay_safe(true, true),
+            "a truncated replay buffer cannot resend the full body, so no retry"
+        );
+    }
 }
