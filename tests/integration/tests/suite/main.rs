@@ -87,6 +87,7 @@ mod selected_upstream_body_subrequests;
 mod sni_router;
 mod stats_admin;
 mod stream_buffer_adapter;
+mod stream_buffer_disconnect;
 mod streaming_terminal_response;
 mod tcp_access_log;
 mod tcp_active_connections;
