@@ -4460,6 +4460,7 @@ fn gate_condition(header: &str, value: &str) -> Vec<praxis_core::config::Conditi
     headers.insert(header.to_owned(), value.to_owned());
     vec![praxis_core::config::Condition::When(
         praxis_core::config::ConditionMatch {
+            grpc: None,
             path: None,
             path_prefix: None,
             methods: None,
@@ -4745,6 +4746,7 @@ fn make_pipeline_with_response_conditions(
 /// Build a `When` condition that matches on a path prefix.
 fn when_path(prefix: &str) -> praxis_core::config::Condition {
     praxis_core::config::Condition::When(praxis_core::config::ConditionMatch {
+        grpc: None,
         path: None,
         path_prefix: Some(prefix.to_owned()),
         methods: None,
@@ -4776,6 +4778,7 @@ fn named_noop_entry(filter_type: &str, failure_mode: FailureMode) -> FilterEntry
 /// Build an `Unless` condition that matches on a path prefix.
 fn unless_path(prefix: &str) -> praxis_core::config::Condition {
     praxis_core::config::Condition::Unless(praxis_core::config::ConditionMatch {
+        grpc: None,
         path: None,
         path_prefix: Some(prefix.to_owned()),
         methods: None,

@@ -253,6 +253,7 @@ impl FilterPipeline {
     ///     config: serde_yaml::from_str("routes:\n  - path_prefix: \"/\"\n    cluster: web").unwrap(),
     ///     conditions: vec![praxis_core::config::Condition::When(
     ///         praxis_core::config::ConditionMatch {
+    ///             grpc: None,
     ///             path: None,
     ///             path_prefix: Some("/api".to_owned()),
     ///             methods: None,
