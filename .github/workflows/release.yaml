@@ -388,6 +388,11 @@ jobs:
 
   crates-publish:
     if: github.event_name == 'release'
+    # A protected GitHub Environment lets the maintainer require reviewers and
+    # scope the token to this job. crates.io OIDC trusted publishing is the
+    # recommended future replacement for the long-lived
+    # RUST_CRATES_PUBLISH_TOKEN.
+    environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
