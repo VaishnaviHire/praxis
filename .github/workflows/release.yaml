@@ -8,8 +8,9 @@ name: Release
 #
 #   Phase 1 (version tag push): validate the tag against the workspace
 #   version, run the full test suite, verify the crates package cleanly with
-#   a publish dry run, build and push the container image to GHCR, then cut a
-#   DRAFT pre-release. The image ships at this stage so the release can
+#   a publish dry run, build and push the container image to GHCR (immutable
+#   tags only), then cut a DRAFT release (marked as a pre-release only for a
+#   pre-release tag). The image ships at this stage so the release can
 #   reference an image that already exists; the crates are only dry-run here.
 #
 #   Phase 2 (a maintainer publishes the draft): publishing the draft, whether
@@ -346,10 +347,14 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ----------------------------------------------------------------------------
-  # Phase 1 (tag push): cut the draft pre-release
+  # Phase 1 (tag push): cut the draft release
   #
-  # A maintainer must review and publish this draft to trigger Phase 2 (the
-  # real crates.io publish).
+  # The draft is marked as a pre-release only when the tag carries a pre-release
+  # suffix (for example v1.0.0-rc.1); a stable tag cuts a normal draft so that
+  # publishing it advances the moving container tags. Re-running this job
+  # refreshes an existing draft rather than failing, but never clobbers a
+  # release a maintainer has already published. A maintainer must review and
+  # publish the draft to trigger Phase 2 (the real crates.io publish).
   # ----------------------------------------------------------------------------
 
   draft-release:
@@ -373,11 +378,36 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Create draft pre-release
+      - name: Create or refresh the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" --generate-notes --prerelease --draft
+        run: |
+          set -euo pipefail
+          # Mark the draft as a pre-release only for tags with a pre-release
+          # suffix (for example v1.0.0-rc.1) so that publishing a stable release
+          # later advances the moving container tags.
+          case "$TAG" in
+            *-*) PRERELEASE="--prerelease" ;;
+            *)   PRERELEASE="" ;;
+          esac
+          # Make re-runs idempotent: refresh an existing draft, but never clobber
+          # a release a maintainer has already published.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$TAG" --json isDraft --jq .isDraft)"
+            case "$is_draft" in
+              true) gh release delete "$TAG" --yes ;;
+              false)
+                echo "::notice::A published release already exists for $TAG; leaving it untouched."
+                exit 0
+                ;;
+              *)
+                echo "::error::Could not determine the release state for $TAG (got '$is_draft')."
+                exit 1
+                ;;
+            esac
+          fi
+          gh release create "$TAG" --generate-notes --draft $PRERELEASE
 
   # ----------------------------------------------------------------------------
   # Phase 2 (release published): publish the crates to crates.io for real
