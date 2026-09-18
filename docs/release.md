@@ -70,9 +70,15 @@ release.
 Container images are published to [GitHub Container
 Registry][ghcr] (GHCR) by the release pipeline. Outside
 of a release, the **Publish** workflow
-(`.github/workflows/publish.yaml`) can be triggered
-manually via `workflow_dispatch` to publish from any
-branch or tag.
+(`.github/workflows/publish.yaml`) can be run manually
+via `workflow_dispatch`. It now actually builds and
+publishes the image (it was previously a no-op, gated
+behind a job condition that never held on a manual
+run). Use GitHub's "Run workflow" ref selector to pick
+the branch or tag to build from; the workflow publishes
+whichever ref you dispatch it against (a branch dispatch
+tags the image with the branch name and `:sha-<hash>`, a
+tag dispatch with only `:sha-<hash>`).
 
 [ghcr]: https://ghcr.io/praxis-proxy/praxis
 
@@ -107,8 +113,8 @@ backports are needed. The naming convention is
 `release/v<MAJOR>.<MINOR>.x` (e.g. `release/v0.1.x`).
 
 Fixes are cherry-picked onto the release branch, a new
-patch tag is created from it, and the publish workflow is
-triggered as usual.
+patch tag is created from it, and the release workflow
+runs as usual (the tag push drives `release.yaml`).
 
 ## Container Details
 
