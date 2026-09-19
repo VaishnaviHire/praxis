@@ -47,10 +47,11 @@ endif
 # Meta-lint tools checked by lint-extra.
 LINT_EXTRA_CMDS := typos taplo shellcheck actionlint
 
-.PHONY: all build release check clean \
+.PHONY: all build build-dev release check clean \
 	test test-unit \
 	test-schema test-integration test-conformance \
 	test-security test-security-suite test-resilience \
+	test-config-validation test-config \
 	bench build-benches \
 	lint lint-extra generate-filter-docs fmt doc audit semver publish-dry-run publish \
 	mutants \

@@ -279,7 +279,7 @@ fn build_server_state(
     // Build the downstream registry once, from immutable server context, then
     // reuse it across reloads. The factory is synchronous and side-effect-free.
     let (registry_factory, pipeline_composition) = composition.into_parts();
-    let registry = registry_factory(&RegistryContext::new(&subrequest_client)).unwrap_or_else(|e| fatal(&e));
+    let registry = registry_factory(&RegistryContext::new(&subrequest_client)).unwrap_or_else(|err| fatal(&err));
     #[cfg(not(feature = "policy-engine"))]
     warn_policy_filter_without_feature(&registry);
 
@@ -293,7 +293,7 @@ fn build_server_state(
         &subrequest_client,
         &pipeline_composition,
     )
-    .unwrap_or_else(|e| fatal(&e));
+    .unwrap_or_else(|err| fatal(&err));
 
     let listener_meta = praxis_protocol::http::pingora::health::new_listener_meta_store(
         praxis_protocol::http::pingora::health::listener_meta_from_config(config),
@@ -340,17 +340,17 @@ fn register_protocols(
 ) -> CertWatcherShutdowns {
     let mut all_shutdowns = Vec::new();
 
-    if config.listeners.iter().any(|l| l.protocol == ProtocolKind::Http) {
+    if config.listeners.iter().any(|listener| listener.protocol == ProtocolKind::Http) {
         let shutdowns = Box::new(PingoraHttp)
             .register(server, config, pipelines)
-            .unwrap_or_else(|e| fatal(&e));
+            .unwrap_or_else(|err| fatal(&err));
         all_shutdowns.extend(shutdowns);
     }
 
-    if config.listeners.iter().any(|l| l.protocol == ProtocolKind::Tcp) {
+    if config.listeners.iter().any(|listener| listener.protocol == ProtocolKind::Tcp) {
         let shutdowns = Box::new(PingoraTcp)
             .register(server, config, pipelines)
-            .unwrap_or_else(|e| fatal(&e));
+            .unwrap_or_else(|err| fatal(&err));
         all_shutdowns.extend(shutdowns);
     }
 
@@ -381,7 +381,7 @@ fn spawn_watcher(
     // event after startup would see a hash mismatch that is an artifact of the two
     // being computed differently.
     let initial_content_hash =
-        std::fs::read_to_string(&path).map_or(0, |c| crate::watcher::composite_hash(&c, &referenced_files));
+        std::fs::read_to_string(&path).map_or(0, |contents| crate::watcher::composite_hash(&contents, &referenced_files));
     let handle = crate::watcher::spawn_config_watcher(crate::watcher::WatcherParams {
         config_path: path,
         health_shutdown: state.health_shutdown,
@@ -487,8 +487,8 @@ where
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
             Ok(rt) => rt,
-            Err(e) => {
-                tracing::error!(runtime = runtime_name, error = %e, "failed to start background runtime");
+            Err(err) => {
+                tracing::error!(runtime = runtime_name, error = %err, "failed to start background runtime");
                 return;
             },
         };
@@ -524,7 +524,7 @@ fn spawn_health_check_tasks(
     let clusters: Vec<praxis_core::config::Cluster> = config
         .clusters
         .iter()
-        .filter(|c| c.health_check.is_some())
+        .filter(|cluster| cluster.health_check.is_some())
         .cloned()
         .collect();
 
