@@ -79,7 +79,8 @@ Built-in filters that write results:
 - `guardrails`: `status` = `blocked` | `passed`
 - `json_rpc`: `kind`, `method`, `id`, `id_kind`,
   `batch_len`
-- `grpc_detection`: `kind` = `grpc` | `grpc-web`
+- `grpc_detection`: `kind` = `grpc` | `grpc+proto` |
+  `grpc+json` | `grpc+other`
 
 ### Defining Branches
 

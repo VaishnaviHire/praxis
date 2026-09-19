@@ -44,7 +44,7 @@ Built-in filters organized by protocol and category.
 |--------|---------|-------------|
 | [`circuit_breaker`](http/traffic_management/circuit_breaker.md) | - | Rejects requests to clusters whose circuit is open. |
 | [`endpoint_selector`](http/traffic_management/endpoint_selector.md) | - | Selects an upstream endpoint from a trusted mutation source. |
-| [`grpc_detection`](http/traffic_management/grpc_detection.md) | - | Detects gRPC requests from the `content-type` header and promotes the variant to filter metadata and results for downstream routing. |
+| [`grpc_detection`](http/traffic_management/grpc_detection.md) | - | Detects the gRPC variant from the request `content-type` header and records it for branch-chain routing and observability. |
 | [`grpc_timeout`](http/traffic_management/grpc_timeout.md) | - | Honours the `grpc-timeout` request header as a real deadline. |
 | [`iterative_request_router`](http/traffic_management/iterative_request_router.md) | - | Framework-level filter for iterative sub-request execution. |
 | [`load_balancer`](http/traffic_management/load_balancer.md) | - | Selects an upstream endpoint using the cluster's configured strategy. |
