@@ -71,7 +71,9 @@ pub use actions::{
     TerminalResponse,
 };
 pub use any_filter::AnyFilter;
-pub use binding::{ChainBindingContext, ChainBindingHttpFactory};
+pub use binding::ChainBindingContext;
+#[cfg(feature = "chain-binding")]
+pub use binding::ChainBindingHttpFactory;
 pub use body::{BodyAccess, BodyBuffer, BodyBufferOverflow, BodyCapabilities, BodyMode};
 #[cfg(feature = "basic-auth-filter")]
 pub use builtins::BasicAuthFilter;

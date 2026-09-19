@@ -8,9 +8,11 @@ use std::collections::HashMap;
 #[cfg(feature = "iterative-request-router")]
 use praxis_core::config::InsecureOptions;
 
+#[cfg(feature = "chain-binding")]
+use crate::binding::ChainBindingHttpFactory;
 use crate::{
     any_filter::AnyFilter,
-    binding::{ChainBindingContext, ChainBindingHttpFactory},
+    binding::ChainBindingContext,
     factory::{FilterFactory, HttpFilterFactoryFn, TcpFilterFactoryFn, http_builtin, tcp_builtin},
     filter::FilterError,
 };
@@ -65,6 +67,7 @@ enum RegisteredFilterFactory {
 
     /// An application HTTP factory that binds an outbound subrequest chain at
     /// construction time via a [`ChainBindingContext`].
+    #[cfg(feature = "chain-binding")]
     ChainBinding(ChainBindingHttpFactory),
 }
 
@@ -113,6 +116,7 @@ impl RegisteredFilterFactory {
                 ChainBindingContext::with_standalone(registry, &InsecureOptions::default(), |ctx| factory(config, ctx))
                     .map(AnyFilter::Http)
             },
+            #[cfg(feature = "chain-binding")]
             Self::ChainBinding(_) => Err(FilterError::from(
                 "this filter binds an outbound subrequest chain and must be built via \
                  FilterPipeline::build_with_chains",
@@ -129,12 +133,17 @@ impl RegisteredFilterFactory {
     fn create_with_binding(
         &self,
         config: &serde_yaml::Value,
+        #[cfg_attr(
+            not(any(feature = "iterative-request-router", feature = "chain-binding")),
+            expect(unused_variables, reason = "ctx is read only by the gated HttpWithRegistry and ChainBinding arms")
+        )]
         ctx: &ChainBindingContext<'_>,
     ) -> Result<AnyFilter, FilterError> {
         match self {
             Self::Standard(factory) => factory.create(config),
             #[cfg(feature = "iterative-request-router")]
             Self::HttpWithRegistry(factory) => Ok(AnyFilter::Http(factory(config, ctx)?)),
+            #[cfg(feature = "chain-binding")]
             Self::ChainBinding(factory) => Ok(AnyFilter::Http(factory(config, ctx)?)),
         }
     }
@@ -328,6 +337,7 @@ impl FilterRegistry {
     ///
     /// [`ChainBindingContext`]: crate::ChainBindingContext
     /// [`FilterPipeline`]: crate::FilterPipeline
+    #[cfg(feature = "chain-binding")]
     pub fn register_chain_binding(&mut self, name: &str, factory: ChainBindingHttpFactory) -> Result<(), FilterError> {
         self.register_chain_binding_with_class(name, factory, SecurityClass::Standard)
     }
@@ -339,6 +349,7 @@ impl FilterRegistry {
     /// # Errors
     ///
     /// Returns [`FilterError`] if the name is already registered.
+    #[cfg(feature = "chain-binding")]
     pub fn register_chain_binding_with_class(
         &mut self,
         name: &str,

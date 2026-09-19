@@ -40,6 +40,11 @@ iterative-request-router = []
 # experimental and not yet wired into request routing.
 router-json-aliases = []
 
+# The chain-binding registry extension API (register_chain_binding /
+# ChainBindingContext::bind_chain). Off by default; experimental. No in-tree
+# consumer yet; provided for out-of-tree callout filters.
+chain-binding = []
+
 # ---------------------------------------------------------------------------
 # Lint configuration
 #
