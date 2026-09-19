@@ -231,7 +231,12 @@ fn detect_subrequest_circuit_breaker_change(old: &Config, new: &Config) {
     }
 }
 
-/// Warn for each changed startup-only runtime field.
+/// Emit a restart-required warning for each changed runtime field in the list.
+///
+/// Compares `old.runtime.$field` against `new.runtime.$field` for each field
+/// name given, logging a structured warning when any differs. The caller
+/// supplies a list of field identifiers; the macro generates a comparison and
+/// warning for each.
 macro_rules! detect_runtime_field_changes {
     ($old:expr, $new:expr, [$($field:ident),* $(,)?]) => {
         $(
@@ -250,20 +255,16 @@ macro_rules! detect_runtime_field_changes {
 /// `subrequest_max_connections` and `subrequest_circuit_breaker` have
 /// dedicated detectors with tailored messages and are excluded here.
 fn detect_startup_only_runtime_changes(old: &Config, new: &Config) {
-    detect_runtime_field_changes!(
-        old,
-        new,
-        [
-            global_queue_interval,
-            max_connections,
-            max_memory_bytes,
-            subrequest_pool_size,
-            threads,
-            upstream_ca_file,
-            upstream_keepalive_pool_size,
-            work_stealing,
-        ]
-    );
+    detect_runtime_field_changes!(old, new, [
+        global_queue_interval,
+        max_connections,
+        max_memory_bytes,
+        subrequest_pool_size,
+        threads,
+        upstream_ca_file,
+        upstream_keepalive_pool_size,
+        work_stealing,
+    ]);
 }
 
 /// Detect changes to the admin endpoint configuration.
@@ -348,23 +349,19 @@ pub(crate) fn collect_escalated_flags(
     old: &praxis_core::config::InsecureOptions,
     new: &praxis_core::config::InsecureOptions,
 ) -> Vec<&'static str> {
-    let mut result: Vec<&str> = insecure_flag_pairs!(
-        old,
-        new,
-        [
-            allow_open_security_filters,
-            allow_private_endpoints,
-            allow_private_health_checks,
-            allow_private_upstreams,
-            allow_public_admin,
-            allow_root,
-            allow_tls_no_verify,
-            allow_tls_without_sni,
-            allow_unbounded_body,
-            csrf_log_only,
-            skip_pipeline_validation,
-        ]
-    )
+    let mut result: Vec<&str> = insecure_flag_pairs!(old, new, [
+        allow_open_security_filters,
+        allow_private_endpoints,
+        allow_private_health_checks,
+        allow_private_upstreams,
+        allow_public_admin,
+        allow_root,
+        allow_tls_no_verify,
+        allow_tls_without_sni,
+        allow_unbounded_body,
+        csrf_log_only,
+        skip_pipeline_validation,
+    ])
     .into_iter()
     .filter(|(_, old_val, new_val)| !old_val && *new_val)
     .map(|(name, ..)| name)
@@ -381,20 +378,16 @@ pub(crate) fn collect_escalated_pipeline_checks(
     result: &mut Vec<&'static str>,
 ) {
     result.extend(
-        pipeline_check_pairs!(
-            old,
-            new,
-            [
-                conditional_security,
-                conflicting_cluster_selectors,
-                duplicate_load_balancers,
-                duplicate_rewrite_filters,
-                duplicate_routers,
-                lb_without_router,
-                misaligned_clusters,
-                unreachable_filters,
-            ]
-        )
+        pipeline_check_pairs!(old, new, [
+            conditional_security,
+            conflicting_cluster_selectors,
+            duplicate_load_balancers,
+            duplicate_rewrite_filters,
+            duplicate_routers,
+            lb_without_router,
+            misaligned_clusters,
+            unreachable_filters,
+        ])
         .into_iter()
         .filter(|(_, o, n)| !o && *n)
         .map(|(name, ..)| name),
