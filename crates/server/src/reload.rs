@@ -69,12 +69,12 @@ pub(crate) fn reload_pipelines(
 
     if let Err(err) = praxis_core::logging::validate_log_overrides(new_config) {
         error!(error = %err, "config reload failed: invalid log_overrides");
-        return Err(e.into());
+        return Err(err.into());
     }
 
     if let Err(err) = praxis_core::logging::validate_logging(new_config) {
         error!(error = %err, "config reload failed: invalid logging config");
-        return Err(e.into());
+        return Err(err.into());
     }
 
     let health_registry = build_health_registry(&new_config.clusters);
@@ -97,7 +97,7 @@ pub(crate) fn reload_pipelines(
         Ok(pipelines) => pipelines,
         Err(err) => {
             error!(error = %err, "config reload failed: pipeline build error");
-            return Err(e);
+            return Err(err);
         },
     };
 
@@ -206,8 +206,11 @@ fn carry_over_health_state(
         return;
     };
 
-    let old_by_name: std::collections::HashMap<&str, &praxis_core::config::Cluster> =
-        old_config.clusters.iter().map(|cluster| (cluster.name.as_ref(), cluster)).collect();
+    let old_by_name: std::collections::HashMap<&str, &praxis_core::config::Cluster> = old_config
+        .clusters
+        .iter()
+        .map(|cluster| (cluster.name.as_ref(), cluster))
+        .collect();
     let mut carried: usize = 0;
     for cluster in &new_config.clusters {
         let unchanged_check = old_by_name.get(cluster.name.as_ref()).is_some_and(|old_c| {
@@ -417,8 +420,11 @@ filter_chains:
         assert_ne!(old_ptr, new_ptr, "pipeline pointer should change after reload");
 
         let loaded = meta.load();
-        let expected_names: std::collections::HashSet<&str> =
-            new_config.listeners.iter().map(|listener| listener.name.as_str()).collect();
+        let expected_names: std::collections::HashSet<&str> = new_config
+            .listeners
+            .iter()
+            .map(|listener| listener.name.as_str())
+            .collect();
         let actual_names: std::collections::HashSet<&str> = loaded.keys().map(String::as_str).collect();
         assert_eq!(
             actual_names, expected_names,

@@ -340,14 +340,22 @@ fn register_protocols(
 ) -> CertWatcherShutdowns {
     let mut all_shutdowns = Vec::new();
 
-    if config.listeners.iter().any(|listener| listener.protocol == ProtocolKind::Http) {
+    if config
+        .listeners
+        .iter()
+        .any(|listener| listener.protocol == ProtocolKind::Http)
+    {
         let shutdowns = Box::new(PingoraHttp)
             .register(server, config, pipelines)
             .unwrap_or_else(|err| fatal(&err));
         all_shutdowns.extend(shutdowns);
     }
 
-    if config.listeners.iter().any(|listener| listener.protocol == ProtocolKind::Tcp) {
+    if config
+        .listeners
+        .iter()
+        .any(|listener| listener.protocol == ProtocolKind::Tcp)
+    {
         let shutdowns = Box::new(PingoraTcp)
             .register(server, config, pipelines)
             .unwrap_or_else(|err| fatal(&err));
@@ -380,8 +388,9 @@ fn spawn_watcher(
     // The startup hash must cover the same set the reload gate covers, or the first
     // event after startup would see a hash mismatch that is an artifact of the two
     // being computed differently.
-    let initial_content_hash =
-        std::fs::read_to_string(&path).map_or(0, |contents| crate::watcher::composite_hash(&contents, &referenced_files));
+    let initial_content_hash = std::fs::read_to_string(&path).map_or(0, |contents| {
+        crate::watcher::composite_hash(&contents, &referenced_files)
+    });
     let handle = crate::watcher::spawn_config_watcher(crate::watcher::WatcherParams {
         config_path: path,
         health_shutdown: state.health_shutdown,

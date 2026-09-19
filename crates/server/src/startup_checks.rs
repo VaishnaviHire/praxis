@@ -46,7 +46,10 @@ pub(crate) fn warn_insecure_options(config: &Config) {
         opts.allow_tls_without_sni,
         "allow_tls_without_sni: TLS hostname verification weakened",
     );
-    insecure_warn(opts.csrf_log_only, "csrf_log_only: CSRF violations logged, not rejected");
+    insecure_warn(
+        opts.csrf_log_only,
+        "csrf_log_only: CSRF violations logged, not rejected",
+    );
     insecure_warn(
         opts.skip_pipeline_validation,
         "skip_pipeline_validation: pipeline errors demoted to warnings",
@@ -417,9 +420,13 @@ mod tests {
         #[expect(clippy::type_complexity, reason = "test-local inline table")]
         let flags: &[(&str, fn(&mut InsecureOptions))] = &[
             ("allow_unbounded_body", |opts| opts.allow_unbounded_body = true),
-            ("allow_open_security_filters", |opts| opts.allow_open_security_filters = true),
+            ("allow_open_security_filters", |opts| {
+                opts.allow_open_security_filters = true
+            }),
             ("allow_private_endpoints", |opts| opts.allow_private_endpoints = true),
-            ("allow_private_health_checks", |opts| opts.allow_private_health_checks = true),
+            ("allow_private_health_checks", |opts| {
+                opts.allow_private_health_checks = true
+            }),
             ("allow_private_upstreams", |opts| opts.allow_private_upstreams = true),
             ("allow_public_admin", |opts| opts.allow_public_admin = true),
             ("allow_tls_no_verify", |opts| opts.allow_tls_no_verify = true),
@@ -465,8 +472,12 @@ mod tests {
             ("conflicting_cluster_selectors", |skips| {
                 skips.conflicting_cluster_selectors = true;
             }),
-            ("duplicate_load_balancers", |skips| skips.duplicate_load_balancers = true),
-            ("duplicate_rewrite_filters", |skips| skips.duplicate_rewrite_filters = true),
+            ("duplicate_load_balancers", |skips| {
+                skips.duplicate_load_balancers = true
+            }),
+            ("duplicate_rewrite_filters", |skips| {
+                skips.duplicate_rewrite_filters = true
+            }),
             ("duplicate_routers", |skips| skips.duplicate_routers = true),
             ("lb_without_router", |skips| skips.lb_without_router = true),
             ("misaligned_clusters", |skips| skips.misaligned_clusters = true),
