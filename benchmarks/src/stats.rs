@@ -183,8 +183,8 @@ fn parse_stats_line(line: &str) -> Option<StatsSample> {
 /// assert!((parse_cpu_percent("0.00%").unwrap()).abs() < 0.001);
 /// assert!(parse_cpu_percent("bad").is_none());
 /// ```
-pub fn parse_cpu_percent(s: &str) -> Option<f64> {
-    s.strip_suffix('%')?.trim().parse::<f64>().ok()
+pub fn parse_cpu_percent(input: &str) -> Option<f64> {
+    input.strip_suffix('%')?.trim().parse::<f64>().ok()
 }
 
 /// Parse memory usage from a string like `"128.5MiB / 2GiB"`.
@@ -200,22 +200,22 @@ pub fn parse_cpu_percent(s: &str) -> Option<f64> {
 /// assert_eq!(parse_memory_bytes("512KiB / 1GiB").unwrap(), 524_288);
 /// assert_eq!(parse_memory_bytes("1024B / 2GiB").unwrap(), 1024);
 /// ```
-pub fn parse_memory_bytes(s: &str) -> Option<u64> {
-    let usage = s.split(" / ").next()?.trim();
+pub fn parse_memory_bytes(input: &str) -> Option<u64> {
+    let usage = input.split(" / ").next()?.trim();
     parse_byte_value(usage)
 }
 
 /// Parse a value with a byte-unit suffix into raw bytes.
 ///
 /// Supports `B`, `KiB`, `MiB`, `GiB`.
-fn parse_byte_value(s: &str) -> Option<u64> {
-    let (num_str, multiplier) = if let Some(n) = s.strip_suffix("GiB") {
+fn parse_byte_value(input: &str) -> Option<u64> {
+    let (num_str, multiplier) = if let Some(n) = input.strip_suffix("GiB") {
         (n, 1_073_741_824_u64)
-    } else if let Some(n) = s.strip_suffix("MiB") {
+    } else if let Some(n) = input.strip_suffix("MiB") {
         (n, 1_048_576_u64)
-    } else if let Some(n) = s.strip_suffix("KiB") {
+    } else if let Some(n) = input.strip_suffix("KiB") {
         (n, 1_024_u64)
-    } else if let Some(n) = s.strip_suffix('B') {
+    } else if let Some(n) = input.strip_suffix('B') {
         (n, 1_u64)
     } else {
         return None;
@@ -224,6 +224,7 @@ fn parse_byte_value(s: &str) -> Option<u64> {
     let value: f64 = num_str.trim().parse().ok()?;
 
     #[expect(
+        clippy::as_conversions,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         clippy::cast_precision_loss,
@@ -237,7 +238,11 @@ fn parse_byte_value(s: &str) -> Option<u64> {
 // -----------------------------------------------------------------------------
 
 /// Compute aggregate [`ResourceMetrics`] from collected samples.
-#[expect(clippy::cast_precision_loss, reason = "sample counts and byte sums are small enough")]
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "sample counts and byte sums are small enough"
+)]
 fn compute_metrics(samples: &[StatsSample]) -> Option<ResourceMetrics> {
     if samples.is_empty() {
         warn!("no docker stats samples collected");
@@ -267,21 +272,25 @@ fn compute_metrics(samples: &[StatsSample]) -> Option<ResourceMetrics> {
 
 /// Compute average and peak CPU from samples.
 fn cpu_aggregates(samples: &[StatsSample], count: f64) -> (f64, f64) {
-    let sum: f64 = samples.iter().map(|s| s.cpu_percent).sum();
-    let peak = samples.iter().map(|s| s.cpu_percent).fold(f64::NEG_INFINITY, f64::max);
+    let sum: f64 = samples.iter().map(|sample| sample.cpu_percent).sum();
+    let peak = samples
+        .iter()
+        .map(|sample| sample.cpu_percent)
+        .fold(f64::NEG_INFINITY, f64::max);
     (sum / count, peak)
 }
 
 /// Compute average and peak memory from samples.
 #[expect(
+    clippy::as_conversions,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,
     reason = "memory sums are small enough for f64; result fits u64"
 )]
 fn mem_aggregates(samples: &[StatsSample], count: f64) -> (u64, u64) {
-    let sum: u64 = samples.iter().map(|s| s.memory_bytes).sum();
-    let peak = samples.iter().map(|s| s.memory_bytes).max().unwrap_or(0);
+    let sum: u64 = samples.iter().map(|sample| sample.memory_bytes).sum();
+    let peak = samples.iter().map(|sample| sample.memory_bytes).max().unwrap_or(0);
     ((sum as f64 / count) as u64, peak)
 }
 

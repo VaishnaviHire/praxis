@@ -112,15 +112,18 @@ impl Runner {
         }
 
         let mut collector = proxy.container_name().map(DockerStatsCollector::new);
-        if let Some(ref mut c) = collector {
-            info!(container = c.container_name(), "starting resource metrics collection");
-            c.start();
+        if let Some(ref mut stats_collector) = collector {
+            info!(
+                container = stats_collector.container_name(),
+                "starting resource metrics collection"
+            );
+            stats_collector.start();
         }
 
         let mut results = self.run_measurement_rounds(proxy).await?;
 
         let resource = match collector {
-            Some(c) => c.stop().await,
+            Some(stats_collector) => stats_collector.stop().await,
             None => None,
         };
         if resource.is_some() {
@@ -184,11 +187,16 @@ impl Runner {
         let mut results = ScenarioResults {
             scenario: self.scenario.name.clone(),
             proxy: proxy.name().into(),
-            runs: Vec::with_capacity(self.scenario.runs as usize),
+            runs: Vec::with_capacity(usize::try_from(self.scenario.runs).unwrap_or(usize::MAX)),
             median: None,
         };
-        for i in 0..self.scenario.runs {
-            info!(run = i + 1, total = self.scenario.runs, "measurement run");
+        for idx in 0..self.scenario.runs {
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "run index + 1 cannot overflow for realistic run counts"
+            )]
+            let run_number = idx + 1;
+            info!(run = run_number, total = self.scenario.runs, "measurement run");
             let json = self.run_load(proxy, self.scenario.duration).await?;
             let result = self.parse_result(&json, proxy.name())?;
             results.runs.push(result);
@@ -226,7 +234,11 @@ impl Runner {
             Workload::TcpThroughput | Workload::TcpConnectionRate | Workload::HighConnectionCount { .. } => {
                 fortio::parse(json, &self.scenario.name, proxy_name, &self.commit, raw)
             },
-            _ => vegeta::parse(json, &self.scenario.name, proxy_name, &self.commit, raw),
+            Workload::SmallRequests { .. }
+            | Workload::LargePayload { .. }
+            | Workload::LargePayloadHighConcurrency { .. }
+            | Workload::Sustained
+            | Workload::Ramp { .. } => vegeta::parse(json, &self.scenario.name, proxy_name, &self.commit, raw),
         }
     }
 }
@@ -335,7 +347,9 @@ async fn run_ramp(
     step: u32,
     total_duration: Duration,
 ) -> Result<String, BenchmarkError> {
-    let steps: Vec<u32> = (start_qps..=end_qps).step_by(step.max(1) as usize).collect();
+    let steps: Vec<u32> = (start_qps..=end_qps)
+        .step_by(usize::try_from(step.max(1)).unwrap_or(1))
+        .collect();
     if steps.is_empty() {
         return Err(BenchmarkError::ToolFailed {
             tool: "ramp".into(),
@@ -365,7 +379,12 @@ async fn prepare_ramp_targets(
     tokio::fs::write(&target_path, format!("GET {url}\n"))
         .await
         .map_err(BenchmarkError::Io)?;
-    let step_duration = Duration::from_secs((total_duration.as_secs() / steps.len() as u64).max(1));
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "division by step count cannot overflow; step count is always non-empty here"
+    )]
+    let step_duration =
+        Duration::from_secs((total_duration.as_secs() / u64::try_from(steps.len()).unwrap_or(1)).max(1));
     Ok((dir, target_path, step_duration))
 }
 

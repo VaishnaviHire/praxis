@@ -178,9 +178,9 @@ fn prepare_vegeta_files(
     std::fs::write(&target_path, &target_spec).map_err(BenchmarkError::Io)?;
 
     let body_path = if let Some(body) = &config.body {
-        let p = dir.path().join("vegeta-body.bin");
-        std::fs::write(&p, body).map_err(BenchmarkError::Io)?;
-        Some(p)
+        let path = dir.path().join("vegeta-body.bin");
+        std::fs::write(&path, body).map_err(BenchmarkError::Io)?;
+        Some(path)
     } else {
         None
     };
@@ -202,11 +202,11 @@ pub(crate) async fn run_vegeta_pipeline(attack_cmd: &mut TokioCommand) -> Result
 }
 
 /// Map a spawn/IO error to the appropriate [`BenchmarkError`].
-fn map_vegeta_spawn_error(e: std::io::Error) -> BenchmarkError {
-    if e.kind() == std::io::ErrorKind::NotFound {
+fn map_vegeta_spawn_error(err: std::io::Error) -> BenchmarkError {
+    if err.kind() == std::io::ErrorKind::NotFound {
         BenchmarkError::ToolNotFound("vegeta".to_owned())
     } else {
-        BenchmarkError::Io(e)
+        BenchmarkError::Io(err)
     }
 }
 
@@ -268,9 +268,9 @@ pub fn parse(
     commit: &str,
     include_raw: bool,
 ) -> Result<BenchmarkResult, BenchmarkError> {
-    let report: VegetaReport = serde_json::from_str(json).map_err(|e| BenchmarkError::ParseError {
+    let report: VegetaReport = serde_json::from_str(json).map_err(|err| BenchmarkError::ParseError {
         tool: "vegeta".into(),
-        reason: e.to_string(),
+        reason: err.to_string(),
     })?;
 
     let raw_report = if include_raw {
@@ -295,24 +295,29 @@ pub fn parse(
 }
 
 /// Convert vegeta latencies to `LatencyMetrics`.
-fn vegeta_latency(l: &VegetaLatencies) -> crate::result::LatencyMetrics {
+fn vegeta_latency(latencies: &VegetaLatencies) -> crate::result::LatencyMetrics {
     crate::result::LatencyMetrics {
-        min: ns_to_secs(l.min),
-        max: ns_to_secs(l.max),
-        mean: ns_to_secs(l.mean),
-        p50: ns_to_secs(l.p50),
-        p90: ns_to_secs(l.p90),
-        p95: ns_to_secs(l.p95),
-        p99: ns_to_secs(l.p99),
+        min: ns_to_secs(latencies.min),
+        max: ns_to_secs(latencies.max),
+        mean: ns_to_secs(latencies.mean),
+        p50: ns_to_secs(latencies.p50),
+        p90: ns_to_secs(latencies.p90),
+        p95: ns_to_secs(latencies.p95),
+        p99: ns_to_secs(latencies.p99),
         // Vegeta does not report p99.9; p99 used as approximation.
-        p99_9: ns_to_secs(l.p99),
+        p99_9: ns_to_secs(latencies.p99),
     }
 }
 
 /// Compute throughput metrics from a vegeta report.
-#[expect(clippy::cast_precision_loss, reason = "precision loss acceptable")]
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "precision loss acceptable"
+)]
 fn vegeta_throughput(report: &VegetaReport) -> crate::result::ThroughputMetrics {
     let duration_secs = report.duration as f64 / 1_000_000_000.0;
+    #[expect(clippy::arithmetic_side_effects, reason = "byte counts cannot overflow")]
     let total_bytes = report.bytes_in.total + report.bytes_out.total;
     let bytes_per_sec = if duration_secs > 0.0 {
         total_bytes as f64 / duration_secs
@@ -327,6 +332,7 @@ fn vegeta_throughput(report: &VegetaReport) -> crate::result::ThroughputMetrics 
 
 /// Extract error metrics from a vegeta report.
 #[expect(
+    clippy::as_conversions,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -342,12 +348,12 @@ fn vegeta_errors(report: &VegetaReport) -> crate::result::ErrorMetrics {
     let timeouts = report
         .errors
         .iter()
-        .filter(|e| e.contains("timeout") || e.contains("deadline exceeded"))
+        .filter(|err| err.contains("timeout") || err.contains("deadline exceeded"))
         .count() as u64;
     let connect_failures = report
         .errors
         .iter()
-        .filter(|e| e.contains("connection refused") || e.contains("connect:") || e.contains("dial"))
+        .filter(|err| err.contains("connection refused") || err.contains("connect:") || err.contains("dial"))
         .count() as u64;
     crate::result::ErrorMetrics {
         non_2xx: Some(non_2xx),
@@ -357,7 +363,11 @@ fn vegeta_errors(report: &VegetaReport) -> crate::result::ErrorMetrics {
 }
 
 /// Convert nanoseconds to seconds.
-#[expect(clippy::cast_precision_loss, reason = "precision loss acceptable")]
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "precision loss acceptable"
+)]
 fn ns_to_secs(ns: u64) -> f64 {
     ns as f64 / 1_000_000_000.0
 }
