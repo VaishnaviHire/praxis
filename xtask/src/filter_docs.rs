@@ -472,6 +472,10 @@ fn merge_filter_variants(filters: Vec<FilterInfo>) -> Vec<FilterInfo> {
     by_name.into_values().collect()
 }
 
+// -----------------------------------------------------------------------------
+// Feature Discovery
+// -----------------------------------------------------------------------------
+
 /// Discover feature-gated built-in filter registrations from the registry.
 fn discover_feature_requirements(root: &Path) -> BTreeMap<String, String> {
     let registry = root.join("crates/filter/src/registry.rs");
@@ -520,15 +524,6 @@ fn cfg_feature_from_expr(expr: &syn::Expr) -> Option<String> {
     }
 }
 
-/// Extract the raw struct name from a `#[serde(try_from = "...")]`
-/// container attribute, taking the last path segment.
-fn serde_try_from(attrs: &[syn::Attribute]) -> Option<String> {
-    attrs
-        .iter()
-        .find_map(|attr| serde_lit_value(attr, "try_from"))
-        .map(|path| path.rsplit("::").next().unwrap_or(&path).to_owned())
-}
-
 /// Extract the filter name from `register_http*(..., "name", ...)` or
 /// `register_tcp*(..., "name", ...)` registration helper calls.
 fn filter_name_from_register_call(expr: &syn::Expr) -> Option<String> {
@@ -567,6 +562,10 @@ fn cfg_feature_from_attrs(attrs: &[syn::Attribute]) -> Option<String> {
         Some(feature.value())
     })
 }
+
+// -----------------------------------------------------------------------------
+// Anchor & File Scope
+// -----------------------------------------------------------------------------
 
 /// Parse a single file to check if it is a filter anchor.
 fn parse_anchor_file(path: &Path) -> Option<FilterAnchor> {
@@ -830,6 +829,10 @@ fn parse_struct(s: &syn::ItemStruct, out: &mut ModuleItems) {
 fn is_filter_doc_candidate(s: &syn::ItemStruct) -> bool {
     matches!(s.vis, syn::Visibility::Public(_)) || s.ident.to_string().ends_with("Filter")
 }
+
+// -----------------------------------------------------------------------------
+// Filter Assembly
+// -----------------------------------------------------------------------------
 
 /// Build a [`FilterInfo`] from parsed items, using the anchor's name and config type.
 fn build_filter(items: &ModuleItems, name: &str, config_type: Option<&str>) -> FilterInfo {
@@ -1098,6 +1101,15 @@ fn serde_deserialize_with(attrs: &[syn::Attribute]) -> Option<String> {
     attrs.iter().find_map(|attr| serde_lit_value(attr, "deserialize_with"))
 }
 
+/// Extract the raw struct name from a `#[serde(try_from = "...")]`
+/// container attribute, taking the last path segment.
+fn serde_try_from(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs
+        .iter()
+        .find_map(|attr| serde_lit_value(attr, "try_from"))
+        .map(|path| path.rsplit("::").next().unwrap_or(&path).to_owned())
+}
+
 /// Extract a string-literal serde attribute value.
 fn serde_lit_value(attr: &syn::Attribute, name: &str) -> Option<String> {
     if !attr.path().is_ident("serde") {
@@ -1216,6 +1228,10 @@ fn parse_variant_fields(variant: &syn::Variant) -> Vec<RawField> {
         .collect()
 }
 
+// -----------------------------------------------------------------------------
+// Impl Parsing
+// -----------------------------------------------------------------------------
+
 /// Extract filter name from `fn name(&self) -> &'static str { "..." }`.
 fn extract_filter_name(imp: &syn::ItemImpl) -> Option<String> {
     imp.items.iter().find_map(|item| {
@@ -1281,6 +1297,10 @@ fn extract_str_literal(expr: &syn::Expr) -> Option<String> {
         None
     }
 }
+
+// -----------------------------------------------------------------------------
+// Case Conversion
+// -----------------------------------------------------------------------------
 
 /// Convert `PascalCase` to `snake_case`.
 fn to_snake_case(s: &str) -> String {
@@ -1559,7 +1579,7 @@ fn extract_angle_bracket_args(segment: &syn::PathSegment) -> Vec<syn::Type> {
 }
 
 // -----------------------------------------------------------------------------
-// Markdown Rendering
+// Doc Text Extraction
 // -----------------------------------------------------------------------------
 
 /// Extract the first paragraph from a doc comment.
@@ -1633,6 +1653,10 @@ fn normalize_doc_prose(doc: &str) -> Option<String> {
 fn is_markdown_reference_definition(line: &str) -> bool {
     line.starts_with('[') && line.contains("]:")
 }
+
+// -----------------------------------------------------------------------------
+// Markdown Rendering
+// -----------------------------------------------------------------------------
 
 /// Render the markdown content for a single filter doc file.
 fn render_filter_doc(entry: &FilterEntry) -> String {
