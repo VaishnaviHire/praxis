@@ -53,8 +53,11 @@ jobs:
           key: cargo-machete-${{ runner.os }}
 
       - name: Install cargo-machete
-        if: steps.cache-machete.outputs.cache-hit != 'true'
-        run: cargo install cargo-machete --locked
+        # The shared Swatinem/rust-cache in setup-rust-lint also restores
+        # ~/.cargo/bin, so cargo-machete may already be present even when this
+        # step's own cache key misses. Install only when it is actually absent;
+        # otherwise `cargo install` aborts with "binary already exists".
+        run: command -v cargo-machete > /dev/null || cargo install cargo-machete --locked
 
       - name: Lint
         run: make lint
