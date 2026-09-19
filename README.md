@@ -7,8 +7,10 @@
 [![MSRV: 1.96](https://img.shields.io/badge/MSRV-1.96-brightgreen.svg)](https://blog.rust-lang.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Praxis is a Rust-based high-performance security-focused framework for
+Praxis is a [Rust]-based high-performance security-focused framework for
 building **proxy servers**.
+
+[Rust]:https://github.com/rust-lang/rust
 
 ## Getting Started
 
