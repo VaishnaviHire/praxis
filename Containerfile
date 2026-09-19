@@ -20,6 +20,10 @@ WORKDIR /src
 # See: https://shaneutt.com/blog/rust-fast-small-docker-image-builds/
 
 COPY Cargo.toml Cargo.lock ./
+# NOTE: crate list must be kept in sync with crates/ directory structure.
+# When adding a new crate under crates/, add its Cargo.toml here AND in
+# the RUN mkdir + stub creation below, AND in the COPY src lines, AND in
+# the find command that touches source files.
 COPY crates/core/Cargo.toml crates/core/Cargo.toml
 COPY crates/filter/Cargo.toml crates/filter/Cargo.toml
 COPY crates/protocol/Cargo.toml crates/protocol/Cargo.toml
@@ -87,7 +91,12 @@ LABEL org.opencontainers.image.source="https://github.com/praxis-proxy/praxis" \
     org.opencontainers.image.description="Praxis proxy server" \
     org.opencontainers.image.licenses="Apache-2.0"
 
-RUN apk add --no-cache ca-certificates \
+# Install runtime dependencies:
+#   ca-certificates: TLS certificate validation
+#   wget: HEALTHCHECK probe (Alpine includes wget by default, but explicit for clarity)
+RUN apk add --no-cache \
+    ca-certificates \
+    wget \
     && addgroup -S praxis \
     && adduser -S -G praxis -h /nonexistent -s /sbin/nologin praxis \
     && mkdir -p /etc/praxis
@@ -103,7 +112,9 @@ USER praxis:praxis
 
 WORKDIR /etc/praxis
 
-EXPOSE 8080
+# Port 8080: proxy listener (see container-default.yaml)
+# Port 9901: admin API for healthcheck and metrics
+EXPOSE 8080 9901
 
 HEALTHCHECK --interval=5s --timeout=3s --start-period=2s \
     CMD wget -qO- http://127.0.0.1:9901/healthy || exit 1

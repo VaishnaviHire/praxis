@@ -12,6 +12,7 @@
 # Build:  make test-container
 # Run:    make test-container-run
 
+# NOTE: Keep base image version in sync with Containerfile builder stage
 FROM rust:1.96-alpine
 
 # The full project directory is bind-mounted at /src. This includes
