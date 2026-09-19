@@ -47,7 +47,7 @@ endif
 # Meta-lint tools checked by lint-extra.
 LINT_EXTRA_CMDS := typos taplo shellcheck actionlint
 
-.PHONY: all build build-dev release check clean \
+.PHONY: all build build-dev release check check-features clean \
 	test test-unit \
 	test-schema test-integration test-conformance \
 	test-security test-security-suite test-resilience \
@@ -129,6 +129,19 @@ check:
 	cargo check -p praxis-proxy --no-default-features
 	cargo check -p praxis-proxy --no-default-features --features config-reload,admin-api
 	cargo check -p praxis-proxy-filter --no-default-features
+
+# Verify every optional and experimental feature compiles in isolation.
+# `lint` and `test` build the extremes (--all-features and
+# --no-default-features); this builds each flag on its own, so an inter-feature
+# dependency (a feature that only compiles when another is also enabled) is
+# caught on every PR rather than only in the all-on or all-off build.
+check-features:
+	@for f in policy-engine config-reload admin-api otel basic-auth-filter \
+	          cloud-events-filter iterative-request-router router-json-aliases \
+	          chain-binding spiffe; do \
+		echo "== cargo check -p praxis-proxy --no-default-features --features $$f --all-targets =="; \
+		cargo check -p praxis-proxy --no-default-features --features "$$f" --all-targets || exit 1; \
+	done
 
 clean:
 	cargo clean
