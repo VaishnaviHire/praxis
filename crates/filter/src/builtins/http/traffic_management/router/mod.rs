@@ -160,6 +160,11 @@ impl RouterFilter {
     /// Returns [`FilterError`] if alias configuration is invalid.
     ///
     /// [`FilterError`]: crate::FilterError
+    #[expect(clippy::allow_attributes, reason = "feature-conditional lint")]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "returns Result when router-json-aliases feature is enabled"
+    )]
     pub fn new(routes: Vec<Route>) -> Result<Self, FilterError> {
         let routes: Vec<RouterRouteConfig> = routes.into_iter().map(RouterRouteConfig::from).collect();
         #[cfg(feature = "router-json-aliases")]

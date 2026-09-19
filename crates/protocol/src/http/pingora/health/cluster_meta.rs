@@ -134,7 +134,16 @@ pub fn new_cluster_meta_store(meta: HashMap<String, ClusterMeta>) -> ClusterMeta
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests")]
+#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::needless_raw_strings,
+    clippy::uninlined_format_args,
+    clippy::needless_raw_string_hashes,
+    clippy::too_many_lines,
+    reason = "tests"
+)]
 mod tests {
     use super::*;
 

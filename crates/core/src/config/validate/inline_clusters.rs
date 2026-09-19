@@ -236,7 +236,9 @@ fn validate_inline_names(chain_name: &str, filter_type: &str, clusters: &[Cluste
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,
-    reason = "tests use unwrap/expect for brevity"
+    clippy::str_to_string,
+    clippy::indexing_slicing,
+    reason = "tests use unwrap/expect/indexing for brevity"
 )]
 mod tests {
     use crate::config::{Config, FilterChainConfig, Listener};

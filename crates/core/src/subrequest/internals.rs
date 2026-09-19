@@ -216,19 +216,19 @@ impl std::fmt::Debug for SubRequestConnector {
 /// Returned by `open_exchange()` and consumed by either
 /// `execute()` (buffered collection) or `send_streaming()`
 /// (body ownership handoff).
-pub(super) struct RawExchange<'a> {
+pub(super) struct RawExchange<'conn, 'reg> {
     /// Live Pingora HTTP session.
     pub(super) session: HttpSession<()>,
     /// Peer address (timeout-bounded).
     pub(super) peer: HttpPeer,
     /// Connector ref for session release.
-    pub(super) connector: &'a SubRequestConnector,
+    pub(super) connector: &'conn SubRequestConnector,
     /// HTTP status code.
     pub(super) status: u16,
     /// Sanitized response headers.
     pub(super) headers: HeaderMap,
     /// Optional circuit breaker guard.
-    pub(super) circuit_guard: Option<CircuitGuard<'a>>,
+    pub(super) circuit_guard: Option<CircuitGuard<'reg>>,
     /// Admission permit.
     pub(super) permit: Option<OwnedSemaphorePermit>,
     /// Absolute deadline for the entire exchange.
@@ -244,18 +244,18 @@ pub(super) struct RawExchange<'a> {
 /// On drop without explicit [`finalize`](Self::finalize), records a
 /// failure — this covers deadline exits, panics, and any early-return
 /// path after token acquisition.
-pub(super) struct CircuitGuard<'a> {
+pub(super) struct CircuitGuard<'reg> {
     /// The registry that issued the token.
-    registry: &'a CircuitBreakerRegistry,
+    registry: &'reg CircuitBreakerRegistry,
     /// Logical peer identity the token was acquired for.
     peer: PeerKey,
     /// The generation token; `None` after finalization.
     token: Option<CircuitToken>,
 }
 
-impl<'a> CircuitGuard<'a> {
+impl<'reg> CircuitGuard<'reg> {
     /// Create a guard from an acquired token.
-    pub(super) fn new(registry: &'a CircuitBreakerRegistry, peer: PeerKey, token: CircuitToken) -> Self {
+    pub(super) fn new(registry: &'reg CircuitBreakerRegistry, peer: PeerKey, token: CircuitToken) -> Self {
         Self {
             registry,
             peer,
@@ -308,8 +308,8 @@ pub(super) fn check_clean_completion(session: &mut HttpSession<()>) -> Result<bo
         HttpSession::H1(h1) => Ok(h1.is_body_done()),
         HttpSession::H2(h2) => h2
             .check_response_end_or_error()
-            .map_err(|e| SubRequestError::Io(e.to_string())),
-        HttpSession::Custom(c) => Ok(c.response_finished()),
+            .map_err(|err| SubRequestError::Io(err.to_string())),
+        HttpSession::Custom(custom) => Ok(custom.response_finished()),
     }
 }
 
@@ -379,7 +379,7 @@ pub(super) fn is_request_stripped(name: &http::header::HeaderName, nominated: &[
 /// Whether a header is a transport-level header that must not be
 /// injected via framework metadata.
 pub(super) fn is_transport_header(name: &http::header::HeaderName) -> bool {
-    HOP_BY_HOP_HEADERS.iter().any(|h| *h == name.as_str()) || name == http::header::CONTENT_LENGTH
+    HOP_BY_HOP_HEADERS.iter().any(|header| *header == name.as_str()) || name == http::header::CONTENT_LENGTH
 }
 
 /// Methods whose empty payload is commonly rejected without explicit framing.
@@ -425,7 +425,7 @@ pub(super) fn classify_timeout(
     configured_timeout: Option<Duration>,
     phase: &str,
 ) -> SubRequestError {
-    if configured_timeout.is_none_or(|t| t >= remaining_budget) {
+    if configured_timeout.is_none_or(|timeout| timeout >= remaining_budget) {
         SubRequestError::DeadlineExceeded
     } else {
         SubRequestError::Io(format!("upstream {phase} timeout"))

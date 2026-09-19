@@ -135,7 +135,10 @@ impl RegisteredFilterFactory {
         config: &serde_yaml::Value,
         #[cfg_attr(
             not(any(feature = "iterative-request-router", feature = "chain-binding")),
-            expect(unused_variables, reason = "ctx is read only by the gated HttpWithRegistry and ChainBinding arms")
+            expect(
+                unused_variables,
+                reason = "ctx is read only by the gated HttpWithRegistry and ChainBinding arms"
+            )
         )]
         ctx: &ChainBindingContext<'_>,
     ) -> Result<AnyFilter, FilterError> {
@@ -478,9 +481,8 @@ fn register_http_builtins(filters: &mut HashMap<String, FilterRegistration>) {
     use crate::builtins::{
         AccessLogFilter, CircuitBreakerFilter, CompressionFilter, CorsFilter, CredentialInjectionFilter, CsrfFilter,
         ForwardedHeadersFilter, GrpcDetectionFilter, GrpcStatusFilter, GrpcTimeoutFilter, GrpcWebFilter, HeaderFilter,
-        IpAclFilter, JsonBodyFieldFilter, JsonBodyFilter, JsonRpcFilter, PathRewriteFilter,
-        RateLimitFilter, RedirectFilter, RequestIdFilter, StaticResponseFilter, TimeoutFilter, TraceContextFilter,
-        UrlRewriteFilter,
+        IpAclFilter, JsonBodyFieldFilter, JsonBodyFilter, JsonRpcFilter, PathRewriteFilter, RateLimitFilter,
+        RedirectFilter, RequestIdFilter, StaticResponseFilter, TimeoutFilter, TraceContextFilter, UrlRewriteFilter,
     };
 
     register_http(filters, "access_log", AccessLogFilter::from_config);
@@ -529,7 +531,11 @@ fn register_http_builtins(filters: &mut HashMap<String, FilterRegistration>) {
     register_http(filters, "json_body_field", JsonBodyFieldFilter::from_config);
     register_http(filters, "json_rpc", JsonRpcFilter::from_config);
     #[cfg(feature = "spiffe")]
-    register_http_security(filters, "peer_identity_trust", crate::builtins::PeerIdentityTrustFilter::from_config);
+    register_http_security(
+        filters,
+        "peer_identity_trust",
+        crate::builtins::PeerIdentityTrustFilter::from_config,
+    );
 }
 
 /// Registers a single HTTP filter factory with [`SecurityClass::Standard`].

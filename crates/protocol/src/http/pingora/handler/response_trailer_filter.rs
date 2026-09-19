@@ -53,24 +53,32 @@ pub(super) fn execute(
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::significant_drop_tightening,
+    reason = "tests"
+)]
 mod tests {
     use praxis_filter::{FilterRegistry, Request};
 
     use super::*;
 
-    /// Create a minimal PingoraRequestCtx for testing.
+    /// Create a minimal `PingoraRequestCtx` for testing.
     fn make_test_context() -> PingoraRequestCtx {
         PingoraRequestCtx::default()
     }
 
-    /// Create a minimal FilterPipeline for testing.
+    /// Create a minimal `FilterPipeline` for testing.
     fn make_test_pipeline() -> FilterPipeline {
         let registry = FilterRegistry::with_builtins();
         FilterPipeline::build(&mut [], &registry).expect("should build empty pipeline")
     }
 
-    /// Create a request snapshot required for filter_context_for to succeed.
+    /// Create a request snapshot required for `filter_context_for` to succeed.
     fn make_request_snapshot() -> Request {
         Request {
             method: http::Method::GET,

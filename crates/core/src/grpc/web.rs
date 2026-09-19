@@ -193,7 +193,7 @@ impl GrpcWebKind {
 // -----------------------------------------------------------------------------
 
 /// Strip an ASCII-case-insensitive prefix.
-fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+fn strip_prefix_ignore_ascii_case<'input>(value: &'input str, prefix: &str) -> Option<&'input str> {
     let head = value.get(..prefix.len())?;
     head.eq_ignore_ascii_case(prefix)
         .then(|| value.get(prefix.len()..))

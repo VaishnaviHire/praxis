@@ -128,7 +128,9 @@ impl LoggingConfig {
     /// Effective non-blocking queue capacity in lines.
     #[must_use]
     pub fn effective_buffer_size_lines(&self) -> usize {
-        self.buffer_size.map_or(DEFAULT_BUFFER_SIZE_LINES, |n| n as usize)
+        self.buffer_size.map_or(DEFAULT_BUFFER_SIZE_LINES, |lines| {
+            usize::try_from(lines).unwrap_or(DEFAULT_BUFFER_SIZE_LINES)
+        })
     }
 }
 

@@ -138,7 +138,7 @@ impl SubRequestClient {
         request: &SubRequest,
         timeout: Duration,
         framework_headers: Option<&FrameworkHeaders>,
-    ) -> Result<RawExchange<'a>, SubRequestError> {
+    ) -> Result<RawExchange<'a, 'a>, SubRequestError> {
         let exchange_started = tokio::time::Instant::now();
         let deadline = exchange_started
             .checked_add(timeout)
@@ -613,7 +613,7 @@ impl SubRequestClient {
 /// guard (recording a failure via its `Drop` impl), discard the session,
 /// record the termination metric, and hand back the error to return.
 async fn fail_header_exchange(
-    exchange: RawExchange<'_>,
+    exchange: RawExchange<'_, '_>,
     circuit_guard: Option<CircuitGuard<'_>>,
     termination: &'static str,
     error: SubRequestError,
@@ -630,6 +630,16 @@ async fn fail_header_exchange(
 }
 
 #[cfg(test)]
+#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+#[allow(
+    clippy::test_attr_in_doctest,
+    clippy::redundant_test_prefix,
+    clippy::uninlined_format_args,
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::bool_assert_comparison,
+    reason = "tests"
+)]
 mod tests {
     use super::*;
 

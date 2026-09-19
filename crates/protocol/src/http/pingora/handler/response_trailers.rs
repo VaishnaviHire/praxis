@@ -34,6 +34,16 @@ pub(super) fn capture(headers: &http::HeaderMap, ctx: &mut PingoraRequestCtx) {
 }
 
 #[cfg(test)]
+#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::assertions_on_result_states,
+    clippy::too_many_lines,
+    clippy::missing_panics_doc,
+    clippy::significant_drop_tightening,
+    reason = "tests"
+)]
 mod tests {
     use super::*;
 

@@ -24,25 +24,25 @@
 //!
 //! [`ChainRef`]: praxis_core::config::ChainRef
 
+#[cfg(feature = "chain-binding")]
+use std::sync::Arc;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
 };
-#[cfg(feature = "chain-binding")]
-use std::sync::Arc;
 
-use praxis_core::config::{FilterEntry, InsecureOptions};
 #[cfg(feature = "chain-binding")]
 use praxis_core::config::{
     ChainRef, validate_chain_entries_branch_chains, validate_chain_entries_cardinality,
     validate_chain_entries_conditions, validate_chain_entries_inline_clusters,
 };
+use praxis_core::config::{FilterEntry, InsecureOptions};
 
-use crate::{FilterError, registry::FilterRegistry};
-#[cfg(any(feature = "iterative-request-router", feature = "chain-binding"))]
-use crate::pipeline::FilterPipeline;
 #[cfg(feature = "chain-binding")]
 use crate::filter::HttpFilter;
+#[cfg(any(feature = "iterative-request-router", feature = "chain-binding"))]
+use crate::pipeline::FilterPipeline;
+use crate::{FilterError, registry::FilterRegistry};
 
 /// Maximum nesting depth permitted when resolving outbound chain references.
 ///
@@ -140,14 +140,20 @@ pub struct ChainBindingContext<'a> {
     /// Top-level named-chain lookup table.
     #[cfg_attr(
         not(any(feature = "iterative-request-router", feature = "chain-binding")),
-        expect(dead_code, reason = "read only by the gated bind_chain / build_nested_step_pipeline paths")
+        expect(
+            dead_code,
+            reason = "read only by the gated bind_chain / build_nested_step_pipeline paths"
+        )
     )]
     chains: &'a HashMap<&'a str, &'a [FilterEntry]>,
 
     /// Shared cycle-detection stack.
     #[cfg_attr(
         not(any(feature = "iterative-request-router", feature = "chain-binding")),
-        expect(dead_code, reason = "read only by the gated bind_chain / build_nested_step_pipeline paths")
+        expect(
+            dead_code,
+            reason = "read only by the gated bind_chain / build_nested_step_pipeline paths"
+        )
     )]
     stack: &'a ResolutionStack,
 
@@ -157,7 +163,10 @@ pub struct ChainBindingContext<'a> {
     /// branch depth still binds at outbound depth zero.
     #[cfg_attr(
         not(any(feature = "iterative-request-router", feature = "chain-binding")),
-        expect(dead_code, reason = "read only by the gated bind_chain / build_nested_step_pipeline paths")
+        expect(
+            dead_code,
+            reason = "read only by the gated bind_chain / build_nested_step_pipeline paths"
+        )
     )]
     outbound_depth: usize,
 
@@ -165,7 +174,10 @@ pub struct ChainBindingContext<'a> {
     /// chains are gated by the same SSRF/TLS-verify rules as top-level chains.
     #[cfg_attr(
         not(any(feature = "iterative-request-router", feature = "chain-binding")),
-        expect(dead_code, reason = "read only by the gated bind_chain / build_nested_step_pipeline paths")
+        expect(
+            dead_code,
+            reason = "read only by the gated bind_chain / build_nested_step_pipeline paths"
+        )
     )]
     insecure: &'a InsecureOptions,
 
@@ -175,7 +187,10 @@ pub struct ChainBindingContext<'a> {
     /// binding boundaries is still bounded by one ceiling.
     #[cfg_attr(
         not(any(feature = "iterative-request-router", feature = "chain-binding")),
-        expect(dead_code, reason = "read only by the gated bind_chain / build_nested_step_pipeline paths")
+        expect(
+            dead_code,
+            reason = "read only by the gated bind_chain / build_nested_step_pipeline paths"
+        )
     )]
     budget: &'a Cell<usize>,
 
@@ -192,7 +207,10 @@ pub struct ChainBindingContext<'a> {
     /// are validated but not re-accumulated here.
     #[cfg_attr(
         not(any(feature = "iterative-request-router", feature = "chain-binding")),
-        expect(dead_code, reason = "read only by the gated bind_chain / build_nested_step_pipeline paths")
+        expect(
+            dead_code,
+            reason = "read only by the gated bind_chain / build_nested_step_pipeline paths"
+        )
     )]
     branch_budget: &'a Cell<usize>,
 }

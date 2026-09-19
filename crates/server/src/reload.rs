@@ -352,6 +352,7 @@ fn spawn_health_check_thread(
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::too_many_lines,
+    clippy::significant_drop_tightening,
     reason = "tests"
 )]
 mod tests {
@@ -443,6 +444,7 @@ filter_chains:
     }
 
     #[test]
+    #[cfg(feature = "chain-binding")]
     fn reload_rebinds_outbound_chain_and_reinjects_runtime_resources() {
         use async_trait::async_trait;
         use praxis_core::config::ChainRef;

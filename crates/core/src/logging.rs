@@ -800,6 +800,9 @@ pub(super) fn is_valid_admin_log_level(s: &str) -> bool {
     clippy::indexing_slicing,
     clippy::needless_raw_strings,
     clippy::needless_raw_string_hashes,
+    clippy::assertions_on_result_states,
+    clippy::panic_in_result_fn,
+    clippy::panic,
     reason = "tests use unwrap/expect/indexing/raw strings for brevity"
 )]
 mod tests {

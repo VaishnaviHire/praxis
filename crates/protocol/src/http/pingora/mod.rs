@@ -95,12 +95,16 @@ impl Protocol for PingoraHttp {
     clippy::indexing_slicing,
     clippy::panic,
     clippy::too_many_lines,
+    clippy::use_self,
+    clippy::missing_panics_doc,
     reason = "tests"
 )]
 mod tests {
     use std::collections::HashMap;
 
-    use praxis_core::config::{AdminConfig, BodyLimitsConfig, Listener};
+    use praxis_core::config::{
+        AdminConfig, BodyLimitsConfig, InsecureOptions, Listener, MetricsConfig, RuntimeConfig, TelemetryConfig,
+    };
     use praxis_filter::{FilterPipeline, FilterRegistry};
 
     use super::*;
@@ -112,12 +116,12 @@ mod tests {
             body_limits: BodyLimitsConfig::default(),
             clusters: vec![],
             filter_chains: vec![],
-            insecure_options: Default::default(),
+            insecure_options: InsecureOptions::default(),
             listeners,
-            metrics: Default::default(),
-            runtime: Default::default(),
+            metrics: MetricsConfig::default(),
+            runtime: RuntimeConfig::default(),
             shutdown_timeout_secs: 30,
-            telemetry: Default::default(),
+            telemetry: TelemetryConfig::default(),
         }
     }
 
@@ -138,7 +142,7 @@ mod tests {
         }
     }
 
-    /// Build ListenerPipelines with empty pipelines for the given listener names.
+    /// Build `ListenerPipelines` with empty pipelines for the given listener names.
     fn make_pipelines(names: &[&str]) -> ListenerPipelines {
         let registry = FilterRegistry::with_builtins();
         let mut map = HashMap::new();

@@ -129,6 +129,19 @@ pub(crate) fn build_tls_settings(
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
+#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::assertions_on_result_states,
+    clippy::significant_drop_tightening,
+    clippy::must_use_candidate,
+    clippy::semicolon_if_nothing_returned,
+    clippy::must_use_unit,
+    clippy::let_underscore_must_use,
+    clippy::too_many_lines,
+    reason = "tests"
+)]
 mod tests {
     use praxis_tls::{CaConfig, CertKeyPair, ClientCertMode};
 

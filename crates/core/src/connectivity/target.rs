@@ -558,7 +558,13 @@ pub(crate) async fn prepare_url_target_with_resolver<R: HostResolver + Sync>(
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::assertions_on_result_states,
+    reason = "tests"
+)]
 mod tests {
     use std::time::{Duration, Instant};
 

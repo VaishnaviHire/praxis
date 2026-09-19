@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Praxis Contributors
 
+#![allow(
+    clippy::too_many_lines,
+    clippy::bool_assert_comparison,
+    clippy::significant_drop_tightening,
+    reason = "test file with many test functions"
+)]
+
 use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;

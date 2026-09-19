@@ -144,7 +144,7 @@ fn epoch_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
-        .and_then(|d| u64::try_from(d.as_millis()).ok())
+        .and_then(|dur| u64::try_from(dur.as_millis()).ok())
         .unwrap_or(0)
 }
 

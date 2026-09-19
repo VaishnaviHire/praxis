@@ -453,7 +453,13 @@ fn spawn_revert_task(state: Arc<LogLevelState>, target: String, duration_secs: u
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::too_many_lines,
+    clippy::indexing_slicing,
+    reason = "tests"
+)]
 mod tests {
     use std::sync::OnceLock;
 

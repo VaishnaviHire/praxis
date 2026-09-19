@@ -346,7 +346,12 @@ impl GrpcDeadline {
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, reason = "tests use unwrap for brevity")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::assertions_on_result_states,
+    clippy::uninlined_format_args,
+    reason = "tests use unwrap for brevity"
+)]
 mod tests {
     use super::*;
 

@@ -50,9 +50,9 @@ const MAX_YAML_READ_BYTES: u64 = 4_194_305; // MAX_YAML_BYTES + 1
 ///
 /// [`ProxyError::Config`]: crate::errors::ProxyError::Config
 pub(crate) fn check_file_size(path: &Path) -> Result<(), ProxyError> {
-    let meta = std::fs::metadata(path).map_err(|e| {
+    let meta = std::fs::metadata(path).map_err(|err| {
         let display = path.display();
-        ProxyError::Config(format!("failed to read metadata for {display}: {e}"))
+        ProxyError::Config(format!("failed to read metadata for {display}: {err}"))
     })?;
 
     // Reject non-regular files (character devices, FIFOs, sockets,
@@ -90,16 +90,16 @@ pub(crate) fn check_file_size(path: &Path) -> Result<(), ProxyError> {
 /// [`ProxyError::Config`]: crate::errors::ProxyError::Config
 pub fn read_config_file(path: &Path) -> Result<String, ProxyError> {
     check_file_size(path)?;
-    let file = std::fs::File::open(path).map_err(|e| {
+    let file = std::fs::File::open(path).map_err(|err| {
         let display = path.display();
-        ProxyError::Config(format!("failed to read {display}: {e}"))
+        ProxyError::Config(format!("failed to read {display}: {err}"))
     })?;
     let mut content = String::new();
     file.take(MAX_YAML_READ_BYTES)
         .read_to_string(&mut content)
-        .map_err(|e| {
+        .map_err(|err| {
             let display = path.display();
-            ProxyError::Config(format!("failed to read {display}: {e}"))
+            ProxyError::Config(format!("failed to read {display}: {err}"))
         })?;
     Ok(content)
 }
@@ -165,7 +165,7 @@ fn reject_yaml_aliases(raw: &str) -> Result<(), ProxyError> {
         Some(idx) => Err(ProxyError::Config(format!(
             "YAML alias nodes (`*anchor`) are not supported (line {}); \
              they enable alias-expansion denial-of-service and are not used by any Praxis config",
-            idx + 1
+            idx.saturating_add(1)
         ))),
         None => Ok(()),
     }
@@ -180,31 +180,31 @@ fn line_contains_alias(line: &str) -> bool {
     let (mut at_boundary, mut prev_ws) = (true, true);
     let mut quote: Option<u8> = None;
     let (mut prev_star, mut escaped) = (false, false);
-    for &c in line.as_bytes() {
+    for &byte in line.as_bytes() {
         // An alias node is `*` at a node boundary followed by an
         // anchor-name character; check the char after a boundary `*`.
-        if prev_star && (c.is_ascii_alphanumeric() || c == b'_') {
+        if prev_star && (byte.is_ascii_alphanumeric() || byte == b'_') {
             return true;
         }
         prev_star = false;
-        if let Some(q) = quote {
-            let close = c == q && !escaped;
-            escaped = q == b'"' && c == b'\\' && !escaped;
-            quote = (!close).then_some(q);
+        if let Some(quote_char) = quote {
+            let close = byte == quote_char && !escaped;
+            escaped = quote_char == b'"' && byte == b'\\' && !escaped;
+            quote = (!close).then_some(quote_char);
             at_boundary = false;
         } else {
-            match c {
+            match byte {
                 // A comment only starts after whitespace (or line start);
                 // a mid-scalar `#` (e.g. `a#b`) is scalar content.
                 b'#' if prev_ws => return false,
                 // A quoted scalar only starts at a node boundary; a
                 // mid-scalar quote (e.g. `don't`) is scalar content.
-                b'\'' | b'"' if at_boundary => (quote, at_boundary) = (Some(c), false),
+                b'\'' | b'"' if at_boundary => (quote, at_boundary) = (Some(byte), false),
                 b'*' if at_boundary => prev_star = true,
-                _ => at_boundary = matches!(c, b' ' | b'\t' | b'[' | b'{' | b',' | b':' | b'-'),
+                _ => at_boundary = matches!(byte, b' ' | b'\t' | b'[' | b'{' | b',' | b':' | b'-'),
             }
         }
-        prev_ws = matches!(c, b' ' | b'\t');
+        prev_ws = matches!(byte, b' ' | b'\t');
     }
     false
 }

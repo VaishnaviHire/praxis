@@ -122,6 +122,17 @@ fn build_header(
 // that require a full Session context.
 
 #[cfg(test)]
+#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::assertions_on_result_states,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::redundant_test_prefix,
+    clippy::string_add,
+    reason = "tests"
+)]
 mod tests {
     use praxis_core::grpc::GrpcKind;
 

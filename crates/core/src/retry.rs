@@ -90,10 +90,11 @@ impl RetryBudget {
     #[must_use]
     pub fn max_tokens(&self, active_requests: u64) -> u64 {
         #[expect(
+            clippy::as_conversions,
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
             clippy::cast_precision_loss,
-            reason = "bounded percent; precision loss acceptable for budget math"
+            reason = "u64<->f64 has no lossless From/TryFrom; bounded percent budget math"
         )]
         let computed = (active_requests as f64 * self.percent / 100.0) as u64;
         computed.max(u64::from(self.min_retries_per_second))
@@ -110,7 +111,7 @@ impl RetryBudget {
         if now <= last {
             return;
         }
-        let elapsed_ms = now - last;
+        let elapsed_ms = now.saturating_sub(last);
         if elapsed_ms == 0 {
             return;
         }
@@ -157,10 +158,12 @@ impl RetryBudget {
             if current == 0 {
                 return false;
             }
-            match self
-                .tokens
-                .compare_exchange_weak(current, current - 1, Ordering::Relaxed, Ordering::Relaxed)
-            {
+            match self.tokens.compare_exchange_weak(
+                current,
+                current.saturating_sub(1),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => return true,
                 Err(observed) => current = observed,
             }
@@ -207,7 +210,7 @@ impl ClusterRetryState {
 
     /// Increment the active-request counter. Returns the new count.
     pub fn enter(&self) -> u64 {
-        self.active_requests.fetch_add(1, Ordering::Relaxed) + 1
+        self.active_requests.fetch_add(1, Ordering::Relaxed).saturating_add(1)
     }
 
     /// Decrement the active-request counter (saturating at zero).
@@ -217,10 +220,12 @@ impl ClusterRetryState {
             if current == 0 {
                 return;
             }
-            match self
-                .active_requests
-                .compare_exchange_weak(current, current - 1, Ordering::Relaxed, Ordering::Relaxed)
-            {
+            match self.active_requests.compare_exchange_weak(
+                current,
+                current.saturating_sub(1),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => return,
                 Err(observed) => current = observed,
             }

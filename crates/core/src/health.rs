@@ -320,7 +320,11 @@ impl ClusterHealthEntry {
             addresses.len(),
             "endpoints and addresses must have the same length"
         );
-        let index = addresses.into_iter().enumerate().map(|(i, addr)| (addr, i)).collect();
+        let index = addresses
+            .into_iter()
+            .enumerate()
+            .map(|(idx, addr)| (addr, idx))
+            .collect();
         Self {
             endpoints,
             index,
@@ -348,7 +352,7 @@ impl ClusterHealthEntry {
     /// treated as healthy (untracked endpoints are not health-gated).
     pub fn is_address_healthy(&self, addr: &str) -> bool {
         self.endpoint_index(addr)
-            .and_then(|i| self.endpoints.get(i))
+            .and_then(|idx| self.endpoints.get(idx))
             .is_none_or(EndpointHealth::is_healthy)
     }
 
@@ -368,7 +372,7 @@ impl ClusterHealthEntry {
             .iter()
             .filter_map(|(addr, &idx)| self.endpoints.get(idx).map(|ep| (Arc::clone(addr), ep.is_healthy())))
             .collect();
-        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows.sort_by(|left, right| left.0.cmp(&right.0));
         rows
     }
 

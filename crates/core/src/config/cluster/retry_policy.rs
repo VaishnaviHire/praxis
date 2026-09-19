@@ -447,11 +447,11 @@ impl RetryPolicy {
             if let Some(0) = value {
                 return Err(format!("{context}: {field} is 0 (must be > 0)"));
             }
-            if let Some(v) = value
-                && v > super::super::validate::cluster::MAX_TIMEOUT_MS
+            if let Some(timeout_ms) = value
+                && timeout_ms > super::super::validate::cluster::MAX_TIMEOUT_MS
             {
                 return Err(format!(
-                    "{context}: {field} ({v} ms) exceeds maximum ({} ms / 1 hour)",
+                    "{context}: {field} ({timeout_ms} ms) exceeds maximum ({} ms / 1 hour)",
                     super::super::validate::cluster::MAX_TIMEOUT_MS
                 ));
             }

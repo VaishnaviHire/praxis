@@ -380,6 +380,7 @@ pub(crate) fn warn_policy_filter_without_feature(registry: &praxis_filter::Filte
     clippy::needless_raw_strings,
     clippy::needless_raw_string_hashes,
     clippy::too_many_lines,
+    clippy::semicolon_if_nothing_returned,
     reason = "tests use unwrap/expect/indexing/raw strings for brevity"
 )]
 mod tests {
