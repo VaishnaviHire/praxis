@@ -85,7 +85,7 @@ pub(crate) fn build_dump(
     let chains: HashMap<&str, &[_]> = config
         .filter_chains
         .iter()
-        .map(|c| (c.name.as_str(), c.filters.as_slice()))
+        .map(|chain| (chain.name.as_str(), chain.filters.as_slice()))
         .collect();
 
     Ok(EffectiveConfigDump {
@@ -773,7 +773,7 @@ filter_chains:
             assert_eq!(
                 mapping
                     .get(serde_yaml::Value::String(field.to_owned()))
-                    .and_then(|v| v.as_str()),
+                    .and_then(|val| val.as_str()),
                 Some("[REDACTED]"),
                 "{field} must be redacted"
             );
@@ -781,7 +781,7 @@ filter_chains:
         assert_eq!(
             mapping
                 .get(serde_yaml::Value::String("keep".to_owned()))
-                .and_then(|v| v.as_str()),
+                .and_then(|val| val.as_str()),
             Some("visible"),
             "non-sensitive field must not be redacted"
         );
@@ -806,7 +806,7 @@ filter_chains:
                 .as_mapping()
                 .unwrap()
                 .get(serde_yaml::Value::String("value".to_owned()))
-                .and_then(|v| v.as_str()),
+                .and_then(|val| val.as_str()),
             Some("[REDACTED]"),
             "Authorization header value must be redacted (case-insensitive match)"
         );
@@ -815,7 +815,7 @@ filter_chains:
                 .as_mapping()
                 .unwrap()
                 .get(serde_yaml::Value::String("value".to_owned()))
-                .and_then(|v| v.as_str()),
+                .and_then(|val| val.as_str()),
             Some("keep-me"),
             "non-credential header value must not be redacted"
         );
@@ -867,13 +867,16 @@ filter_chains:
     // -------------------------------------------------------------------------
 
     /// Assert a resolved filter's chain, indices, and type name.
-    fn assert_filter(f: &ResolvedFilterDump, chain: &str, chain_idx: usize, pipeline_idx: usize, filter: &str) {
-        assert_eq!(f.chain, chain, "chain mismatch for filter {filter}");
-        assert_eq!(f.chain_index, chain_idx, "chain_index mismatch for filter {filter}");
+    fn assert_filter(resolved: &ResolvedFilterDump, chain: &str, chain_idx: usize, pipeline_idx: usize, filter: &str) {
+        assert_eq!(resolved.chain, chain, "chain mismatch for filter {filter}");
         assert_eq!(
-            f.pipeline_index, pipeline_idx,
+            resolved.chain_index, chain_idx,
+            "chain_index mismatch for filter {filter}"
+        );
+        assert_eq!(
+            resolved.pipeline_index, pipeline_idx,
             "pipeline_index mismatch for filter {filter}"
         );
-        assert_eq!(f.filter, filter, "filter type mismatch");
+        assert_eq!(resolved.filter, filter, "filter type mismatch");
     }
 }
