@@ -182,7 +182,7 @@ fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .map_or(0, |dur| u64::try_from(dur.as_millis()).unwrap_or(u64::MAX))
 }
 
 // -----------------------------------------------------------------------------
@@ -253,7 +253,7 @@ impl ClusterRetryState {
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::min_ident_chars, reason = "tests")]
 mod tests {
     use super::*;
     use crate::config::BudgetPercent;

@@ -132,13 +132,13 @@ impl SubRequestClient {
     /// and `send_streaming()` call this, then diverge.
     #[expect(clippy::large_stack_frames, reason = "Pingora session types are large")]
     #[expect(clippy::too_many_lines, reason = "sequential HTTP exchange steps")]
-    async fn open_exchange<'a>(
-        &'a self,
+    async fn open_exchange<'conn>(
+        &'conn self,
         peer: &HttpPeer,
         request: &SubRequest,
         timeout: Duration,
         framework_headers: Option<&FrameworkHeaders>,
-    ) -> Result<RawExchange<'a, 'a>, SubRequestError> {
+    ) -> Result<RawExchange<'conn, 'conn>, SubRequestError> {
         let exchange_started = tokio::time::Instant::now();
         let deadline = exchange_started
             .checked_add(timeout)
@@ -154,7 +154,7 @@ impl SubRequestClient {
             .path_and_query()
             .map_or(b"/".as_slice(), |pq| pq.as_str().as_bytes());
         let mut req_header = pingora_http::RequestHeader::build(request.method.clone(), path, None)
-            .map_err(|e| SubRequestError::InvalidRequest(e.to_string()))?;
+            .map_err(|err| SubRequestError::InvalidRequest(err.to_string()))?;
 
         // Forward the request headers in one pass — no intermediate map
         // clone, no repeated removal passes: skip hop-by-hop (fixed and
@@ -220,18 +220,18 @@ impl SubRequestClient {
         // ---------------------------------------------------------------------
         // 5. Connect + I/O
         // ---------------------------------------------------------------------
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
+        let connect_budget = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if connect_budget.is_zero() {
             return Err(SubRequestError::DeadlineExceeded);
         }
 
         let (mut session, reused) = tokio::time::timeout(
-            remaining,
+            connect_budget,
             Box::pin(self.connector.connector().get_http_session(&bounded_peer)),
         )
         .await
         .map_err(|_elapsed| SubRequestError::DeadlineExceeded)?
-        .map_err(|e| SubRequestError::Connect(e.to_string()))?;
+        .map_err(|err| SubRequestError::Connect(err.to_string()))?;
 
         debug!(
             peer = %bounded_peer.address(),
@@ -241,40 +241,43 @@ impl SubRequestClient {
             "sub-request: connected"
         );
 
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
+        let header_budget = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if header_budget.is_zero() {
             return Err(SubRequestError::DeadlineExceeded);
         }
 
-        let write_timeout = min_timeout(bounded_peer.options.write_timeout, remaining);
-        tokio::time::timeout(write_timeout, session.write_request_header(Box::new(req_header)))
+        let header_write_timeout = min_timeout(bounded_peer.options.write_timeout, header_budget);
+        tokio::time::timeout(header_write_timeout, session.write_request_header(Box::new(req_header)))
             .await
-            .map_err(|_elapsed| classify_timeout(remaining, bounded_peer.options.write_timeout, "write"))?
-            .map_err(|e| SubRequestError::Io(e.to_string()))?;
+            .map_err(|_elapsed| classify_timeout(header_budget, bounded_peer.options.write_timeout, "write"))?
+            .map_err(|err| SubRequestError::Io(err.to_string()))?;
 
         if !request.body.is_empty() {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
+            let body_budget = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if body_budget.is_zero() {
                 session.shutdown().await;
                 return Err(SubRequestError::DeadlineExceeded);
             }
-            let write_timeout = min_timeout(bounded_peer.options.write_timeout, remaining);
-            tokio::time::timeout(write_timeout, session.write_request_body(request.body.clone(), true))
-                .await
-                .map_err(|_elapsed| classify_timeout(remaining, bounded_peer.options.write_timeout, "write"))?
-                .map_err(|e| SubRequestError::Io(e.to_string()))?;
+            let body_write_timeout = min_timeout(bounded_peer.options.write_timeout, body_budget);
+            tokio::time::timeout(
+                body_write_timeout,
+                session.write_request_body(request.body.clone(), true),
+            )
+            .await
+            .map_err(|_elapsed| classify_timeout(body_budget, bounded_peer.options.write_timeout, "write"))?
+            .map_err(|err| SubRequestError::Io(err.to_string()))?;
         }
 
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
+        let finish_budget = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if finish_budget.is_zero() {
             session.shutdown().await;
             return Err(SubRequestError::DeadlineExceeded);
         }
-        let write_timeout = min_timeout(bounded_peer.options.write_timeout, remaining);
-        tokio::time::timeout(write_timeout, session.finish_request_body())
+        let finish_write_timeout = min_timeout(bounded_peer.options.write_timeout, finish_budget);
+        tokio::time::timeout(finish_write_timeout, session.finish_request_body())
             .await
-            .map_err(|_elapsed| classify_timeout(remaining, bounded_peer.options.write_timeout, "write"))?
-            .map_err(|e| SubRequestError::Io(e.to_string()))?;
+            .map_err(|_elapsed| classify_timeout(finish_budget, bounded_peer.options.write_timeout, "write"))?
+            .map_err(|err| SubRequestError::Io(err.to_string()))?;
 
         // ---------------------------------------------------------------------
         // 6. Read the response header, skipping 1xx interim responses
@@ -289,17 +292,17 @@ impl SubRequestClient {
         // `101 Switching Protocols` is a final response, not interim.
         let mut interim_count = 0_u32;
         let status = loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
+            let read_budget = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if read_budget.is_zero() {
                 session.shutdown().await;
                 return Err(SubRequestError::DeadlineExceeded);
             }
-            let read_timeout = min_timeout(bounded_peer.options.read_timeout, remaining);
+            let read_timeout = min_timeout(bounded_peer.options.read_timeout, read_budget);
 
             tokio::time::timeout(read_timeout, session.read_response_header())
                 .await
-                .map_err(|_elapsed| classify_timeout(remaining, bounded_peer.options.read_timeout, "read"))?
-                .map_err(|e| SubRequestError::Io(e.to_string()))?;
+                .map_err(|_elapsed| classify_timeout(read_budget, bounded_peer.options.read_timeout, "read"))?
+                .map_err(|err| SubRequestError::Io(err.to_string()))?;
 
             let resp_header = session
                 .response_header()
@@ -307,7 +310,7 @@ impl SubRequestClient {
             let status = resp_header.status.as_u16();
 
             if (100..=199).contains(&status) && status != 101 {
-                interim_count += 1;
+                interim_count = interim_count.saturating_add(1);
                 if interim_count > MAX_INTERIM_RESPONSES {
                     session.shutdown().await;
                     return Err(SubRequestError::Io(
@@ -333,10 +336,10 @@ impl SubRequestClient {
         // map stores the http crate's type), so cloning is a refcount
         // bump — re-validating every byte through `from_bytes` was pure
         // waste and its error arm was unreachable.
-        let nominated = connection_nominated_tokens(&resp_header.headers);
+        let resp_nominated = connection_nominated_tokens(&resp_header.headers);
         let mut resp_headers = HeaderMap::with_capacity(resp_header.headers.len());
         for (name, value) in &resp_header.headers {
-            if is_boundary_stripped(name, &nominated) {
+            if is_boundary_stripped(name, &resp_nominated) {
                 continue;
             }
             resp_headers.append(name.clone(), value.clone());
@@ -409,12 +412,14 @@ impl SubRequestClient {
             match check_clean_completion(&mut exchange.session) {
                 Ok(true) => {},
                 Ok(false) => {
-                    let e = SubRequestError::Io(
+                    let err = SubRequestError::Io(
                         "upstream indicated response done but stream is not cleanly terminated".to_owned(),
                     );
-                    return Err(Box::pin(fail_header_exchange(exchange, circuit_guard, "header_incomplete", e)).await);
+                    return Err(
+                        Box::pin(fail_header_exchange(exchange, circuit_guard, "header_incomplete", err)).await,
+                    );
                 },
-                Err(e) => return Err(Box::pin(fail_header_exchange(exchange, circuit_guard, "h2_error", e)).await),
+                Err(err) => return Err(Box::pin(fail_header_exchange(exchange, circuit_guard, "h2_error", err)).await),
             }
             if let Some(guard) = circuit_guard {
                 guard.finalize_success();
@@ -451,7 +456,7 @@ impl SubRequestClient {
         let handoff_now = tokio::time::Instant::now();
         let stream_deadline = limits
             .max_stream_duration
-            .map(|d| handoff_now.checked_add(d).ok_or(SubRequestError::DeadlineExceeded))
+            .map(|dur| handoff_now.checked_add(dur).ok_or(SubRequestError::DeadlineExceeded))
             .transpose()?;
 
         let body = SubResponseBody {
@@ -530,7 +535,7 @@ impl SubRequestClient {
             deadline,
         } = match exchange {
             Ok(ex) => ex,
-            Err(e) => return Err(e),
+            Err(err) => return Err(err),
         };
 
         let effective_limit = max_response_bytes.min(self.max_response_bytes);
@@ -549,15 +554,15 @@ impl SubRequestClient {
         // bodies; the ResponseTooLarge check below stays authoritative.
         let advertised = resp_headers
             .get(http::header::CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<usize>().ok())
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<usize>().ok())
             .map_or(0, |len| len.min(effective_limit).min(EAGER_BODY_CAPACITY));
         let body_result: Result<Bytes, SubRequestError> = tokio::time::timeout(remaining, async {
             let mut body_buf = Vec::with_capacity(advertised);
             while !session.response_done() {
                 match session.read_response_body().await {
                     Ok(Some(chunk)) => {
-                        if body_buf.len() + chunk.len() > effective_limit {
+                        if body_buf.len().saturating_add(chunk.len()) > effective_limit {
                             warn!(
                                 current = body_buf.len(),
                                 chunk = chunk.len(),
@@ -566,16 +571,16 @@ impl SubRequestClient {
                             );
                             session.shutdown().await;
                             return Err(SubRequestError::ResponseTooLarge {
-                                actual: body_buf.len() + chunk.len(),
+                                actual: body_buf.len().saturating_add(chunk.len()),
                                 limit: effective_limit,
                             });
                         }
                         body_buf.extend_from_slice(&chunk);
                     },
                     Ok(None) => break,
-                    Err(e) => {
+                    Err(err) => {
                         session.shutdown().await;
-                        return Err(SubRequestError::Io(e.to_string()));
+                        return Err(SubRequestError::Io(err.to_string()));
                     },
                 }
             }

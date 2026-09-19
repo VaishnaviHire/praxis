@@ -665,7 +665,13 @@ pub fn derive_sni(address: &str) -> String {
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::min_ident_chars,
+    reason = "tests"
+)]
 mod tests {
     use super::*;
 

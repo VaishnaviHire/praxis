@@ -157,8 +157,8 @@ impl GrpcTimeout {
     ///
     /// Returns a [`GrpcTimeoutParseError`] describing which rule the
     /// value broke.
-    pub fn parse(value: &str) -> Result<Self, GrpcTimeoutParseError> {
-        let (unit_byte, digits) = value.as_bytes().split_last().ok_or(GrpcTimeoutParseError::Empty)?;
+    pub fn parse(input: &str) -> Result<Self, GrpcTimeoutParseError> {
+        let (unit_byte, digits) = input.as_bytes().split_last().ok_or(GrpcTimeoutParseError::Empty)?;
         let unit = match *unit_byte {
             b'H' => GrpcTimeoutUnit::Hour,
             b'M' => GrpcTimeoutUnit::Minute,
@@ -350,6 +350,7 @@ impl GrpcDeadline {
     clippy::unwrap_used,
     clippy::assertions_on_result_states,
     clippy::uninlined_format_args,
+    clippy::shadow_unrelated,
     reason = "tests use unwrap for brevity"
 )]
 mod tests {

@@ -125,9 +125,9 @@ mod tests {
 
     #[test]
     fn fixed_time_source_returns_exact_value() {
-        let d = Duration::from_secs(1_700_000_000);
-        let ts = FixedTimeSource::new(d);
-        assert_eq!(ts.now(), d, "should return the fixed duration");
+        let duration = Duration::from_secs(1_700_000_000);
+        let ts = FixedTimeSource::new(duration);
+        assert_eq!(ts.now(), duration, "should return the fixed duration");
     }
 
     #[test]

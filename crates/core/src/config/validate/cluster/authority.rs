@@ -77,7 +77,8 @@ mod tests {
     use super::*;
 
     fn ok(authority: &str) {
-        validate_authority(authority, "test").unwrap_or_else(|e| panic!("expected Ok for {authority:?}, got: {e}"));
+        validate_authority(authority, "test")
+            .unwrap_or_else(|error| panic!("expected Ok for {authority:?}, got: {error}"));
     }
 
     fn err(authority: &str) -> String {

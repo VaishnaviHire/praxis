@@ -518,8 +518,11 @@ mod tests {
             "oversized should fail safety check"
         );
 
-        let err = check_yaml_safety("a: &a x\nb: *a\n").unwrap_err();
-        assert!(err.to_string().contains("alias"), "alias should fail safety check");
+        let alias_err = check_yaml_safety("a: &a x\nb: *a\n").unwrap_err();
+        assert!(
+            alias_err.to_string().contains("alias"),
+            "alias should fail safety check"
+        );
     }
 
     #[test]

@@ -543,7 +543,7 @@ allow_non_idempotent: true
         let policy: RetryPolicy = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(policy.effective_max_retries(), 3);
         assert_eq!(policy.retriable_status_codes.len(), 3);
-        assert_eq!(policy.retriable_status_codes.get(1).map(|c| c.get()), Some(503));
+        assert_eq!(policy.retriable_status_codes.get(1).map(|code| code.get()), Some(503));
         assert_eq!(policy.retriable_conditions.len(), 4);
         assert_eq!(policy.per_try_timeout_ms, Some(2000));
         assert_eq!(policy.request_timeout_ms, Some(10_000));

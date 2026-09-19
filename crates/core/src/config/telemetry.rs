@@ -672,7 +672,7 @@ otlp_headers:
             resolved
                 .otlp_headers
                 .as_ref()
-                .and_then(|h| h.get("x-api-key"))
+                .and_then(|header_map| header_map.get("x-api-key"))
                 .map(String::as_str),
             Some("secret"),
             "otlp_headers should pass through resolve"

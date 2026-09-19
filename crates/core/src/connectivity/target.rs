@@ -126,7 +126,7 @@ pub(crate) fn parse_target(url: &str) -> Result<ParsedTarget, InvalidTarget> {
 
     let uri: http::Uri = url
         .parse()
-        .map_err(|e: http::uri::InvalidUri| InvalidTarget::Malformed(e.to_string()))?;
+        .map_err(|parse_err: http::uri::InvalidUri| InvalidTarget::Malformed(parse_err.to_string()))?;
 
     let is_tls = match uri.scheme_str() {
         Some("http") => false,
@@ -192,8 +192,8 @@ pub(crate) fn parse_target(url: &str) -> Result<ParsedTarget, InvalidTarget> {
         }
     };
 
-    let host_authority =
-        http::HeaderValue::from_str(authority.as_str()).map_err(|e| InvalidTarget::Malformed(e.to_string()))?;
+    let host_authority = http::HeaderValue::from_str(authority.as_str())
+        .map_err(|header_err| InvalidTarget::Malformed(header_err.to_string()))?;
 
     // `uri.path()` normalizes an empty authority-form path to `/` and always
     // carries a leading slash; `path_and_query().as_str()` does not (a
@@ -203,7 +203,7 @@ pub(crate) fn parse_target(url: &str) -> Result<ParsedTarget, InvalidTarget> {
         None => uri.path().to_owned(),
     }
     .parse()
-    .map_err(|e: http::uri::InvalidUri| InvalidTarget::Malformed(e.to_string()))?;
+    .map_err(|parse_err: http::uri::InvalidUri| InvalidTarget::Malformed(parse_err.to_string()))?;
 
     Ok(ParsedTarget {
         is_tls,
@@ -563,6 +563,9 @@ pub(crate) async fn prepare_url_target_with_resolver<R: HostResolver + Sync>(
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::assertions_on_result_states,
+    clippy::min_ident_chars,
+    clippy::shadow_unrelated,
+    clippy::arithmetic_side_effects,
     reason = "tests"
 )]
 mod tests {

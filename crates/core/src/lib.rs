@@ -2,16 +2,6 @@
 // Copyright (c) 2024 Praxis Contributors
 
 #![deny(unreachable_pub)]
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::iter_over_hash_type,
-    clippy::min_ident_chars,
-    clippy::mod_module_files,
-    clippy::shadow_unrelated,
-    clippy::single_char_lifetime_names,
-    reason = "TODO(conventions-sync): fix violations"
-)]
 
 //! Core configuration, error types, and server factory for Praxis.
 //!

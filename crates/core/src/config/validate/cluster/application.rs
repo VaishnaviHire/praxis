@@ -75,6 +75,7 @@ fn validate_identifier(value: &str, field: &str, cluster_name: &str) -> Result<(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
+    clippy::min_ident_chars,
     reason = "tests use unwrap/expect/panic for brevity"
 )]
 mod tests {

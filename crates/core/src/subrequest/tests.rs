@@ -5,6 +5,8 @@
     clippy::too_many_lines,
     clippy::bool_assert_comparison,
     clippy::significant_drop_tightening,
+    clippy::min_ident_chars,
+    clippy::shadow_unrelated,
     reason = "test file with many test functions"
 )]
 

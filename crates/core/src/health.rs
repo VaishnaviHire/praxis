@@ -423,6 +423,8 @@ pub type ClusterHealthState = Arc<ClusterHealthEntry>;
     clippy::needless_raw_strings,
     clippy::needless_raw_string_hashes,
     clippy::significant_drop_tightening,
+    clippy::min_ident_chars,
+    clippy::as_conversions,
     reason = "tests use unwrap/expect/indexing/raw strings for brevity"
 )]
 mod tests {

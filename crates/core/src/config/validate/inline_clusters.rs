@@ -71,9 +71,9 @@ fn validate_entry(chain_name: &str, entry: &FilterEntry, insecure_options: &Inse
     if CLUSTER_BEARING_FILTERS.contains(&entry.filter_type.as_str()) {
         let clusters = extract_clusters(chain_name, entry)?;
         validate_inline_names(chain_name, &entry.filter_type, &clusters)?;
-        validate_clusters(&clusters, insecure_options).map_err(|e| {
+        validate_clusters(&clusters, insecure_options).map_err(|err| {
             ProxyError::Config(format!(
-                "chain '{chain_name}': filter '{}': inline {e}",
+                "chain '{chain_name}': filter '{}': inline {err}",
                 entry.filter_type
             ))
         })?;
@@ -111,7 +111,7 @@ pub(super) fn validate_tcp_listener_clusters(
     // Chain names are unique (validated elsewhere), so index once
     // instead of scanning the chain list per listener reference.
     let chains_by_name: std::collections::HashMap<&str, &FilterChainConfig> =
-        chains.iter().map(|c| (c.name.as_str(), c)).collect();
+        chains.iter().map(|chain| (chain.name.as_str(), chain)).collect();
 
     for listener in listeners {
         if listener.protocol != ProtocolKind::Tcp {
@@ -183,9 +183,9 @@ pub(super) fn extract_step_filters(chain_name: &str, entry: &FilterEntry) -> Res
         let Some(step_filters) = step_map.get("filters") else {
             continue;
         };
-        let parsed: Vec<FilterEntry> = serde_yaml::from_value(step_filters.clone()).map_err(|e| {
+        let parsed: Vec<FilterEntry> = serde_yaml::from_value(step_filters.clone()).map_err(|err| {
             ProxyError::Config(format!(
-                "chain '{chain_name}': filter '{}': invalid step filters: {e}",
+                "chain '{chain_name}': filter '{}': invalid step filters: {err}",
                 entry.filter_type
             ))
         })?;
@@ -205,9 +205,9 @@ fn extract_clusters(chain_name: &str, entry: &FilterEntry) -> Result<Vec<Cluster
     let Some(clusters_value) = mapping.get("clusters") else {
         return Ok(Vec::new());
     };
-    serde_yaml::from_value(clusters_value.clone()).map_err(|e| {
+    serde_yaml::from_value(clusters_value.clone()).map_err(|err| {
         ProxyError::Config(format!(
-            "chain '{chain_name}': filter '{}': invalid inline clusters: {e}",
+            "chain '{chain_name}': filter '{}': invalid inline clusters: {err}",
             entry.filter_type
         ))
     })

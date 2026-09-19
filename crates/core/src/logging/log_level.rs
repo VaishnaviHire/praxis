@@ -182,7 +182,8 @@ impl LogLevelState {
 
         let target = overlay_target_key(request.module.as_deref());
         let level = normalize_level(&request.level);
-        let expires_at = Utc::now() + chrono::Duration::seconds(i64::try_from(duration_secs).unwrap_or(i64::MAX));
+        let ttl = chrono::Duration::seconds(i64::try_from(duration_secs).unwrap_or(i64::MAX));
+        let expires_at = Utc::now().checked_add_signed(ttl).unwrap_or(DateTime::<Utc>::MAX_UTC);
 
         let mut guard = self.inner.lock().expect("log level state lock poisoned");
         let previous = guard.overlays.remove(&target);
@@ -411,7 +412,7 @@ fn snapshot_locked(guard: &LogLevelInner) -> LogLevelStateResponse {
             expires_at: entry.expires_at.to_rfc3339(),
         })
         .collect();
-    overlays.sort_by(|a, b| a.module.cmp(&b.module));
+    overlays.sort_by(|left, right| left.module.cmp(&right.module));
 
     let effective_directive = build_effective_directive(&guard.baseline_directive, &guard.overlays);
     LogLevelStateResponse {
@@ -458,6 +459,8 @@ fn spawn_revert_task(state: Arc<LogLevelState>, target: String, duration_secs: u
     clippy::expect_used,
     clippy::too_many_lines,
     clippy::indexing_slicing,
+    clippy::min_ident_chars,
+    clippy::shadow_unrelated,
     reason = "tests"
 )]
 mod tests {

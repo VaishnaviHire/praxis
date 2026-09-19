@@ -63,8 +63,8 @@ impl Drop for TracingGuard {
         #[cfg(feature = "otel")]
         if let Some(provider) = self.provider.take() {
             #[expect(clippy::print_stderr, reason = "tracing subscriber is being torn down")]
-            if let Err(e) = provider.shutdown() {
-                eprintln!("failed to shut down OTel tracer provider: {e}");
+            if let Err(err) = provider.shutdown() {
+                eprintln!("failed to shut down OTel tracer provider: {err}");
             }
         }
 
@@ -104,7 +104,7 @@ pub fn init_tracing(config: &Config) -> Result<TracingGuard, ProxyError> {
     let (filter_layer, reload_handle) = reload::Layer::new(env_filter);
     let log_level = LogLevelState::new(baseline, reload_handle);
 
-    let json = std::env::var("PRAXIS_LOG_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("json"));
+    let json = std::env::var("PRAXIS_LOG_FORMAT").is_ok_and(|value| value.eq_ignore_ascii_case("json"));
     let telemetry = config.telemetry.resolve();
     let writer_bundle = writer::build_log_writer(&config.runtime.logging)?;
 
@@ -236,7 +236,7 @@ mod writer {
         ensure_parent_dir(&path)?;
         let raw: Box<dyn Write + Send + Sync> = Box::new(
             open_append_file(&path)
-                .map_err(|e| ProxyError::Config(format!("failed to open log file '{}': {e}", path.display())))?,
+                .map_err(|err| ProxyError::Config(format!("failed to open log file '{}': {err}", path.display())))?,
         );
 
         if cfg.non_blocking {
@@ -279,7 +279,7 @@ mod writer {
             return Ok(());
         }
         fs::create_dir_all(parent)
-            .map_err(|e| ProxyError::Config(format!("failed to create log directory '{}': {e}", parent.display())))
+            .map_err(|err| ProxyError::Config(format!("failed to create log directory '{}': {err}", parent.display())))
     }
 
     /// Mutex-backed synchronous writer used when `non_blocking: false`.
@@ -329,7 +329,7 @@ fn init_with_otel(
     if json {
         let otel_layer = provider
             .as_ref()
-            .map(|p| tracing_opentelemetry::layer().with_tracer(p.tracer("praxis")));
+            .map(|tracer_provider| tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("praxis")));
         tracing_subscriber::registry()
             .with(filter_layer)
             .with(
@@ -344,7 +344,7 @@ fn init_with_otel(
     } else {
         let otel_layer = provider
             .as_ref()
-            .map(|p| tracing_opentelemetry::layer().with_tracer(p.tracer("praxis")));
+            .map(|tracer_provider| tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("praxis")));
         tracing_subscriber::registry()
             .with(filter_layer)
             .with(tracing_subscriber::fmt::layer().with_writer(writer))
@@ -456,7 +456,7 @@ fn build_exporter_runtime() -> Result<::tokio::runtime::Runtime, ProxyError> {
         .worker_threads(1)
         .enable_all()
         .build()
-        .map_err(|e| ProxyError::Config(format!("failed to create OTel runtime: {e}")))
+        .map_err(|err| ProxyError::Config(format!("failed to create OTel runtime: {err}")))
 }
 
 // -----------------------------------------------------------------------------
@@ -469,7 +469,7 @@ fn build_exporter_runtime() -> Result<::tokio::runtime::Runtime, ProxyError> {
 fn resolve_otlp_protocol() -> String {
     std::env::var(crate::config::OTLP_PROTOCOL_ENV_VAR)
         .ok()
-        .filter(|s| !s.trim().is_empty())
+        .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "grpc".to_owned())
 }
 
@@ -507,7 +507,7 @@ fn build_grpc_exporter(
 
     builder
         .build()
-        .map_err(|e| ProxyError::Config(format!("failed to build OTLP gRPC exporter: {e}")))
+        .map_err(|err| ProxyError::Config(format!("failed to build OTLP gRPC exporter: {err}")))
 }
 
 /// Build an HTTP/protobuf OTLP span exporter.
@@ -533,7 +533,7 @@ fn build_http_exporter(
 
     builder
         .build()
-        .map_err(|e| ProxyError::Config(format!("failed to build OTLP HTTP exporter: {e}")))
+        .map_err(|err| ProxyError::Config(format!("failed to build OTLP HTTP exporter: {err}")))
 }
 
 /// Append `/v1/traces` to the endpoint if it has no path component.
@@ -647,13 +647,13 @@ fn build_metadata_map(
     headers: &std::collections::HashMap<String, String>,
 ) -> Result<tonic::metadata::MetadataMap, ProxyError> {
     let mut metadata = tonic::metadata::MetadataMap::new();
-    for (key, value) in headers {
+    for (key, value) in headers.iter().collect::<std::collections::BTreeMap<_, _>>() {
         let name: tonic::metadata::MetadataKey<tonic::metadata::Ascii> = key
             .parse()
-            .map_err(|e| ProxyError::Config(format!("invalid OTLP header name '{key}': {e}")))?;
+            .map_err(|err| ProxyError::Config(format!("invalid OTLP header name '{key}': {err}")))?;
         let val: tonic::metadata::MetadataValue<tonic::metadata::Ascii> = value
             .parse()
-            .map_err(|e| ProxyError::Config(format!("invalid OTLP header value for '{key}': {e}")))?;
+            .map_err(|err| ProxyError::Config(format!("invalid OTLP header value for '{key}': {err}")))?;
         metadata.insert(name, val);
     }
     Ok(metadata)
@@ -717,7 +717,7 @@ fn validate_and_build_directives(
 ) -> Result<String, ProxyError> {
     let mut errors: Vec<String> = Vec::new();
 
-    for (module, level) in overrides {
+    for (module, level) in overrides.iter().collect::<std::collections::BTreeMap<_, _>>() {
         if !is_valid_module_path(module) {
             errors.push(format!(
                 "invalid module path '{module}' (must be alphanumeric, '_', or '::')"
@@ -739,7 +739,7 @@ fn validate_and_build_directives(
     }
 
     let mut directives = base.to_string();
-    for (module, level) in overrides {
+    for (module, level) in overrides.iter().collect::<std::collections::BTreeMap<_, _>>() {
         directives.push(',');
         directives.push_str(module);
         directives.push('=');
@@ -762,30 +762,30 @@ pub fn build_baseline_directive(config: &Config) -> Result<String, ProxyError> {
     Ok(build_env_filter(config)?.to_string())
 }
 
-/// Returns `true` if `s` is a valid Rust module path and is non-empty.
-pub(super) fn is_valid_module_path(s: &str) -> bool {
-    !s.is_empty()
-        && s.split("::").all(|segment| {
+/// Returns `true` if `module_path` is a valid Rust module path and is non-empty.
+pub(super) fn is_valid_module_path(module_path: &str) -> bool {
+    !module_path.is_empty()
+        && module_path.split("::").all(|segment| {
             !segment.is_empty()
                 && segment
                     .bytes()
                     .next()
-                    .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
-                && segment.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                && segment.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         })
 }
 
-/// Returns `true` if `s` is one of the five tracing levels (case-insensitive).
-fn is_valid_log_level(s: &str) -> bool {
+/// Returns `true` if `level` is one of the five tracing levels (case-insensitive).
+fn is_valid_log_level(level: &str) -> bool {
     matches!(
-        s.to_ascii_lowercase().as_str(),
+        level.to_ascii_lowercase().as_str(),
         "error" | "warn" | "info" | "debug" | "trace"
     )
 }
 
 /// Returns `true` for admin overlay levels, including temporary `off`.
-pub(super) fn is_valid_admin_log_level(s: &str) -> bool {
-    is_valid_log_level(s) || s.eq_ignore_ascii_case("off")
+pub(super) fn is_valid_admin_log_level(level: &str) -> bool {
+    is_valid_log_level(level) || level.eq_ignore_ascii_case("off")
 }
 
 // -----------------------------------------------------------------------------

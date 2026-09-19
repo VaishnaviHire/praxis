@@ -585,7 +585,13 @@ impl CircuitBreakerRegistry {
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "tests")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::min_ident_chars,
+    reason = "tests"
+)]
 mod tests {
     use super::*;
 

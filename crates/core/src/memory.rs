@@ -204,7 +204,10 @@ mod tests {
     #[test]
     fn sample_rss_returns_positive_value() {
         let rss = sample_rss();
-        assert!(rss.is_some_and(|v| v > 0), "RSS should be a positive value on Linux");
+        assert!(
+            rss.is_some_and(|bytes| bytes > 0),
+            "RSS should be a positive value on Linux"
+        );
     }
 
     #[cfg(target_os = "linux")]
