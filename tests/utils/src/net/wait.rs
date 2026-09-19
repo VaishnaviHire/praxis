@@ -48,7 +48,7 @@ const GOAWAY: &[u8] = &[0, 0, 8, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 // Deadline Resolution
 // -----------------------------------------------------------------------------
 
-/// Resolve the readiness deadline, honoring READY_TIMEOUT_ENV_VAR.
+/// Resolve the readiness deadline, honoring `READY_TIMEOUT_ENV_VAR`.
 ///
 /// Returns the env-var override when it parses to a positive number of
 /// milliseconds; otherwise returns `default`.
@@ -94,7 +94,7 @@ fn resolve_ready_timeout(raw: Option<&str>, default: Duration) -> Duration {
 /// Block until a TCP connection to `addr` succeeds, or panic once the
 /// readiness deadline (default 2 seconds) passes.
 ///
-/// Override the deadline with READY_TIMEOUT_ENV_VAR.
+/// Override the deadline with `READY_TIMEOUT_ENV_VAR`.
 ///
 /// # Panics
 ///
@@ -111,7 +111,7 @@ pub fn wait_for_tcp(addr: &str) {
 /// Block until an HTTP request to `addr` gets a valid response, or panic once
 /// the readiness deadline (default 5 seconds) passes.
 ///
-/// Override the deadline with READY_TIMEOUT_ENV_VAR.
+/// Override the deadline with `READY_TIMEOUT_ENV_VAR`.
 ///
 /// # Panics
 ///
@@ -149,7 +149,7 @@ pub fn wait_for_http(addr: &str) {
 /// Block until a full HTTP/2 handshake with `addr` completes, or panic once
 /// the readiness deadline (default 5 seconds) passes.
 ///
-/// Override the deadline with READY_TIMEOUT_ENV_VAR.
+/// Override the deadline with `READY_TIMEOUT_ENV_VAR`.
 ///
 /// # Panics
 ///
