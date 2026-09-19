@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Praxis Contributors
 
+//! Hardened sub-request client executor.
+//!
+//! [`SubRequestClient`] wraps a shared connector to provide safe,
+//! bounded execution of outbound HTTP exchanges with deadline
+//! enforcement, response body size limits, and automatic hop-by-hop
+//! header sanitization. Supports both buffered (collect full body)
+//! and streaming (chunk-by-chunk) response modes.
+
 use std::time::Duration;
 
 use bytes::Bytes;

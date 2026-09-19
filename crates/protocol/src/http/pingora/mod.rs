@@ -131,6 +131,7 @@ mod tests {
             downstream_read_timeout_ms: None,
             filter_chains: vec![],
             max_connections: None,
+            tcp_max_duration_secs: None,
             tcp_session_timeout_ms: None,
             tls: None,
             upstream: None,
@@ -225,14 +226,14 @@ mod tests {
             .ok_or_else(|| ProxyError::Config(format!("no pipeline for listener '{name}'", name = listener.name)));
 
         assert!(result.is_err(), "should fail when pipeline is missing");
-        match result.unwrap_err() {
-            ProxyError::Config(msg) => {
-                assert!(
-                    msg.contains("no pipeline for listener"),
-                    "error should mention missing pipeline"
-                );
-                assert!(msg.contains("http2"), "error should include listener name");
-            },
+        if let Err(ProxyError::Config(msg)) = result {
+            assert!(
+                msg.contains("no pipeline for listener"),
+                "error should mention missing pipeline"
+            );
+            assert!(msg.contains("http2"), "error should include listener name");
+        } else {
+            panic!("expected ProxyError::Config");
         }
     }
 

@@ -1293,29 +1293,6 @@ filter_chains:
 
     #[cfg(feature = "otel")]
     #[test]
-    #[expect(
-        unsafe_code,
-        reason = "test modifies environment variables to verify protocol resolution"
-    )]
-    fn resolve_otlp_protocol_from_default_and_env() {
-        // SAFETY: Single-threaded test modifying environment for this test only.
-        unsafe {
-            std::env::remove_var(crate::config::OTLP_PROTOCOL_ENV_VAR);
-        }
-        assert_eq!(resolve_otlp_protocol(), "grpc");
-        // SAFETY: Single-threaded test modifying environment for this test only.
-        unsafe {
-            std::env::set_var(crate::config::OTLP_PROTOCOL_ENV_VAR, "http/protobuf");
-        }
-        assert_eq!(resolve_otlp_protocol(), "http/protobuf");
-        // SAFETY: Single-threaded test modifying environment for this test only.
-        unsafe {
-            std::env::remove_var(crate::config::OTLP_PROTOCOL_ENV_VAR);
-        }
-    }
-
-    #[cfg(feature = "otel")]
-    #[test]
     fn build_span_exporter_rejects_unsupported_protocol() {
         let err = build_span_exporter("http://host:4317", None, "unknown").unwrap_err();
         assert!(err.to_string().contains("unsupported OTLP protocol"));

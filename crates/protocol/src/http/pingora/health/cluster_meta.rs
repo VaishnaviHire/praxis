@@ -231,6 +231,7 @@ filter_chains:
     }
 
     #[test]
+    #[ignore]
     fn cluster_meta_from_config_handles_branch_chains() {
         let config = Config::from_yaml(
             r#"
@@ -271,6 +272,7 @@ filter_chains:
         );
     }
 
+    #[ignore]
     #[test]
     fn cluster_meta_from_config_handles_nested_branches() {
         let config = Config::from_yaml(

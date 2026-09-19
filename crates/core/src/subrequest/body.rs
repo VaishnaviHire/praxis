@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Praxis Contributors
 
+//! Response body streaming and session disposal utilities.
+//!
+//! Handles streaming response bodies from sub-request exchanges with
+//! per-chunk metrics and protocol-aware session cleanup. H2 streams
+//! are released back to the connector to preserve multiplexed
+//! connections, while H1/Custom sessions are shut down immediately
+//! to avoid connection corruption from unread response bytes.
+
 use std::time::Duration;
 
 use bytes::Bytes;

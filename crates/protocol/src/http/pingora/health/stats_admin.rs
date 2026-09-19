@@ -537,7 +537,7 @@ filter_chains:
 
     #[test]
     fn stats_gaps_http_active_aggregate_only() {
-        let snapshot = super::metrics::StatsMetricsSnapshot {
+        let snapshot = metrics::StatsMetricsSnapshot {
             http_active_by_listener: std::collections::HashMap::new(),
             http_active_aggregate: Some(42),
             tcp_active_by_listener: std::collections::HashMap::new(),
@@ -560,7 +560,7 @@ filter_chains:
 
     #[test]
     fn stats_gaps_tcp_active_aggregate_only() {
-        let snapshot = super::metrics::StatsMetricsSnapshot {
+        let snapshot = metrics::StatsMetricsSnapshot {
             http_active_by_listener: std::collections::HashMap::new(),
             http_active_aggregate: None,
             tcp_active_by_listener: std::collections::HashMap::new(),
@@ -579,7 +579,7 @@ filter_chains:
 
     #[test]
     fn stats_gaps_upstream_requests_aggregate_only() {
-        let snapshot = super::metrics::StatsMetricsSnapshot {
+        let snapshot = metrics::StatsMetricsSnapshot {
             http_active_by_listener: std::collections::HashMap::new(),
             http_active_aggregate: None,
             tcp_active_by_listener: std::collections::HashMap::new(),
@@ -598,7 +598,7 @@ filter_chains:
 
     #[test]
     fn stats_gaps_connect_failures_aggregate_only() {
-        let snapshot = super::metrics::StatsMetricsSnapshot {
+        let snapshot = metrics::StatsMetricsSnapshot {
             http_active_by_listener: std::collections::HashMap::new(),
             http_active_aggregate: None,
             tcp_active_by_listener: std::collections::HashMap::new(),
@@ -617,7 +617,7 @@ filter_chains:
 
     #[test]
     fn stats_gaps_all_aggregates() {
-        let snapshot = super::metrics::StatsMetricsSnapshot {
+        let snapshot = metrics::StatsMetricsSnapshot {
             http_active_by_listener: std::collections::HashMap::new(),
             http_active_aggregate: Some(10),
             tcp_active_by_listener: std::collections::HashMap::new(),
@@ -640,10 +640,12 @@ filter_chains:
     fn listener_stats_view_tcp_protocol() {
         let meta = ListenerMeta {
             name: "tcp_listener".to_owned(),
+            address: "127.0.0.1:8080".to_owned(),
             protocol: ProtocolKind::Tcp,
             tls: true,
+            chain_names: vec![],
         };
-        let mut snapshot = super::metrics::StatsMetricsSnapshot::default();
+        let mut snapshot = metrics::StatsMetricsSnapshot::default();
         snapshot.tcp_active_by_listener.insert("tcp_listener".to_owned(), 15);
 
         let view = listener_stats_view(&meta, &snapshot);
@@ -657,10 +659,12 @@ filter_chains:
     fn listener_stats_view_http_protocol() {
         let meta = ListenerMeta {
             name: "http_listener".to_owned(),
+            address: "127.0.0.1:8081".to_owned(),
             protocol: ProtocolKind::Http,
             tls: false,
+            chain_names: vec![],
         };
-        let mut snapshot = super::metrics::StatsMetricsSnapshot::default();
+        let mut snapshot = metrics::StatsMetricsSnapshot::default();
         snapshot.http_active_by_listener.insert("http_listener".to_owned(), 25);
 
         let view = listener_stats_view(&meta, &snapshot);
@@ -674,10 +678,12 @@ filter_chains:
     fn listener_stats_view_missing_metrics() {
         let meta = ListenerMeta {
             name: "new_listener".to_owned(),
+            address: "127.0.0.1:8082".to_owned(),
             protocol: ProtocolKind::Http,
             tls: false,
+            chain_names: vec![],
         };
-        let snapshot = super::metrics::StatsMetricsSnapshot::default();
+        let snapshot = metrics::StatsMetricsSnapshot::default();
 
         let view = listener_stats_view(&meta, &snapshot);
         assert_eq!(view.active_connections, 0, "missing metrics should default to 0");
@@ -689,7 +695,7 @@ filter_chains:
             name: "cluster1".to_owned(),
             endpoints: vec!["10.0.0.1:80".to_owned()],
         };
-        let mut snapshot = super::metrics::StatsMetricsSnapshot::default();
+        let mut snapshot = metrics::StatsMetricsSnapshot::default();
         snapshot
             .upstream_requests_by_cluster
             .insert("cluster1".to_owned(), 1000);
@@ -708,7 +714,7 @@ filter_chains:
             name: "cluster2".to_owned(),
             endpoints: vec!["10.0.0.1:80".to_owned(), "10.0.0.2:80".to_owned()],
         };
-        let snapshot = super::metrics::StatsMetricsSnapshot::default();
+        let snapshot = metrics::StatsMetricsSnapshot::default();
 
         let view = cluster_stats_view(&meta, None, &snapshot);
         assert_eq!(view.upstream_requests_total, 0, "missing metrics should default to 0");
@@ -813,7 +819,7 @@ filter_chains:
     #[test]
     fn as_head_response_clears_body_and_content_length() {
         let body = br#"{"some":"data"}"#;
-        let mut resp = Response::builder()
+        let resp = Response::builder()
             .status(200)
             .header("Content-Type", "application/json")
             .header("Content-Length", body.len())

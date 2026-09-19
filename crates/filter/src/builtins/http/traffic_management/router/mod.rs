@@ -165,16 +165,12 @@ impl RouterFilter {
         #[cfg(feature = "router-json-aliases")]
         let router = Self::with_alias_options(routes, DEFAULT_JSON_ALIAS_HEADER, DEFAULT_JSON_ALIAS_MAX_BODY_BYTES)?;
         #[cfg(not(feature = "router-json-aliases"))]
-        let router = Self::build(routes)?;
+        let router = Self::build(routes);
         Ok(router)
     }
 
     /// Build the router from route configs (no JSON-alias handling).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FilterError`] if route configuration is invalid.
-    fn build(routes: Vec<RouterRouteConfig>) -> Result<Self, FilterError> {
+    fn build(routes: Vec<RouterRouteConfig>) -> Self {
         let mut routes = routes;
         sort_routes(&mut routes);
 
@@ -189,10 +185,10 @@ impl RouterFilter {
 
         let resolved = resolve_routes(routes);
         debug!(routes = resolved.len(), "router initialized");
-        Ok(Self {
+        Self {
             multi_level_subdomain_matching: false,
             routes: resolved,
-        })
+        }
     }
 
     /// Create a router with explicit alias options.
@@ -210,7 +206,7 @@ impl RouterFilter {
         let _json_alias_header = parse_json_alias_header(json_alias_header)?;
         validate_alias_options(&routes, json_alias_max_body_bytes)?;
         reject_unimplemented_json_aliases(&routes)?;
-        Self::build(routes)
+        Ok(Self::build(routes))
     }
 
     /// Enable multi-level subdomain matching for wildcard hosts.
@@ -240,7 +236,7 @@ impl RouterFilter {
         let router = Self::with_alias_options(cfg.routes, &cfg.json_alias_header, cfg.json_alias_max_body_bytes)?
             .with_multi_level_subdomain_matching(cfg.multi_level_subdomain_matching);
         #[cfg(not(feature = "router-json-aliases"))]
-        let router = Self::build(cfg.routes)?.with_multi_level_subdomain_matching(cfg.multi_level_subdomain_matching);
+        let router = Self::build(cfg.routes).with_multi_level_subdomain_matching(cfg.multi_level_subdomain_matching);
         Ok(Box::new(router))
     }
 

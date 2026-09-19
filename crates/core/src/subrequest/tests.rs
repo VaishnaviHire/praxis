@@ -2988,10 +2988,10 @@ fn cap_read_timeout_with_looser_existing_timeout_replaced() {
 
 #[tokio::test]
 async fn streaming_body_metrics_recorded_on_idle_timeout() {
-    install_metrics_recorder();
-
     use pingora_core::upstreams::peer::HttpPeer;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    install_metrics_recorder();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

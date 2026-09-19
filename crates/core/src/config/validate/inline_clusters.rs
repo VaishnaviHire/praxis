@@ -533,8 +533,8 @@ mod tests {
         let yaml = "listeners:\n  - name: tcp_listener\n    address: \"127.0.0.1:19000\"\n    protocol: tcp\n    cluster: backend\n    filter_chains: [missing_chain]\nfilter_chains:\n  - name: different_chain\n    filters:\n      - filter: tcp_load_balancer\n        clusters:\n          - name: backend\n            endpoints: [\"10.0.0.1:5000\"]\ninsecure_options:\n  allow_private_endpoints: true\n";
         let err = Config::from_yaml(yaml).unwrap_err();
         assert!(
-            err.to_string().contains("backend"),
-            "should report the cluster name even when chain is missing: {err}"
+            err.to_string().contains("missing_chain"),
+            "should report the missing chain name: {err}"
         );
     }
 

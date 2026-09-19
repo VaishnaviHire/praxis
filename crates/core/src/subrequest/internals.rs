@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Praxis Contributors
 
+//! Internal connector types and metric constants for sub-request execution.
+//!
+//! Provides [`SubRequestConnector`] wrapping Pingora's HTTP connector
+//! with circuit breaker integration, connection pooling, and bounded
+//! concurrency via semaphores. Defines metric name constants shared
+//! across buffered and streaming execution paths.
+
 use std::{sync::Arc, time::Duration};
 
 use http::HeaderMap;

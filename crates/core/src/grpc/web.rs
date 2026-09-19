@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn all_labels_are_unique() {
-        let labels = vec![
+        let labels = [
             GrpcWebKind::None.as_str(),
             GrpcWebKind::Binary(GrpcCodec::Proto).as_str(),
             GrpcWebKind::Binary(GrpcCodec::Json).as_str(),

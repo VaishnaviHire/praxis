@@ -67,22 +67,25 @@ mod tests {
     #[test]
     fn deserialize_continue() {
         let yaml = "continue";
-        let deserialized: OnInvalidBehavior = serde_yaml::from_str(yaml).expect("should deserialize continue");
-        assert_eq!(deserialized, OnInvalidBehavior::Continue);
+        let result: Result<OnInvalidBehavior, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_ok());
+        assert_eq!(result.ok(), Some(OnInvalidBehavior::Continue));
     }
 
     #[test]
     fn deserialize_reject() {
         let yaml = "reject";
-        let deserialized: OnInvalidBehavior = serde_yaml::from_str(yaml).expect("should deserialize reject");
-        assert_eq!(deserialized, OnInvalidBehavior::Reject);
+        let result: Result<OnInvalidBehavior, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_ok());
+        assert_eq!(result.ok(), Some(OnInvalidBehavior::Reject));
     }
 
     #[test]
     fn deserialize_error() {
         let yaml = "error";
-        let deserialized: OnInvalidBehavior = serde_yaml::from_str(yaml).expect("should deserialize error");
-        assert_eq!(deserialized, OnInvalidBehavior::Error);
+        let result: Result<OnInvalidBehavior, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_ok());
+        assert_eq!(result.ok(), Some(OnInvalidBehavior::Error));
     }
 
     #[test]
@@ -106,14 +109,14 @@ mod tests {
     #[test]
     fn clone_impl() {
         let original = OnInvalidBehavior::Reject;
-        let cloned = original.clone();
+        let cloned = original;
         assert_eq!(original, cloned);
 
-        let continue_cloned = OnInvalidBehavior::Continue.clone();
-        assert_eq!(continue_cloned, OnInvalidBehavior::Continue);
+        let continue_val = OnInvalidBehavior::Continue;
+        assert_eq!(continue_val, OnInvalidBehavior::Continue);
 
-        let error_cloned = OnInvalidBehavior::Error.clone();
-        assert_eq!(error_cloned, OnInvalidBehavior::Error);
+        let error_val = OnInvalidBehavior::Error;
+        assert_eq!(error_val, OnInvalidBehavior::Error);
     }
 
     #[test]
