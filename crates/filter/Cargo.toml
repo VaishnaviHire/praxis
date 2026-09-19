@@ -32,6 +32,10 @@ cloud-events-filter = [
     "dep:url",
 ]
 
+# The `iterative_request_router` filter (framework-level multi-sub-request
+# loop). Off by default; experimental. Carries no extra dependencies.
+iterative-request-router = []
+
 # ---------------------------------------------------------------------------
 # Lint configuration
 #
