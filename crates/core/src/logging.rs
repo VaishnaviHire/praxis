@@ -1293,12 +1293,25 @@ filter_chains:
 
     #[cfg(feature = "otel")]
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "test modifies environment variables to verify protocol resolution"
+    )]
     fn resolve_otlp_protocol_from_default_and_env() {
-        std::env::remove_var(crate::config::OTLP_PROTOCOL_ENV_VAR);
+        // SAFETY: Single-threaded test modifying environment for this test only.
+        unsafe {
+            std::env::remove_var(crate::config::OTLP_PROTOCOL_ENV_VAR);
+        }
         assert_eq!(resolve_otlp_protocol(), "grpc");
-        std::env::set_var(crate::config::OTLP_PROTOCOL_ENV_VAR, "http/protobuf");
+        // SAFETY: Single-threaded test modifying environment for this test only.
+        unsafe {
+            std::env::set_var(crate::config::OTLP_PROTOCOL_ENV_VAR, "http/protobuf");
+        }
         assert_eq!(resolve_otlp_protocol(), "http/protobuf");
-        std::env::remove_var(crate::config::OTLP_PROTOCOL_ENV_VAR);
+        // SAFETY: Single-threaded test modifying environment for this test only.
+        unsafe {
+            std::env::remove_var(crate::config::OTLP_PROTOCOL_ENV_VAR);
+        }
     }
 
     #[cfg(feature = "otel")]

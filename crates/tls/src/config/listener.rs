@@ -99,7 +99,7 @@ pub struct ListenerTls {
     pub min_version: Option<TlsVersion>,
 }
 
-/// Raw deserialization helper for [`ListenerTls`].
+/// Raw deserialization utility for [`ListenerTls`].
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ListenerTlsRaw {

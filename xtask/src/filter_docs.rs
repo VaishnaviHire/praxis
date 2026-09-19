@@ -533,7 +533,7 @@ fn cfg_feature_from_expr(expr: &syn::Expr) -> Option<String> {
 }
 
 /// Extract the filter name from `register_http*(..., "name", ...)` or
-/// `register_tcp*(..., "name", ...)` registration helper calls.
+/// `register_tcp*(..., "name", ...)` registration utility calls.
 fn filter_name_from_register_call(expr: &syn::Expr) -> Option<String> {
     let syn::Expr::Call(call) = expr else {
         return None;
@@ -1008,7 +1008,7 @@ fn select_config<'a>(items: &'a ModuleItems, config_type: Option<&str>) -> Optio
 }
 
 // -----------------------------------------------------------------------------
-// Attribute Helpers
+// Attribute Utilities
 // -----------------------------------------------------------------------------
 
 /// Check if attributes include `#[derive(..., Deserialize)]`.

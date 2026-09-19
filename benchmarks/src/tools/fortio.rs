@@ -510,7 +510,11 @@ mod tests {
             BenchmarkError::ParseError { tool, .. } => {
                 assert_eq!(tool, "fortio", "parse error should reference fortio");
             },
-            other => panic!("expected ParseError, got: {other}"),
+            other @ (BenchmarkError::ToolNotFound(_)
+            | BenchmarkError::ToolFailed { .. }
+            | BenchmarkError::Io(_)
+            | BenchmarkError::Json(_)
+            | BenchmarkError::Yaml(_)) => panic!("expected ParseError, got: {other}"),
         }
     }
 

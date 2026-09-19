@@ -181,7 +181,10 @@ mod tests {
             .filter(|l| l.protocol == ProtocolKind::Http)
             .collect();
 
-        assert!(http_listeners.is_empty(), "should have no HTTP listeners in empty config");
+        assert!(
+            http_listeners.is_empty(),
+            "should have no HTTP listeners in empty config"
+        );
     }
 
     #[test]
@@ -217,9 +220,9 @@ mod tests {
 
         // Simulate the error path
         let listener = &config.listeners[1]; // http2
-        let result = pipelines.get(&listener.name).ok_or_else(|| {
-            ProxyError::Config(format!("no pipeline for listener '{name}'", name = listener.name))
-        });
+        let result = pipelines
+            .get(&listener.name)
+            .ok_or_else(|| ProxyError::Config(format!("no pipeline for listener '{name}'", name = listener.name)));
 
         assert!(result.is_err(), "should fail when pipeline is missing");
         match result.unwrap_err() {
@@ -229,7 +232,7 @@ mod tests {
                     "error should mention missing pipeline"
                 );
                 assert!(msg.contains("http2"), "error should include listener name");
-            }
+            },
         }
     }
 
@@ -274,7 +277,7 @@ mod tests {
             ProxyError::Config(msg) => {
                 assert_eq!(msg, "no pipeline for listener 'my-http-listener'");
                 assert!(msg.starts_with("no pipeline"));
-            }
+            },
         }
     }
 
@@ -311,7 +314,10 @@ mod tests {
     #[test]
     fn empty_pipeline_lookup_returns_none() {
         let pipelines = make_pipelines(&[]);
-        assert!(pipelines.get("any-name").is_none(), "empty pipelines should return None");
+        assert!(
+            pipelines.get("any-name").is_none(),
+            "empty pipelines should return None"
+        );
     }
 
     #[test]

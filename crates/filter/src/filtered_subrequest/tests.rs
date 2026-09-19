@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Praxis Contributors
 
-//! Tests for the reusable filtered sub-request executor helpers.
+//! Tests for the reusable filtered sub-request executor utilities.
 //!
 //! These exercise the transport, sanitization, header-mutation, and
-//! nested-context helpers the executor owns, independent of any particular
+//! nested-context utilities the executor owns, independent of any particular
 //! caller (the iterative request router is the only caller today).
 
 use http::HeaderMap;
@@ -375,7 +375,7 @@ fn destination_host_rejects_unencodable_address() {
 }
 
 // -----------------------------------------------------------------------------
-// Header Mutation Helpers
+// Header Mutation Utilities
 // -----------------------------------------------------------------------------
 
 #[test]

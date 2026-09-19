@@ -552,8 +552,7 @@ mod tests {
         let exact_content = "x".repeat(MAX_YAML_BYTES);
         std::fs::write(&path, &exact_content).expect("write exact size file");
 
-        let content =
-            read_config_file(&path).expect("file at exact MAX_YAML_BYTES should be readable");
+        let content = read_config_file(&path).expect("file at exact MAX_YAML_BYTES should be readable");
         assert_eq!(content.len(), MAX_YAML_BYTES, "content should be complete");
     }
 
@@ -564,8 +563,7 @@ mod tests {
         let over_content = "x".repeat(MAX_YAML_BYTES + 2);
         std::fs::write(&path, over_content).expect("write over-size file");
 
-        let err = read_config_file(&path)
-            .expect_err("file two bytes over MAX_YAML_BYTES should be rejected");
+        let err = read_config_file(&path).expect_err("file two bytes over MAX_YAML_BYTES should be rejected");
         assert!(
             err.to_string().contains("too large"),
             "error should mention size limit, got: {err}"

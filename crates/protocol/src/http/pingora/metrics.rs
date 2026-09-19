@@ -986,7 +986,7 @@ mod tests {
     }
 
     #[test]
-    fn record_helpers_noop_without_recorder() {
+    fn record_utilities_noop_without_recorder() {
         record_overload_reject(OVERLOAD_REASON_MEMORY);
         record_upstream_connect_failure(cluster_none());
         record_error(ERROR_TYPE_INTERNAL);

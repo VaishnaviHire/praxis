@@ -407,7 +407,7 @@ impl ScenarioResults {
 }
 
 // -----------------------------------------------------------------------------
-// Median Helpers
+// Median Utilities
 // -----------------------------------------------------------------------------
 
 /// Compute per-metric median latency across runs.
@@ -955,26 +955,29 @@ mod tests {
 
     #[test]
     fn f64_median_odd_count() {
-        let m = f64_median([3.0, 1.0, 2.0].into_iter());
-        assert!((m - 2.0).abs() < 1e-9, "median of [1,2,3] should be 2.0");
+        let median = f64_median([3.0, 1.0, 2.0].into_iter());
+        assert!((median - 2.0).abs() < 1e-9, "median of [1,2,3] should be 2.0");
     }
 
     #[test]
     fn f64_median_even_count() {
-        let m = f64_median([4.0, 1.0, 3.0, 2.0].into_iter());
-        assert!((m - 3.0).abs() < 1e-9, "median of 4 values should take upper-middle");
+        let median = f64_median([4.0, 1.0, 3.0, 2.0].into_iter());
+        assert!(
+            (median - 3.0).abs() < 1e-9,
+            "median of 4 values should take upper-middle"
+        );
     }
 
     #[test]
     fn f64_median_single() {
-        let m = f64_median([42.0].into_iter());
-        assert!((m - 42.0).abs() < 1e-9, "single value median should be itself");
+        let median = f64_median([42.0].into_iter());
+        assert!((median - 42.0).abs() < 1e-9, "single value median should be itself");
     }
 
     #[test]
     fn f64_median_empty() {
-        let m = f64_median(std::iter::empty());
-        assert!((m - 0.0).abs() < 1e-9, "empty iterator median should be 0.0");
+        let median = f64_median(std::iter::empty());
+        assert!((median - 0.0).abs() < 1e-9, "empty iterator median should be 0.0");
     }
 
     #[test]

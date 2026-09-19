@@ -162,7 +162,7 @@ pub(crate) fn resolve_pipelines_with_composition(
     let chains: HashMap<&str, &[_]> = config
         .filter_chains
         .iter()
-        .map(|c| (c.name.as_str(), c.filters.as_slice()))
+        .map(|chain| (chain.name.as_str(), chain.filters.as_slice()))
         .collect();
     let mut pipelines = HashMap::with_capacity(config.listeners.len());
     for listener in &config.listeners {
@@ -284,8 +284,9 @@ fn validate_terminal_position(
     entries: &[praxis_core::config::FilterEntry],
     listener_name: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let last_index = entries.len().saturating_sub(1);
     for (i, entry) in entries.iter().enumerate() {
-        if praxis_core::config::TERMINAL_FILTERS.contains(&entry.filter_type.as_str()) && i + 1 < entries.len() {
+        if praxis_core::config::TERMINAL_FILTERS.contains(&entry.filter_type.as_str()) && i != last_index {
             return Err(format!(
                 "filter '{}' must be the last filter in the flattened pipeline \
                  for listener '{listener_name}' because it produces terminal responses \

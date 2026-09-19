@@ -63,7 +63,7 @@ pub struct ClusterTls {
     pub verify: bool,
 }
 
-/// Raw deserialization helper for [`ClusterTls`].
+/// Raw deserialization utility for [`ClusterTls`].
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClusterTlsRaw {

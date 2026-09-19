@@ -36,6 +36,10 @@ cloud-events-filter = [
 # loop). Off by default; experimental. Carries no extra dependencies.
 iterative-request-router = []
 
+# The `router` filter's JSON-alias body-routing groundwork. Off by default;
+# experimental and not yet wired into request routing.
+router-json-aliases = []
+
 # ---------------------------------------------------------------------------
 # Lint configuration
 #

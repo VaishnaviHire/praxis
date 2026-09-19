@@ -594,7 +594,7 @@ mod tests {
         assert!(matches!(err, UrlTargetError::InvalidTarget(InvalidTarget::MissingHost)));
     }
 
-    #[expect(clippy::panic, reason = "test helper panics to fail the test on parse error")]
+    #[expect(clippy::panic, reason = "test utility panics to fail the test on parse error")]
     fn parse_ok(url: &str) -> ParsedTarget {
         parse_target(url).unwrap_or_else(|e| panic!("expected {url} to parse: {e}"))
     }

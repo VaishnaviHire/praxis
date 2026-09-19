@@ -227,7 +227,7 @@ impl TelemetryConfig {
     /// process environment in tests is inherently racy (`env::set_var`
     /// is `unsafe` since Rust 1.66 for good reason). Instead, callers
     /// pass the "would-have-come-from-env" value as `env_endpoint` and
-    /// the helper simulates the config-then-env precedence inline.
+    /// the utility simulates the config-then-env precedence inline.
     #[cfg(test)]
     fn resolved(config_endpoint: Option<&str>, env_endpoint: Option<&str>) -> Self {
         Self {

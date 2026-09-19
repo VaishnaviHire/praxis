@@ -48,7 +48,7 @@ before issuing requests. On slow or heavily loaded runners (notably
 under coverage instrumentation), the default readiness deadlines can
 expire before startup finishes, producing spurious failures. Set
 `PRAXIS_TEST_READY_TIMEOUT_MS` to a larger value (in milliseconds) to
-raise the deadline for every readiness helper; `make coverage` and
+raise the deadline for every readiness utility; `make coverage` and
 `make coverage-check` already set it. When unset, the defaults apply
 (2s for TCP, 5s for HTTP, HTTP/2, and TLS).
 

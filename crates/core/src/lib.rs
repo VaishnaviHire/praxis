@@ -41,7 +41,7 @@ pub mod config;
 pub mod connectivity;
 /// Error types shared across the workspace.
 pub mod errors;
-/// Shared gRPC protocol helpers.
+/// Shared gRPC protocol utilities.
 pub mod grpc;
 /// Shared health state types for active health checking.
 pub mod health;

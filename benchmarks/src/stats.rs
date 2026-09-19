@@ -439,20 +439,23 @@ mod tests {
             cpu_percent: 50.0,
             memory_bytes: 1_048_576,
         }];
-        let m = compute_metrics(&samples).unwrap();
+        let metrics = compute_metrics(&samples).unwrap();
         assert!(
-            (m.cpu_percent_avg - 50.0).abs() < 0.001,
+            (metrics.cpu_percent_avg - 50.0).abs() < 0.001,
             "avg should equal single sample, got {}",
-            m.cpu_percent_avg
+            metrics.cpu_percent_avg
         );
         assert!(
-            (m.cpu_percent_peak - 50.0).abs() < 0.001,
+            (metrics.cpu_percent_peak - 50.0).abs() < 0.001,
             "peak should equal single sample, got {}",
-            m.cpu_percent_peak
+            metrics.cpu_percent_peak
         );
-        assert_eq!(m.memory_rss_bytes_avg, 1_048_576, "avg mem should match single sample");
         assert_eq!(
-            m.memory_rss_bytes_peak, 1_048_576,
+            metrics.memory_rss_bytes_avg, 1_048_576,
+            "avg mem should match single sample"
+        );
+        assert_eq!(
+            metrics.memory_rss_bytes_peak, 1_048_576,
             "peak mem should match single sample"
         );
     }
@@ -473,32 +476,35 @@ mod tests {
                 memory_bytes: 300,
             },
         ];
-        let m = compute_metrics(&samples).unwrap();
+        let metrics = compute_metrics(&samples).unwrap();
         assert!(
-            (m.cpu_percent_avg - 40.0).abs() < 0.001,
+            (metrics.cpu_percent_avg - 40.0).abs() < 0.001,
             "cpu avg of 20/40/60 should be 40.0, got {}",
-            m.cpu_percent_avg
+            metrics.cpu_percent_avg
         );
         assert!(
-            (m.cpu_percent_peak - 60.0).abs() < 0.001,
+            (metrics.cpu_percent_peak - 60.0).abs() < 0.001,
             "cpu peak should be 60.0, got {}",
-            m.cpu_percent_peak
+            metrics.cpu_percent_peak
         );
-        assert_eq!(m.memory_rss_bytes_avg, 200, "mem avg of 100/200/300 should be 200");
-        assert_eq!(m.memory_rss_bytes_peak, 300, "mem peak should be 300");
+        assert_eq!(
+            metrics.memory_rss_bytes_avg, 200,
+            "mem avg of 100/200/300 should be 200"
+        );
+        assert_eq!(metrics.memory_rss_bytes_peak, 300, "mem peak should be 300");
     }
 
     #[test]
     fn collector_new() {
-        let c = DockerStatsCollector::new("test-container");
-        assert_eq!(c.container_name(), "test-container");
-        assert!(c.handle.is_none(), "handle should be None before start");
+        let collector = DockerStatsCollector::new("test-container");
+        assert_eq!(collector.container_name(), "test-container");
+        assert!(collector.handle.is_none(), "handle should be None before start");
     }
 
     #[tokio::test]
     async fn collector_stop_without_start() {
-        let c = DockerStatsCollector::new("nonexistent");
-        let result = c.stop().await;
+        let collector = DockerStatsCollector::new("nonexistent");
+        let result = collector.stop().await;
         assert!(result.is_none(), "stop without start should return None");
     }
 

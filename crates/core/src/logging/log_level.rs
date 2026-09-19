@@ -983,11 +983,11 @@ mod tests {
 
     #[test]
     fn put_log_level_request_deserialize() {
-        let yaml = r#"
+        let yaml = "
 level: debug
 module: praxis_filter
 duration_secs: 600
-"#;
+";
         let req: PutLogLevelRequest = serde_yaml::from_str(yaml).expect("should deserialize");
         assert_eq!(req.level, "debug");
         assert_eq!(req.module, Some("praxis_filter".to_owned()));
@@ -996,9 +996,9 @@ duration_secs: 600
 
     #[test]
     fn put_log_level_request_deserialize_minimal() {
-        let yaml = r#"
+        let yaml = "
 level: info
-"#;
+";
         let req: PutLogLevelRequest = serde_yaml::from_str(yaml).expect("should deserialize");
         assert_eq!(req.level, "info");
         assert_eq!(req.module, None);
@@ -1111,7 +1111,7 @@ level: info
             })
             .expect("overlay before refresh");
 
-        let config_yaml = r#"
+        let config_yaml = "
 listeners:
   - name: test
     address: 127.0.0.1:0
@@ -1121,7 +1121,7 @@ listeners:
 filter_chains:
   - name: test_chain
     filters: []
-"#;
+";
         let config = Config::load(None, config_yaml).expect("valid config");
         state.refresh_baseline(&config).expect("refresh baseline");
 

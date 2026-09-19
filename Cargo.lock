@@ -3394,6 +3394,7 @@ dependencies = [
  "quixotic-plecostomus-proxy",
  "rand 0.10.2",
  "rcgen",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",

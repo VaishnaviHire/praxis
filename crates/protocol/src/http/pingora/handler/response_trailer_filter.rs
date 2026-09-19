@@ -55,8 +55,9 @@ pub(super) fn execute(
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
 mod tests {
-    use super::*;
     use praxis_filter::{FilterRegistry, Request};
+
+    use super::*;
 
     /// Create a minimal PingoraRequestCtx for testing.
     fn make_test_context() -> PingoraRequestCtx {

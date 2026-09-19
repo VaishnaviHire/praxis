@@ -1723,7 +1723,7 @@ async fn send_streaming_circuit_half_open_probe_recovers() {
 }
 
 // -----------------------------------------------------------------------------
-// HTTP/2 cleartext (prior-knowledge) helpers
+// HTTP/2 cleartext (prior-knowledge) utilities
 // -----------------------------------------------------------------------------
 
 #[expect(clippy::too_many_lines, reason = "H2 server setup")]

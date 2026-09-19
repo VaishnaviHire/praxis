@@ -29,7 +29,7 @@ mod generic;
 /// # Examples
 ///
 /// ```ignore
-/// // Crate-internal helper: `crate::json_ops::simd_scan::find_json_string_delim`.
+/// // Crate-internal utility: `crate::json_ops::simd_scan::find_json_string_delim`.
 /// assert_eq!(find_json_string_delim(b"hello"), None);
 /// assert_eq!(find_json_string_delim(b"hel\"lo"), Some(3));
 /// assert_eq!(find_json_string_delim(b"ab\x01cd"), Some(2));

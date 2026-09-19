@@ -1426,8 +1426,8 @@ impl FilteredSubrequestExecutor {
             // (the guard at the top of the streaming arm), and a `SizeLimit` mode only
             // arises when no response-body filter runs — in which case nothing writes
             // `completion_body` and it stays empty. So the only mode under which a
-            // completion body can exist is `Stream`, for which the helper returns
-            // exactly `max_response_bytes`. Routing through the shared helper keeps all
+            // completion body can exist is `Stream`, for which the utility returns
+            // exactly `max_response_bytes`. Routing through the shared utility keeps all
             // three sites uniform and correct-by-construction should that guard ever
             // be relaxed to admit a tighter response mode here.
             if let Some(limit) = response_body_overflow_limit(

@@ -989,7 +989,7 @@ impl HttpFilterContext<'_> {
 }
 
 // -----------------------------------------------------------------------------
-// Header Resolution Helpers
+// Header Resolution Utilities
 // -----------------------------------------------------------------------------
 
 /// Walk the trusted mutation log forward and collect the effective values.

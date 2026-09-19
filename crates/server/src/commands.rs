@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Praxis Contributors
 
-//! Check-mode command helpers shared by `--validate` and `--dump`.
+//! Check-mode command utilities shared by `--validate` and `--dump`.
 //!
 //! This module provides the entry points for Praxis's non-server CLI modes:
 //! configuration validation (`--validate`) and effective-config dumping

@@ -111,6 +111,19 @@ impl Runner {
             self.run_load(proxy, self.scenario.warmup).await?;
         }
 
+        let mut results = self.run_measurement_rounds_with_metrics(proxy).await?;
+        results.compute_median();
+        info!(scenario = %self.scenario.name, "benchmark complete");
+
+        self.cleanup(proxy, &mut proxy_proc, &mut backend).await;
+        Ok(results)
+    }
+
+    /// Run measurement rounds and collect resource metrics.
+    async fn run_measurement_rounds_with_metrics(
+        &self,
+        proxy: &dyn ProxyConfig,
+    ) -> Result<ScenarioResults, BenchmarkError> {
         let mut collector = proxy.container_name().map(DockerStatsCollector::new);
         if let Some(ref mut stats_collector) = collector {
             info!(
@@ -133,10 +146,6 @@ impl Runner {
             run.resource.clone_from(&resource);
         }
 
-        results.compute_median();
-        info!(scenario = %self.scenario.name, "benchmark complete");
-
-        self.cleanup(proxy, &mut proxy_proc, &mut backend).await;
         Ok(results)
     }
 

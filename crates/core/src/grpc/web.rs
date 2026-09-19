@@ -189,7 +189,7 @@ impl GrpcWebKind {
 }
 
 // -----------------------------------------------------------------------------
-// Helpers
+// Utilities
 // -----------------------------------------------------------------------------
 
 /// Strip an ASCII-case-insensitive prefix.
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::too_many_lines, reason = "comprehensive edge case coverage")]
-    fn strip_prefix_helper_edge_cases() {
+    fn strip_prefix_utility_edge_cases() {
         use super::strip_prefix_ignore_ascii_case;
 
         assert_eq!(

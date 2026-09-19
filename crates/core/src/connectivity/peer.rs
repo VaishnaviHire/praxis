@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Praxis Contributors
 
-//! Shared [`HttpPeer`] construction helpers for TLS, SNI, and connection options.
+//! Shared [`HttpPeer`] construction utilities for TLS, SNI, and connection options.
 //!
 //! Used by both the protocol layer's upstream peer builder and the
 //! filter layer's sub-request executor to avoid duplicating TLS
@@ -1042,7 +1042,7 @@ mod tests {
     }
 
     // Poll until the lookup has been entered (calls > 0), yielding cooperatively.
-    #[expect(clippy::panic, reason = "test helper panics on timeout to fail the test early")]
+    #[expect(clippy::panic, reason = "test utility panics on timeout to fail the test early")]
     async fn await_lookup_started(calls: &AtomicUsize) {
         for _ in 0..1_000 {
             if calls.load(Ordering::SeqCst) > 0 {

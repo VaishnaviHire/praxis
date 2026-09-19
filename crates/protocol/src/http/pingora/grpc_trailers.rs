@@ -123,8 +123,9 @@ fn build_header(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use praxis_core::grpc::GrpcKind;
+
+    use super::*;
 
     fn make_test_mapping_with_message() -> GrpcErrorMapping {
         GrpcErrorMapping::new(GrpcKind::Grpc, true)
@@ -237,11 +238,7 @@ mod tests {
             assert!(header_val.to_str().is_ok());
 
             let val_str = header_val.to_str().unwrap();
-            assert!(
-                val_str.parse::<u32>().is_ok(),
-                "Invalid gRPC status: {}",
-                val_str
-            );
+            assert!(val_str.parse::<u32>().is_ok(), "Invalid gRPC status: {}", val_str);
         }
     }
 

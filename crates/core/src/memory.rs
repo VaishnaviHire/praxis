@@ -123,7 +123,7 @@ impl MemoryPressure {
 }
 
 // -----------------------------------------------------------------------------
-// Platform Helpers
+// Platform Utilities
 // -----------------------------------------------------------------------------
 
 /// Whether a cached RSS sample taken at `last_ms` is stale relative to

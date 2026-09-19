@@ -557,7 +557,11 @@ mod tests {
             BenchmarkError::ParseError { tool, .. } => {
                 assert_eq!(tool, "vegeta", "parse error should reference vegeta");
             },
-            other => panic!("expected ParseError, got: {other}"),
+            other @ (BenchmarkError::ToolNotFound(_)
+            | BenchmarkError::ToolFailed { .. }
+            | BenchmarkError::Io(_)
+            | BenchmarkError::Json(_)
+            | BenchmarkError::Yaml(_)) => panic!("expected ParseError, got: {other}"),
         }
     }
 

@@ -444,7 +444,7 @@ mod macro_tests {
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
-/// Shared helpers for filter unit tests.
+/// Shared utilities for filter unit tests.
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(clippy::expect_used, reason = "test utilities")]
 pub(crate) mod test_utils {

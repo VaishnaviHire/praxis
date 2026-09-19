@@ -27,7 +27,7 @@ macro_rules! impl_condition_deserialize {
     ($cond:ident, $match_:ty, $label:expr) => {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct ConditionDeserHelper {
+        struct ConditionDeserUtility {
             /// The `when` predicate, if present.
             #[serde(default)]
             when: Option<$match_>,
@@ -39,8 +39,8 @@ macro_rules! impl_condition_deserialize {
 
         impl<'de> serde::Deserialize<'de> for $cond {
             fn deserialize<D: serde::de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let helper = ConditionDeserHelper::deserialize(deserializer)?;
-                match (helper.when, helper.unless) {
+                let utility = ConditionDeserUtility::deserialize(deserializer)?;
+                match (utility.when, utility.unless) {
                     (Some(m), None) => Ok($cond::When(m)),
                     (None, Some(m)) => Ok($cond::Unless(m)),
                     (Some(_), Some(_)) => Err(serde::de::Error::custom(concat!(

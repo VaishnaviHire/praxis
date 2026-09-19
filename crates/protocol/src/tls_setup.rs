@@ -130,8 +130,9 @@ pub(crate) fn build_tls_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use praxis_tls::{CaConfig, CertKeyPair, ClientCertMode};
+
+    use super::*;
 
     /// Generate test certificates for TLS testing.
     ///

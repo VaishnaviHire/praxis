@@ -10,7 +10,7 @@
 
 #![cfg(feature = "spiffe")]
 // Integration tests carry the same suppressions the crate's in-module tests do:
-// the workspace gate denies panicking helpers and test functions outside a
+// the workspace gate denies panicking utilities and test functions outside a
 // cfg(test) module, neither of which applies to a standalone test binary.
 #![allow(
     clippy::allow_attributes_without_reason,
