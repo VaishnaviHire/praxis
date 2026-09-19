@@ -381,8 +381,11 @@ publish-dry-run:
 publish:
 	cargo publish --workspace --locked
 
+# Coverage instrumentation slows server startup, so give the test-readiness
+# helpers a generous deadline (see PRAXIS_TEST_READY_TIMEOUT_MS) to keep the
+# merge-blocking gate from failing spuriously on loaded runners.
 coverage:
-	cargo llvm-cov --workspace --html --output-dir target/coverage \
+	PRAXIS_TEST_READY_TIMEOUT_MS=30000 cargo llvm-cov --workspace --html --output-dir target/coverage \
 		--exclude benchmarks \
 		--exclude praxis-tests-conformance \
 		--exclude xtask \
@@ -390,7 +393,7 @@ coverage:
 		--fail-under-lines 96
 
 coverage-check:
-	cargo llvm-cov --workspace --json \
+	PRAXIS_TEST_READY_TIMEOUT_MS=30000 cargo llvm-cov --workspace --json \
 		--exclude benchmarks \
 		--exclude praxis-tests-conformance \
 		--exclude xtask \

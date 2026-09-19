@@ -18,6 +18,8 @@ use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, Ke
 use rustls::ClientConfig;
 use tempfile::TempDir;
 
+use crate::net::wait::{DEFAULT_HTTP_TIMEOUT, poll_until_ready, ready_timeout};
+
 // -----------------------------------------------------------------------------
 // TestCertificates
 // -----------------------------------------------------------------------------
@@ -570,20 +572,24 @@ pub fn tls_connection_rejected(addr: &str, data: &[u8], client_config: &Arc<Clie
 // TLS Readiness
 // -----------------------------------------------------------------------------
 
-/// Block until a TLS handshake to `addr` succeeds, or panic
-/// after 5 seconds.
+/// Block until a TLS handshake to `addr` succeeds, or panic once the
+/// readiness deadline (default 5 seconds) passes.
+///
+/// Override the deadline with `PRAXIS_TEST_READY_TIMEOUT_MS`.
 ///
 /// # Panics
 ///
-/// Panics if the server does not become ready within 5 seconds.
+/// Panics if the server does not become ready before the deadline.
 pub fn wait_for_tls(addr: &str, client_config: &Arc<ClientConfig>) {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
 
-    for _ in 0..500 {
-        let result = rt.block_on(async {
+    let timeout = ready_timeout(DEFAULT_HTTP_TIMEOUT);
+
+    let ready = poll_until_ready(timeout, || {
+        rt.block_on(async {
             let connector = tokio_rustls::TlsConnector::from(Arc::clone(client_config));
             let server_name = rustls::pki_types::ServerName::try_from("localhost").expect("server name");
 
@@ -591,31 +597,32 @@ pub fn wait_for_tls(addr: &str, client_config: &Arc<ClientConfig>) {
                 return false;
             };
             connector.connect(server_name, tcp).await.is_ok()
-        });
-        if result {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    panic!("TLS server at {addr} did not become ready within 5s");
+        })
+    });
+
+    assert!(ready, "TLS server at {addr} did not become ready within {timeout:?}");
 }
 
-/// Block until an HTTPS (HTTP/2 over TLS) request to `addr`
-/// gets a valid response, or panic after 5 seconds.
+/// Block until an HTTPS (HTTP/2 over TLS) request to `addr` gets a valid
+/// response, or panic once the readiness deadline (default 5 seconds) passes.
+///
+/// Override the deadline with `PRAXIS_TEST_READY_TIMEOUT_MS`.
 ///
 /// # Panics
 ///
-/// Panics if the server does not return valid HTTP within 5 seconds.
+/// Panics if the server does not return valid HTTP before the deadline.
 pub fn wait_for_https(addr: &str, client_config: &Arc<ClientConfig>) {
-    for _ in 0..500 {
-        if let Some((status, _)) = try_h2_get(addr, "/", client_config)
-            && status > 0
-        {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    panic!("HTTPS server at {addr} did not return valid HTTP within 5s");
+    let timeout = ready_timeout(DEFAULT_HTTP_TIMEOUT);
+
+    let ready = poll_until_ready(
+        timeout,
+        || matches!(try_h2_get(addr, "/", client_config), Some((status, _)) if status > 0),
+    );
+
+    assert!(
+        ready,
+        "HTTPS server at {addr} did not return valid HTTP within {timeout:?}"
+    );
 }
 
 /// Attempt an H2-over-TLS GET, returning `None` on any failure.
