@@ -120,3 +120,175 @@ fn build_header(
 // Tested via integration tests in tests/integration/tests/suite/examples/grpc_status_errors.rs
 // and related files, which verify the HTTP/2 END_STREAM behavior and protocol-level details
 // that require a full Session context.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use praxis_core::grpc::GrpcKind;
+
+    fn make_test_mapping_with_message() -> GrpcErrorMapping {
+        GrpcErrorMapping::new(GrpcKind::Grpc, true)
+    }
+
+    fn make_test_mapping_without_message() -> GrpcErrorMapping {
+        GrpcErrorMapping::new(GrpcKind::GrpcProto, false)
+    }
+
+    #[test]
+    fn test_grpc_status_code_basic_mappings() {
+        let status_ok = GrpcStatusCode::from_http_status(200);
+        assert_eq!(status_ok, GrpcStatusCode::Ok);
+
+        let status_unavailable = GrpcStatusCode::from_http_status(503);
+        assert_eq!(status_unavailable, GrpcStatusCode::Unavailable);
+
+        let status_internal = GrpcStatusCode::from_http_status(500);
+        assert_eq!(status_internal, GrpcStatusCode::Internal);
+    }
+
+    #[test]
+    fn test_grpc_status_code_mappings() {
+        let test_cases = vec![
+            (200, GrpcStatusCode::Ok),
+            (400, GrpcStatusCode::InvalidArgument),
+            (401, GrpcStatusCode::Unauthenticated),
+            (403, GrpcStatusCode::PermissionDenied),
+            (404, GrpcStatusCode::NotFound),
+            (429, GrpcStatusCode::ResourceExhausted),
+            (499, GrpcStatusCode::Cancelled),
+            (500, GrpcStatusCode::Internal),
+            (501, GrpcStatusCode::Unimplemented),
+            (503, GrpcStatusCode::Unavailable),
+            (504, GrpcStatusCode::DeadlineExceeded),
+        ];
+
+        for (http_status, expected_grpc_status) in test_cases {
+            let grpc_status = GrpcStatusCode::from_http_status(http_status);
+            assert_eq!(
+                grpc_status, expected_grpc_status,
+                "HTTP {} should map to {:?}",
+                http_status, expected_grpc_status
+            );
+        }
+    }
+
+    #[test]
+    fn test_grpc_message_encoding() {
+        // Simple ASCII message
+        let simple = "Request failed";
+        let encoded = encode_grpc_message(simple);
+        assert_eq!(encoded, "Request%20failed");
+
+        // Message with special characters
+        let special = "Bad request: invalid field 'name'";
+        let encoded = encode_grpc_message(special);
+        assert!(encoded.contains("%20")); // space
+        assert!(encoded.contains("%27")); // single quote
+
+        // Empty message
+        let empty = "";
+        let encoded = encode_grpc_message(empty);
+        assert_eq!(encoded, "");
+
+        // Message with control characters
+        let with_newline = "Error\nDetails";
+        let encoded = encode_grpc_message(with_newline);
+        assert!(encoded.contains("%0A")); // newline
+
+        // Unicode message
+        let unicode = "Error: 日本語";
+        let encoded = encode_grpc_message(unicode);
+        assert!(encoded.len() > unicode.len());
+    }
+
+    #[test]
+    fn test_grpc_error_mapping_include_message() {
+        let mapping_with = make_test_mapping_with_message();
+        assert!(mapping_with.include_message());
+
+        let mapping_without = make_test_mapping_without_message();
+        assert!(!mapping_without.include_message());
+    }
+
+    #[test]
+    fn test_grpc_status_as_header_value() {
+        let codes = vec![
+            GrpcStatusCode::Ok,
+            GrpcStatusCode::Cancelled,
+            GrpcStatusCode::Unknown,
+            GrpcStatusCode::InvalidArgument,
+            GrpcStatusCode::DeadlineExceeded,
+            GrpcStatusCode::NotFound,
+            GrpcStatusCode::AlreadyExists,
+            GrpcStatusCode::PermissionDenied,
+            GrpcStatusCode::ResourceExhausted,
+            GrpcStatusCode::FailedPrecondition,
+            GrpcStatusCode::Aborted,
+            GrpcStatusCode::OutOfRange,
+            GrpcStatusCode::Unimplemented,
+            GrpcStatusCode::Internal,
+            GrpcStatusCode::Unavailable,
+            GrpcStatusCode::DataLoss,
+            GrpcStatusCode::Unauthenticated,
+        ];
+
+        for code in codes {
+            let header_val = code.as_header_value();
+            assert!(header_val.to_str().is_ok());
+
+            let val_str = header_val.to_str().unwrap();
+            assert!(
+                val_str.parse::<u32>().is_ok(),
+                "Invalid gRPC status: {}",
+                val_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_edge_case_http_status_codes() {
+        // These should all complete without panicking
+        let _grpc_status = GrpcStatusCode::from_http_status(0);
+        let _grpc_status = GrpcStatusCode::from_http_status(100);
+        let _grpc_status = GrpcStatusCode::from_http_status(301);
+        let _grpc_status = GrpcStatusCode::from_http_status(999);
+    }
+
+    #[test]
+    fn test_message_encoding_edge_cases() {
+        // Very long message
+        let long_message = "Error: ".to_string() + &"x".repeat(1000);
+        let encoded = encode_grpc_message(&long_message);
+        assert!(encoded.len() >= long_message.len());
+
+        // Message with only special characters
+        let special_only = "\n\r\t";
+        let encoded = encode_grpc_message(special_only);
+        assert!(!encoded.is_empty());
+        assert!(encoded.starts_with('%'));
+
+        // Message with null bytes
+        let with_null = "Error\0Details";
+        let encoded = encode_grpc_message(with_null);
+        assert!(encoded.contains("%00"));
+
+        // Already percent-encoded message
+        let already_encoded = "Error%20message";
+        let encoded = encode_grpc_message(already_encoded);
+        assert!(encoded.contains("%25")); // % itself gets encoded
+    }
+
+    #[test]
+    fn test_content_type_variations() {
+        let kinds = vec![
+            (GrpcKind::Grpc, "application/grpc"),
+            (GrpcKind::GrpcProto, "application/grpc+proto"),
+            (GrpcKind::GrpcJson, "application/grpc+json"),
+        ];
+
+        for (kind, expected_ct) in kinds {
+            let mapping = GrpcErrorMapping::new(kind, true);
+            assert_eq!(mapping.content_type().to_str().unwrap(), expected_ct);
+        }
+    }
+}

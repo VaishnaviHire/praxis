@@ -1150,4 +1150,175 @@ filter_chains:
         let guard = init_tracing(&config).expect("tracing initialization should succeed");
         drop(guard);
     }
+
+    #[test]
+    fn is_valid_admin_log_level_includes_off() {
+        assert!(is_valid_admin_log_level("off"));
+        assert!(is_valid_admin_log_level("OFF"));
+        assert!(is_valid_admin_log_level("error"));
+        assert!(is_valid_admin_log_level("warn"));
+        assert!(!is_valid_admin_log_level("bogus"));
+    }
+
+    #[test]
+    fn module_path_edge_cases() {
+        assert!(!is_valid_module_path("9praxis"));
+        assert!(!is_valid_module_path("praxis-core"));
+        assert!(is_valid_module_path("_praxis"));
+        assert!(is_valid_module_path("praxis123"));
+    }
+
+    #[test]
+    fn validate_logging_with_valid_config() {
+        let config = config_with_overrides(HashMap::new());
+        assert!(validate_logging(&config).is_ok());
+    }
+
+    #[test]
+    fn validate_log_overrides_with_invalid_module() {
+        let mut overrides = HashMap::new();
+        overrides.insert("bad module".to_owned(), "info".to_owned());
+        let config = config_with_overrides(overrides);
+        let err = validate_log_overrides(&config).unwrap_err();
+        assert!(err.to_string().contains("invalid module path"));
+    }
+
+    #[test]
+    fn build_baseline_directive_includes_overrides() {
+        let mut overrides = HashMap::new();
+        overrides.insert("praxis_filter".to_owned(), "debug".to_owned());
+        let config = config_with_overrides(overrides);
+        let baseline = build_baseline_directive(&config).expect("should build baseline");
+        assert!(baseline.contains("praxis_filter=debug"));
+    }
+
+    #[test]
+    fn log_writer_stdout_vs_stderr() {
+        let stdout_cfg = LoggingConfig {
+            output: LogOutput::Stdout,
+            non_blocking: true,
+            ..LoggingConfig::default()
+        };
+        let stderr_cfg = LoggingConfig {
+            output: LogOutput::Stderr,
+            non_blocking: false,
+            ..LoggingConfig::default()
+        };
+        assert!(writer::build_log_writer(&stdout_cfg).is_ok());
+        assert!(writer::build_log_writer(&stderr_cfg).is_ok());
+    }
+
+    #[test]
+    fn build_log_writer_file_requires_path() {
+        let cfg = LoggingConfig {
+            output: LogOutput::File,
+            file_path: None,
+            ..LoggingConfig::default()
+        };
+        match writer::build_log_writer(&cfg) {
+            Err(err) => assert!(err.to_string().contains("file_path is required")),
+            Ok(_) => panic!("expected error for missing file_path"),
+        }
+    }
+
+    #[test]
+    fn build_file_writer_with_nested_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("b").join("test.log");
+        let cfg = LoggingConfig {
+            output: LogOutput::File,
+            file_path: Some(path.to_string_lossy().into_owned()),
+            non_blocking: false,
+            ..LoggingConfig::default()
+        };
+        let _bundle = writer::build_log_writer(&cfg).expect("should create nested dirs");
+        assert!(path.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn tracing_guard_provides_log_level_state() {
+        let config = config_with_overrides(HashMap::new());
+        let baseline = build_baseline_directive(&config).unwrap();
+        let env_filter = tracing_subscriber::EnvFilter::new(&baseline);
+        let (_filter_layer, reload_handle) = reload::Layer::new(env_filter);
+        let log_level = LogLevelState::new(baseline, reload_handle);
+        let guard = TracingGuard {
+            #[cfg(feature = "otel")]
+            provider: None,
+            worker_guard: None,
+            #[cfg(feature = "otel")]
+            _otel_runtime: None,
+            log_level: Arc::clone(&log_level),
+        };
+        let state = guard.log_level_state();
+        assert!(Arc::ptr_eq(&state, &log_level));
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn append_signal_path_to_base_endpoint() {
+        assert_eq!(
+            append_signal_path_if_needed("http://host:4317"),
+            "http://host:4317/v1/traces"
+        );
+        assert_eq!(
+            append_signal_path_if_needed("http://host:4317/"),
+            "http://host:4317/v1/traces"
+        );
+        assert_eq!(
+            append_signal_path_if_needed("http://host:4317/custom"),
+            "http://host:4317/custom"
+        );
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn build_metadata_map_with_headers() {
+        use std::collections::HashMap;
+        let mut headers = HashMap::new();
+        headers.insert("x-test".to_owned(), "value".to_owned());
+        let metadata = build_metadata_map(&headers).expect("should build");
+        assert_eq!(metadata.len(), 1);
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn build_metadata_map_rejects_invalid_name() {
+        use std::collections::HashMap;
+        let mut headers = HashMap::new();
+        headers.insert("invalid name".to_owned(), "value".to_owned());
+        let err = build_metadata_map(&headers).unwrap_err();
+        assert!(err.to_string().contains("invalid OTLP header name"));
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn resolve_otlp_protocol_from_default_and_env() {
+        std::env::remove_var(crate::config::OTLP_PROTOCOL_ENV_VAR);
+        assert_eq!(resolve_otlp_protocol(), "grpc");
+        std::env::set_var(crate::config::OTLP_PROTOCOL_ENV_VAR, "http/protobuf");
+        assert_eq!(resolve_otlp_protocol(), "http/protobuf");
+        std::env::remove_var(crate::config::OTLP_PROTOCOL_ENV_VAR);
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn build_span_exporter_rejects_unsupported_protocol() {
+        let err = build_span_exporter("http://host:4317", None, "unknown").unwrap_err();
+        assert!(err.to_string().contains("unsupported OTLP protocol"));
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn build_otel_resource_uses_config_fields() {
+        use crate::config::TelemetryConfig;
+        let config = TelemetryConfig {
+            service_name: Some("test-svc".to_owned()),
+            service_version: Some("1.0.0".to_owned()),
+            environment: Some("prod".to_owned()),
+            ..Default::default()
+        };
+        let resource = build_otel_resource(&config);
+        assert!(!resource.is_empty());
+    }
 }
