@@ -478,7 +478,7 @@ fn register_http_builtins(filters: &mut HashMap<String, FilterRegistration>) {
     use crate::builtins::{
         AccessLogFilter, CircuitBreakerFilter, CompressionFilter, CorsFilter, CredentialInjectionFilter, CsrfFilter,
         ForwardedHeadersFilter, GrpcDetectionFilter, GrpcStatusFilter, GrpcTimeoutFilter, GrpcWebFilter, HeaderFilter,
-        IpAclFilter, JsonBodyFieldFilter, JsonBodyFilter, JsonRpcFilter, PathRewriteFilter, PeerIdentityTrustFilter,
+        IpAclFilter, JsonBodyFieldFilter, JsonBodyFilter, JsonRpcFilter, PathRewriteFilter,
         RateLimitFilter, RedirectFilter, RequestIdFilter, StaticResponseFilter, TimeoutFilter, TraceContextFilter,
         UrlRewriteFilter,
     };
@@ -528,7 +528,8 @@ fn register_http_builtins(filters: &mut HashMap<String, FilterRegistration>) {
     register_http(filters, "json_body", JsonBodyFilter::from_config);
     register_http(filters, "json_body_field", JsonBodyFieldFilter::from_config);
     register_http(filters, "json_rpc", JsonRpcFilter::from_config);
-    register_http_security(filters, "peer_identity_trust", PeerIdentityTrustFilter::from_config);
+    #[cfg(feature = "spiffe")]
+    register_http_security(filters, "peer_identity_trust", crate::builtins::PeerIdentityTrustFilter::from_config);
 }
 
 /// Registers a single HTTP filter factory with [`SecurityClass::Standard`].
@@ -688,6 +689,7 @@ mod tests {
             "iterative_request_router should be registered"
         );
         assert!(names.contains(&"json_rpc"), "json_rpc should be registered");
+        #[cfg(feature = "spiffe")]
         assert!(
             names.contains(&"peer_identity_trust"),
             "peer_identity_trust should be registered"
@@ -758,7 +760,7 @@ mod tests {
     #[test]
     fn builtin_security_filters_classified() {
         let registry = FilterRegistry::with_builtins();
-        #[allow(unused_mut, reason = "mutated only with basic-auth-filter")]
+        #[allow(unused_mut, reason = "mutated only with basic-auth-filter or spiffe")]
         let mut expected_security = vec![
             "cors",
             "credential_injection",
@@ -766,11 +768,12 @@ mod tests {
             "forwarded_headers",
             "guardrails",
             "ip_acl",
-            "peer_identity_trust",
             "rate_limit",
         ];
         #[cfg(feature = "basic-auth-filter")]
         expected_security.push("basic_auth");
+        #[cfg(feature = "spiffe")]
+        expected_security.push("peer_identity_trust");
 
         for name in &expected_security {
             assert!(
@@ -831,6 +834,7 @@ mod tests {
         );
         assert!(sec.contains(&"guardrails"), "guardrails should be in security_filters");
         assert!(sec.contains(&"ip_acl"), "ip_acl should be in security_filters");
+        #[cfg(feature = "spiffe")]
         assert!(
             sec.contains(&"peer_identity_trust"),
             "peer_identity_trust should be in security_filters"

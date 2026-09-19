@@ -45,6 +45,10 @@ router-json-aliases = []
 # consumer yet; provided for out-of-tree callout filters.
 chain-binding = []
 
+# The `peer_identity_trust` filter (mTLS peer-identity authorization). Off by
+# default; experimental. Grouped with the server's `spiffe` feature.
+spiffe = []
+
 # ---------------------------------------------------------------------------
 # Lint configuration
 #

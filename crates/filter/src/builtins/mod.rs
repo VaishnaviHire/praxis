@@ -12,12 +12,14 @@ pub use http::BasicAuthFilter;
 pub use http::CloudEventsFilter;
 #[cfg(feature = "iterative-request-router")]
 pub use http::IterativeRequestRouterFilter;
+#[cfg(feature = "spiffe")]
+pub use http::PeerIdentityTrustFilter;
 pub use http::{
     AccessLogFilter, CircuitBreakerFilter, CompressionFilter, ContainsValue, CorsFilter, CredentialInjectionFilter,
     CsrfFilter, DisallowedOriginMode, EndpointReselector, EndpointSelectorFilter, ForwardedHeadersFilter,
     GrpcDetectionFilter, GrpcStatusFilter, GrpcTimeoutFilter, GrpcWebFilter, GuardrailsAction, GuardrailsFilter,
     HeaderFilter, IpAclFilter, JsonBodyFieldFilter, JsonBodyFilter, JsonBodyOps, JsonRpcFilter, LoadBalancerFilter,
-    PathRewriteFilter, PeerIdentityTrustFilter, PiiKind, RateLimitFilter, RateLimitMode, RedirectFilter,
+    PathRewriteFilter, PiiKind, RateLimitFilter, RateLimitMode, RedirectFilter,
     RedirectStatus, RequestIdFilter, RouterFilter, RuleTargetKind, SessionStore, SessionStoreRegistry,
     StaticResponseFilter, StickySessionsFilter, TimeoutFilter, TraceContextFilter, UrlRewriteFilter,
     access_record_already_emitted, bodyless_response, emit_access_record, encode_trailer_frame, has_dot_dot_traversal,

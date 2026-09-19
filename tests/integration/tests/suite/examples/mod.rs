@@ -59,6 +59,7 @@ mod path_based_routing;
 mod path_rewriting;
 mod payload_examples;
 mod payload_processing;
+#[cfg(feature = "spiffe")]
 mod peer_identity_trust;
 mod pipeline;
 #[cfg(feature = "policy-engine")]
