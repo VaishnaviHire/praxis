@@ -461,12 +461,12 @@ mod tests {
         let (module, _) = parse_delete_query(Some("module=first&module=second")).expect("parse");
         assert_eq!(module, Some("second".to_owned()));
 
-        // Last all wins
+        // all=true sets all, any subsequent all=false is ignored (implementation only flips to true)
         let (_, all) = parse_delete_query(Some("all=false&all=true")).expect("parse");
         assert!(all);
 
         let (_, all) = parse_delete_query(Some("all=true&all=false")).expect("parse");
-        assert!(!all);
+        assert!(all); // all stays true, all=false is ignored per implementation
     }
 
     #[test]

@@ -384,9 +384,9 @@ mod tests {
         assert!(result.is_err(), "should fail when stream buffer exceeds limit");
         let err = result.unwrap_err();
         assert!(
-                err.to_string().contains("stream_buffer size limit"),
-                "error should mention stream_buffer limit"
-            );
+            err.to_string().contains("stream_buffer size limit"),
+            "error should mention stream_buffer limit"
+        );
     }
 
     #[test]
