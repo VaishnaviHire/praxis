@@ -28,6 +28,26 @@ It is recommended you run `make setup-hooks` to set
 up pre-commit hooks that ensure linting is always
 done before committing code.
 
+## Dev Utilities
+
+For rapid development and testing:
+
+**Echo server** (quick HTTP test backend):
+
+```console
+cargo xtask echo
+cargo xtask echo --status 201 --body '{"created": true}'
+```
+
+**Debug server** (run with dev settings):
+
+```console
+cargo xtask debug
+cargo xtask debug path/to/config.yaml
+```
+
+See the [Quickstart](../quickstart.md#quick-test-servers) for full usage.
+
 ## Build
 
 ```console
