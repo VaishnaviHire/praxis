@@ -38,6 +38,7 @@ pub fn try_acquire_global() -> (bool, Option<OwnedSemaphorePermit>) {
     let Some(sem) = GLOBAL_LIMIT.get() else {
         return (false, None);
     };
+
     if let Ok(permit) = Arc::clone(sem).try_acquire_owned() {
         (false, Some(permit))
     } else {
