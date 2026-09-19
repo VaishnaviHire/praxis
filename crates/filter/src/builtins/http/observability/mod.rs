@@ -13,3 +13,20 @@ pub use access_log::{
 };
 pub use request_id::RequestIdFilter;
 pub use trace_context::TraceContextFilter;
+
+#[cfg(feature = "cloud-events-filter")]
+mod cloud_events;
+#[cfg(feature = "cloud-events-filter")]
+pub use cloud_events::CloudEventsFilter;
+
+// -----------------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------------
+
+/// Header names rejected at config load time.
+const SENSITIVE_HEADERS: &[&str] = &["authorization", "proxy-authorization", "cookie", "set-cookie"];
+/// Return whether a header is prohibited from observability output.
+fn is_sensitive_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    SENSITIVE_HEADERS.contains(&lower.as_str())
+}
