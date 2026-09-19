@@ -29,8 +29,24 @@ jobs:
           app-id: ${{ secrets.PRAXIS_BOT_APP_ID }}
           private-key: ${{ secrets.PRAXIS_BOT_APP_PRIVATE_KEY }}
 
+      - name: Check current triage state
+        id: triage-state
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          if gh issue view "$ISSUE" --repo "$GH_REPO" --json labels \
+              --jq '.labels[].name' | grep -qx 'triage/accepted'; then
+            echo "accepted=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "accepted=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Add triage/needs-triage on new issue
-        if: github.event.action == 'opened' && !github.event.issue.milestone
+        if: >-
+          github.event.action == 'opened' && !github.event.issue.milestone
+          && steps.triage-state.outputs.accepted != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
@@ -51,7 +67,9 @@ jobs:
             --add-label "triage/accepted"
 
       - name: Revert to needs-triage on demilestone
-        if: github.event.action == 'demilestoned'
+        if: >-
+          github.event.action == 'demilestoned'
+          && steps.triage-state.outputs.accepted != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
