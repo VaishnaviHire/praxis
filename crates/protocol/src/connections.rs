@@ -76,6 +76,12 @@ mod tests {
         assert!(exceeded, "third acquire should exceed limit of 2");
         assert!(permit.is_none(), "exhausted limit should return no permit");
 
+        init_global_limit(100);
+
+        let (exceeded, still_none) = try_acquire_global();
+        assert!(exceeded, "limit should still be 2 after re-init");
+        assert!(still_none.is_none(), "re-init should be a no-op");
+
         drop(first);
 
         let (exceeded, reclaimed) = try_acquire_global();
