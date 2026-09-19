@@ -55,7 +55,6 @@ pub(crate) fn is_default_cert_mode(mode: &ClientCertMode) -> bool {
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
 mod tests {
     use super::*;
 
