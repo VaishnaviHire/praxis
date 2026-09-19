@@ -55,6 +55,7 @@ mod factory;
 mod filter;
 mod filtered_subrequest;
 mod grpc_response;
+pub mod json_ops;
 pub(crate) mod load_balancing;
 mod metrics;
 pub(crate) mod path_match;
@@ -443,6 +444,7 @@ mod macro_tests {
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
+/// Shared helpers for filter unit tests.
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(clippy::expect_used, reason = "test utilities")]
 pub(crate) mod test_utils {
@@ -456,6 +458,7 @@ pub(crate) mod test_utils {
     /// Deterministic ID generator for tests (seed=0).
     static TEST_ID_GENERATOR: LazyLock<IdGenerator> = LazyLock::new(|| IdGenerator::with_seed(0));
 
+    /// Build a minimal HTTP request for filter unit tests.
     pub(crate) fn make_request(method: Method, path: &str) -> Request {
         Request {
             method,
@@ -464,6 +467,7 @@ pub(crate) mod test_utils {
         }
     }
 
+    /// Build a default [`HttpFilterContext`] for filter unit tests.
     #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
     #[allow(
         clippy::too_many_lines,
