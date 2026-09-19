@@ -80,6 +80,8 @@ pub(crate) use self::{
 };
 #[cfg(feature = "iterative-request-router")]
 pub(crate) use self::{continuation::SubrequestCompletion, sanitize::normalize_response_status};
+#[cfg(feature = "chain-binding")]
+use crate::credentials::{PendingCredentials, ResolvedDestination};
 use crate::{
     FilterAction, FilterError, FilterPipeline, StreamTermination, StreamTerminationCause, SubRequest,
     SubRequestResponseMode, SubResponse,
@@ -88,8 +90,6 @@ use crate::{
     extensions::{RequestExtensions, SelectedClusterApplication},
     results::RetainedFilterResults,
 };
-#[cfg(feature = "chain-binding")]
-use crate::credentials::{PendingCredentials, ResolvedDestination};
 
 /// Idle timeout applied to a streaming sub-request transport.
 ///
