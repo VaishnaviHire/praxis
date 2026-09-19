@@ -85,10 +85,11 @@ use crate::{
     SubRequestResponseMode, SubResponse,
     actions::Rejection,
     context::PendingStreamChunks,
-    credentials::{PendingCredentials, ResolvedDestination},
     extensions::{RequestExtensions, SelectedClusterApplication},
     results::RetainedFilterResults,
 };
+#[cfg(feature = "chain-binding")]
+use crate::credentials::{PendingCredentials, ResolvedDestination};
 
 /// Idle timeout applied to a streaming sub-request transport.
 ///
@@ -1059,6 +1060,7 @@ impl FilteredSubrequestExecutor {
                 .and_then(|value| value.to_str().ok())
                 .map(Arc::from);
             // Fall back to the transport only when no override is set.
+            #[cfg(feature = "chain-binding")]
             let logical_authority: Arc<str> = authority_override
                 .clone()
                 .unwrap_or_else(|| Arc::clone(&destination_authority));
@@ -1096,6 +1098,7 @@ impl FilteredSubrequestExecutor {
             // into a request bound for the authority each credential was issued
             // for. Injecting after sanitization keeps the credential header from
             // being stripped as hop-by-hop/framing.
+            #[cfg(feature = "chain-binding")]
             if let Some(pending) = filter_ctx.extensions.remove::<PendingCredentials>() {
                 let destination = ResolvedDestination {
                     authority: &logical_authority,

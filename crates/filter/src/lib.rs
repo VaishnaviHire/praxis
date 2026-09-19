@@ -48,6 +48,7 @@ pub mod body;
 pub mod builtins;
 mod condition;
 mod context;
+#[cfg(feature = "chain-binding")]
 mod credentials;
 mod error_response;
 mod extensions;
@@ -92,6 +93,7 @@ pub use context::{
     HttpFilterContext, PendingHeaderResult, Request, Response, StreamTermination, StreamTerminationCause,
     SubRequestResponseMode, TrustedHeaderMutation,
 };
+#[cfg(feature = "chain-binding")]
 pub use credentials::{DeferredCredential, PendingCredentials};
 pub use error_response::{
     ErrorResponseContext, ErrorResponseFormatter, ErrorResponseFormatterHandle, FormattedErrorResponse,
