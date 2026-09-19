@@ -2,16 +2,19 @@
 
 ## Supported Versions
 
-Praxis is still pre-1.0, so no `0.x` release currently
-receives security updates.
+All `v0.x.x` releases are unsupported. Praxis is currently still
+pre-v1, so there are NO supported versions yet.
 
 | Version | Supported |
 | ------- | --------- |
 | 0.x     | No        |
 
-A supported-version policy begins at `v1.0.0`. From that
-release onward, the latest patch of each supported minor
-version will receive security updates.
+A supported-version policy begins at `v1.0.0`. From that release
+onward, the latest patch of each supported minor version will
+receive security updates.
+
+Special releases like `v1.x.x-rcx` or any other `vx.x.x-y` tagged
+releases are unsupported.
 
 ## Reporting a Vulnerability
 
@@ -24,6 +27,9 @@ Include:
 - Steps to reproduce
 - Affected versions
 - Any potential mitigations you have identified
+
+> **Note** :You can use GitHub's private security reporting tool if
+> you prefer.
 
 ## Response Timeline
 
