@@ -139,6 +139,9 @@ struct FilterInfo {
     fields: Vec<FieldInfo>,
     /// YAML configuration example from doc comments.
     yaml_examples: Vec<String>,
+    /// Reference-link definitions (`[label]: url`) harvested from the source
+    /// doc comments, re-emitted for any label still referenced in the output.
+    link_definitions: BTreeMap<String, String>,
 }
 
 /// Information extracted for one config field.
@@ -254,6 +257,10 @@ struct EnumInfo {
     variants: Vec<String>,
     /// Whether serde tries variants by shape instead of by variant tag.
     untagged: bool,
+    /// Internal discriminator key from `#[serde(tag = "...")]`, if any.
+    tag: Option<String>,
+    /// Enum doc comment, used to describe the discriminator field.
+    doc: String,
     /// Source shape for each variant.
     variant_shapes: Vec<EnumVariantShape>,
     /// Named fields from struct-like variants.
@@ -314,6 +321,7 @@ impl FilterInfo {
         append_unique(&mut self.config_notes, other.config_notes);
         append_unique_fields(&mut self.fields, other.fields);
         append_unique(&mut self.yaml_examples, other.yaml_examples);
+        self.link_definitions.extend(other.link_definitions);
     }
 }
 
@@ -853,6 +861,7 @@ fn build_filter(items: &ModuleItems, name: &str, config_type: Option<&str>) -> F
     let cfg_notes = config.map_or_else(Vec::new, |c| config_notes(&c.doc));
     append_unique(&mut all_notes, cfg_notes);
     let fields = config.map_or_else(Vec::new, |c| build_fields(c, items));
+    let link_definitions = collect_filter_link_definitions(&description_doc, config, &fields);
 
     FilterInfo {
         name: name.to_owned(),
@@ -861,6 +870,7 @@ fn build_filter(items: &ModuleItems, name: &str, config_type: Option<&str>) -> F
         config_notes: all_notes,
         fields,
         yaml_examples,
+        link_definitions,
     }
 }
 
@@ -936,10 +946,28 @@ fn append_nested_fields(
     } else if let Some(info) = items.enums.get(&type_name)
         && !info.fields.is_empty()
     {
+        if let Some(tag) = &info.tag {
+            out.push(FieldInfo {
+                name: field_path(prefix, tag),
+                type_str: tagged_enum_type_str(&info.variants),
+                doc: first_paragraph(&info.doc),
+                required: RequiredKind::Yes,
+            });
+        }
         stack.push(type_name);
         append_rendered_fields(prefix, &info.fields, items, stack, out);
         stack.pop();
     }
+}
+
+/// Render the discriminator type cell for an internally-tagged enum, e.g.
+/// `` `cookie` \| `header` \| `learn` `` (pipes escaped for the Markdown table).
+fn tagged_enum_type_str(variants: &[String]) -> String {
+    variants
+        .iter()
+        .map(|variant| format!("`{variant}`"))
+        .collect::<Vec<_>>()
+        .join(" \\| ")
 }
 
 /// Return the rendered requirement kind for a raw field.
@@ -1135,6 +1163,8 @@ fn serde_lit_value(attr: &syn::Attribute, name: &str) -> Option<String> {
 fn extract_enum_info(e: &syn::ItemEnum) -> EnumInfo {
     let rename_all = detect_rename_all(&e.attrs);
     let untagged = has_serde_attr(&e.attrs, "untagged");
+    let tag = e.attrs.iter().find_map(|attr| serde_lit_value(attr, "tag"));
+    let doc = extract_doc_comment(&e.attrs);
     let variants = e
         .variants
         .iter()
@@ -1146,6 +1176,21 @@ fn extract_enum_info(e: &syn::ItemEnum) -> EnumInfo {
         })
         .collect();
     let variant_shapes = e.variants.iter().map(enum_variant_shape).collect();
+    let fields = collect_enum_variant_fields(e);
+
+    EnumInfo {
+        variants,
+        untagged,
+        tag,
+        doc,
+        variant_shapes,
+        fields,
+    }
+}
+
+/// Collect the named fields across an enum's struct-like variants, marking them
+/// as mutually exclusive (`OneOf`) when more than one variant carries fields.
+fn collect_enum_variant_fields(e: &syn::ItemEnum) -> Vec<RawField> {
     let mut variant_fields: Vec<Vec<RawField>> = e.variants.iter().map(parse_variant_fields).collect();
     let named_variant_count = variant_fields.iter().filter(|fields| !fields.is_empty()).count();
     if named_variant_count > 1 {
@@ -1155,14 +1200,7 @@ fn extract_enum_info(e: &syn::ItemEnum) -> EnumInfo {
             }
         }
     }
-    let fields = variant_fields.into_iter().flatten().collect();
-
-    EnumInfo {
-        variants,
-        untagged,
-        variant_shapes,
-        fields,
-    }
+    variant_fields.into_iter().flatten().collect()
 }
 
 /// Return the source shape for an enum variant.
@@ -1654,6 +1692,55 @@ fn is_markdown_reference_definition(line: &str) -> bool {
     line.starts_with('[') && line.contains("]:")
 }
 
+/// Harvest Markdown reference-link definitions (`[label]: url`) from a raw doc
+/// comment into `into`, keyed by label. A later definition overrides an earlier
+/// one for the same label.
+fn collect_reference_definitions(doc: &str, into: &mut BTreeMap<String, String>) {
+    for line in doc.lines() {
+        let trimmed = line.trim();
+        if !is_markdown_reference_definition(trimmed) {
+            continue;
+        }
+        if let Some((label, url)) = trimmed.split_once("]:") {
+            let label = label.strip_prefix('[').unwrap_or(label).trim();
+            let url = url.trim();
+            if !label.is_empty() && is_markdown_link_target(url) {
+                into.insert(label.to_owned(), url.to_owned());
+            }
+        }
+    }
+}
+
+/// Harvest reference-link definitions from all of a filter's prose sources: the
+/// filter description, the config struct doc, and each field doc.
+fn collect_filter_link_definitions(
+    description_doc: &str,
+    config: Option<&ConfigStruct>,
+    fields: &[FieldInfo],
+) -> BTreeMap<String, String> {
+    let mut definitions = BTreeMap::new();
+    collect_reference_definitions(description_doc, &mut definitions);
+    if let Some(config) = config {
+        collect_reference_definitions(&config.doc, &mut definitions);
+    }
+    for field in fields {
+        collect_reference_definitions(&field.doc, &mut definitions);
+    }
+    definitions
+}
+
+/// Whether a reference-definition target is a real Markdown link destination
+/// (a URL, anchor, or relative path) rather than a rustdoc intra-doc path such
+/// as `crate::BodyMode::StreamBuffer`, which is meaningless in plain Markdown.
+fn is_markdown_link_target(url: &str) -> bool {
+    url.contains("://")
+        || url.starts_with('#')
+        || url.starts_with('/')
+        || url.starts_with("./")
+        || url.starts_with("../")
+        || url.starts_with("mailto:")
+}
+
 // -----------------------------------------------------------------------------
 // Markdown Rendering
 // -----------------------------------------------------------------------------
@@ -1679,7 +1766,36 @@ fn render_filter_doc(entry: &FilterEntry) -> String {
     render_config_notes(&mut out, &entry.filter.config_notes);
     render_config_table(&mut out, &entry.filter.fields);
     render_yaml_examples(&mut out, &entry.filter.yaml_examples);
+    render_link_definitions(&mut out, &entry.filter.link_definitions);
     out
+}
+
+/// Re-emit reference-link definitions for every label still referenced as a
+/// collapsed `[label]` in the generated body, so the links resolve. Reference
+/// definitions are stripped from prose during normalization; without this the
+/// generated body would carry dangling `[label]` shorthand links.
+fn render_link_definitions(out: &mut String, definitions: &BTreeMap<String, String>) {
+    let used: Vec<(&String, &String)> = definitions
+        .iter()
+        .filter(|(label, _)| body_uses_collapsed_reference(out, label))
+        .collect();
+    if used.is_empty() {
+        return;
+    }
+    writeln!(out).unwrap();
+    for (label, url) in used {
+        writeln!(out, "[{label}]: {url}").unwrap();
+    }
+}
+
+/// Whether `body` uses `label` as a collapsed reference link: a `[label]` that
+/// is not immediately followed by `(` (an inline link) or `:` (its definition).
+fn body_uses_collapsed_reference(body: &str, label: &str) -> bool {
+    let needle = format!("[{label}]");
+    body.match_indices(&needle).any(|(pos, _)| {
+        let next = body.get(pos + needle.len()..).and_then(|rest| rest.chars().next());
+        !matches!(next, Some('(' | ':'))
+    })
 }
 
 /// Render Cargo feature requirements for gated filters.
@@ -2195,6 +2311,74 @@ mod tests {
     }
 
     #[test]
+    fn is_markdown_link_target_accepts_urls_rejects_intra_doc() {
+        assert!(is_markdown_link_target("https://example.com/x"));
+        assert!(is_markdown_link_target("http://example.com"));
+        assert!(is_markdown_link_target("#anchor"));
+        assert!(is_markdown_link_target("./other.md"));
+        assert!(!is_markdown_link_target("crate::BodyMode::StreamBuffer"));
+        assert!(!is_markdown_link_target("BatchPolicy::First"));
+    }
+
+    #[test]
+    fn collect_reference_definitions_keeps_urls_only() {
+        let doc = "See [RFC 7239] and [`StreamBuffer`].\n\n\
+             [RFC 7239]: https://datatracker.ietf.org/doc/html/rfc7239\n\
+             [`StreamBuffer`]: crate::BodyMode::StreamBuffer";
+        let mut defs = BTreeMap::new();
+        collect_reference_definitions(doc, &mut defs);
+        assert_eq!(
+            defs.get("RFC 7239").map(String::as_str),
+            Some("https://datatracker.ietf.org/doc/html/rfc7239")
+        );
+        assert!(
+            !defs.contains_key("`StreamBuffer`"),
+            "rustdoc intra-doc targets are not Markdown links"
+        );
+    }
+
+    #[test]
+    fn body_uses_collapsed_reference_distinguishes_link_forms() {
+        assert!(body_uses_collapsed_reference("uses [RFC 7239] here", "RFC 7239"));
+        assert!(!body_uses_collapsed_reference("inline [RFC 7239](url)", "RFC 7239"));
+        assert!(!body_uses_collapsed_reference("def [RFC 7239]: url", "RFC 7239"));
+    }
+
+    #[test]
+    fn render_link_definitions_appends_only_used_targets() {
+        let mut defs = BTreeMap::new();
+        defs.insert("RFC 7239".to_owned(), "https://example.com/rfc".to_owned());
+        defs.insert("Unused".to_owned(), "https://example.com/unused".to_owned());
+        let mut out = "Body references [RFC 7239].\n".to_owned();
+        render_link_definitions(&mut out, &defs);
+        assert!(
+            out.contains("\n[RFC 7239]: https://example.com/rfc\n"),
+            "used definition should be appended"
+        );
+        assert!(!out.contains("Unused"), "unreferenced definitions are not emitted");
+    }
+
+    #[test]
+    fn tagged_enum_type_str_joins_escaped_variants() {
+        let variants = vec!["cookie".to_owned(), "header".to_owned(), "learn".to_owned()];
+        assert_eq!(tagged_enum_type_str(&variants), "`cookie` \\| `header` \\| `learn`");
+    }
+
+    #[test]
+    fn extract_enum_info_captures_internal_tag_and_doc() {
+        let item: syn::ItemEnum = syn::parse_str(
+            "/// Session persistence mode.\n\
+             #[serde(rename_all = \"snake_case\", tag = \"type\")]\n\
+             enum P { Cookie { cookie_name: String }, Header { header_name: String } }",
+        )
+        .expect("parse enum");
+        let info = extract_enum_info(&item);
+        assert_eq!(info.tag.as_deref(), Some("type"));
+        assert!(info.doc.contains("Session persistence mode"));
+        assert_eq!(info.variants, vec!["cookie".to_owned(), "header".to_owned()]);
+    }
+
+    #[test]
     fn render_filter_doc_strips_fenced_field_docs() {
         let mut entry = sample_filter_entry();
         entry.filter.fields[0].doc =
@@ -2476,6 +2660,7 @@ mod tests {
                 config_notes: vec![],
                 fields: vec![],
                 yaml_examples: vec![],
+                link_definitions: BTreeMap::new(),
             },
         }];
         let result = render_reference_index(&entries);
@@ -2730,6 +2915,7 @@ mod tests {
                     required: RequiredKind::Yes,
                 }],
                 yaml_examples: vec!["filter: timeout\ntimeout_ms: 5000".to_owned()],
+                link_definitions: BTreeMap::new(),
             },
         }
     }

@@ -75,3 +75,5 @@ steps:
       - default: true
         done: true
 ```
+
+[`HttpFilter::name()`]: https://docs.rs/praxis-filter/latest/praxis_filter/trait.HttpFilter.html#tymethod.name
