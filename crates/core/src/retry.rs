@@ -10,7 +10,7 @@
 //!
 //! # How it works
 //!
-//! Each cluster gets a [`RetryBudget`] that acts as a token-bucket rate limiter.
+//! Each cluster gets a [`RetryBudget`](crate::retry::RetryBudget) that acts as a token-bucket rate limiter.
 //! Tokens refill at a minimum floor rate (`min_retries_per_second`) and are
 //! capped at a percentage of the cluster's active request count. When a request
 //! needs to retry, it must acquire a token first; if the bucket is empty, the
@@ -26,7 +26,7 @@
 //!
 //! Retry state is cluster-scoped, not global or per-listener. A failure in one
 //! backend cluster should not exhaust retry budget for unrelated clusters. Each
-//! cluster's [`ClusterRetryState`] tracks its own active requests and budget.
+//! cluster's [`ClusterRetryState`](crate::retry::ClusterRetryState) tracks its own active requests and budget.
 //!
 //! # Token refill and admission
 //!

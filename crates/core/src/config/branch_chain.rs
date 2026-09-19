@@ -17,7 +17,7 @@
 //! body-transforming filters belong on the main pipeline path.
 //!
 //! This module defines only the config surface. Validation lives in
-//! [`crate::config::validate::branch_chain`], execution in
+//! `crate::config::validate::branch_chain`, execution in
 //! `praxis-filter::pipeline`, and filter result feedback in
 //! `praxis-filter::FilterResultSet`.
 

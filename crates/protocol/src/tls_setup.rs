@@ -18,7 +18,7 @@
 //! atomically when they change on disk, without dropping connections.
 //!
 //! Otherwise (no `config-reload` feature, or `hot_reload: false`), a static
-//! [`ServerConfig`] is built via [`praxis_tls::setup::build_server_config`]
+//! `rustls::ServerConfig` is built via [`praxis_tls::setup::build_server_config`]
 //! and certificate changes require a full config reload.
 //!
 //! # Certificate watcher lifecycle
@@ -28,9 +28,9 @@
 //! it continues monitoring until explicitly stopped or the process exits.
 //! Callers typically keep the sender alive for the server lifetime.
 //!
+//! [`build_tls_settings`]: crate::tls_setup::build_tls_settings
 //! [`TlsSettings`]: pingora_core::listeners::tls::TlsSettings
 //! [`ListenerTls`]: praxis_tls::ListenerTls
-//! [`ServerConfig`]: rustls::ServerConfig
 //! [`CertWatcher`]: praxis_tls::watcher::CertWatcher
 
 use pingora_core::listeners::tls::TlsSettings;
