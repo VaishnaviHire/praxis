@@ -43,7 +43,7 @@ pub(crate) const RESPONSE_HOP_BY_HOP: &[&str] = &[
 ];
 
 // -----------------------------------------------------------------------------
-// Strip Logic
+// WebSocket Upgrade Detection
 // -----------------------------------------------------------------------------
 
 /// Whether `Upgrade` and `Connection` should be preserved.
@@ -56,6 +56,46 @@ pub(crate) const RESPONSE_HOP_BY_HOP: &[&str] = &[
 pub(crate) fn preserve_for_upgrade(name: &str, is_websocket_upgrade: bool) -> bool {
     is_websocket_upgrade && (name == "upgrade" || name == "connection")
 }
+
+/// Whether the `Upgrade` header value indicates a `WebSocket` upgrade.
+///
+/// Returns `true` only when the value is exactly `websocket`
+/// (case-insensitive per [RFC 6455 Section 4.1]). Mixed values
+/// like `h2c, websocket` are rejected because they could allow
+/// the upstream to negotiate a non-WebSocket protocol.
+///
+/// [RFC 6455 Section 4.1]: https://datatracker.ietf.org/doc/html/rfc6455#section-4.1
+pub(crate) fn is_websocket_upgrade(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case("websocket")
+}
+
+/// Whether a header map's `Upgrade` header indicates a `WebSocket` upgrade.
+///
+/// Returns `true` only when there is exactly one `Upgrade` header whose
+/// value is exactly `websocket` (via [`is_websocket_upgrade`]). Zero
+/// headers, or two or more `Upgrade` headers, yield `false` so the strip
+/// path removes them.
+///
+/// Reading only the first value (e.g. via [`HeaderMap::get`]) would let a
+/// client smuggle a second protocol past the WebSocket check: a request
+/// carrying `Upgrade: websocket` followed by `Upgrade: h2c` would be seen
+/// as a clean WebSocket upgrade, and [`preserve_for_upgrade`] would then
+/// forward the entire multi-valued `Upgrade` header (including the `h2c`
+/// token) to the backend, defeating the h2c-smuggling protection.
+pub(crate) fn has_websocket_upgrade(headers: &HeaderMap) -> bool {
+    let mut values = headers.get_all(http::header::UPGRADE).iter();
+    match (values.next(), values.next()) {
+        // Exactly one Upgrade header; value must be exactly `websocket`.
+        (Some(value), None) => value.to_str().is_ok_and(is_websocket_upgrade),
+        // Zero, or two or more Upgrade headers: not a clean WebSocket
+        // upgrade, so let the caller strip every Upgrade value.
+        _ => false,
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Chunked Framing Detection
+// -----------------------------------------------------------------------------
 
 /// Whether a message's headers declare chunked transfer framing.
 ///
@@ -105,41 +145,9 @@ pub(crate) fn should_restore_chunked_framing(headers: &HeaderMap, was_chunked: b
     was_chunked && !headers.contains_key(http::header::CONTENT_LENGTH)
 }
 
-/// Whether the `Upgrade` header value indicates a `WebSocket` upgrade.
-///
-/// Returns `true` only when the value is exactly `websocket`
-/// (case-insensitive per [RFC 6455 Section 4.1]). Mixed values
-/// like `h2c, websocket` are rejected because they could allow
-/// the upstream to negotiate a non-WebSocket protocol.
-///
-/// [RFC 6455 Section 4.1]: https://datatracker.ietf.org/doc/html/rfc6455#section-4.1
-pub(crate) fn is_websocket_upgrade(value: &str) -> bool {
-    value.trim().eq_ignore_ascii_case("websocket")
-}
-
-/// Whether a header map's `Upgrade` header indicates a `WebSocket` upgrade.
-///
-/// Returns `true` only when there is exactly one `Upgrade` header whose
-/// value is exactly `websocket` (via [`is_websocket_upgrade`]). Zero
-/// headers, or two or more `Upgrade` headers, yield `false` so the strip
-/// path removes them.
-///
-/// Reading only the first value (e.g. via [`HeaderMap::get`]) would let a
-/// client smuggle a second protocol past the WebSocket check: a request
-/// carrying `Upgrade: websocket` followed by `Upgrade: h2c` would be seen
-/// as a clean WebSocket upgrade, and [`preserve_for_upgrade`] would then
-/// forward the entire multi-valued `Upgrade` header (including the `h2c`
-/// token) to the backend, defeating the h2c-smuggling protection.
-pub(crate) fn has_websocket_upgrade(headers: &HeaderMap) -> bool {
-    let mut values = headers.get_all(http::header::UPGRADE).iter();
-    match (values.next(), values.next()) {
-        // Exactly one Upgrade header; value must be exactly `websocket`.
-        (Some(value), None) => value.to_str().is_ok_and(is_websocket_upgrade),
-        // Zero, or two or more Upgrade headers: not a clean WebSocket
-        // upgrade, so let the caller strip every Upgrade value.
-        _ => false,
-    }
-}
+// -----------------------------------------------------------------------------
+// Header Stripping
+// -----------------------------------------------------------------------------
 
 /// Snapshot `Connection` header values before they are removed.
 ///
@@ -230,6 +238,10 @@ pub(crate) fn strip_reserved_internal_header_map(headers: &mut HeaderMap) {
         );
     }
 }
+
+// -----------------------------------------------------------------------------
+// Trait Abstraction
+// -----------------------------------------------------------------------------
 
 /// Trait abstracting header removal for both request and response types.
 pub(crate) trait RemoveHeader {
