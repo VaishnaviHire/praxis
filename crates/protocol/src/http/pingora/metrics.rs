@@ -263,7 +263,6 @@ pub struct StatsMetricsSnapshot {
 }
 
 /// Extract operational counters needed by `/api/stats` from Prometheus text.
-#[expect(clippy::too_many_lines, reason = "metric name dispatch table")]
 pub fn collect_stats_metrics(prometheus_text: &str) -> StatsMetricsSnapshot {
     let mut snapshot = StatsMetricsSnapshot::default();
     for line in prometheus_text.lines() {
@@ -271,47 +270,91 @@ pub fn collect_stats_metrics(prometheus_text: &str) -> StatsMetricsSnapshot {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((name, labels, value)) = parse_prometheus_sample(line) else {
-            continue;
-        };
-        match name {
-            HTTP_ACTIVE_REQUESTS => {
-                if let Some(listener) = labels.get("listener") {
-                    snapshot.http_active_by_listener.insert(listener.clone(), value);
-                } else {
-                    snapshot.http_active_aggregate = Some(value);
-                }
-            },
-            TCP_ACTIVE_CONNECTIONS => {
-                if let Some(listener) = labels.get("listener") {
-                    snapshot.tcp_active_by_listener.insert(listener.clone(), value);
-                } else {
-                    snapshot.tcp_active_aggregate = Some(value);
-                }
-            },
-            UPSTREAM_REQUESTS_TOTAL => {
-                if let Some(cluster) = labels.get("cluster") {
-                    *snapshot
-                        .upstream_requests_by_cluster
-                        .entry(cluster.clone())
-                        .or_insert(0) += value;
-                } else {
-                    snapshot.upstream_requests_aggregate =
-                        Some(snapshot.upstream_requests_aggregate.unwrap_or(0) + value);
-                }
-            },
-            UPSTREAM_CONNECT_FAILURES_TOTAL => {
-                if let Some(cluster) = labels.get("cluster") {
-                    *snapshot.connect_failures_by_cluster.entry(cluster.clone()).or_insert(0) += value;
-                } else {
-                    snapshot.connect_failures_aggregate =
-                        Some(snapshot.connect_failures_aggregate.unwrap_or(0) + value);
-                }
-            },
-            _ => {},
+        if let Some((name, labels, value)) = parse_prometheus_sample(line) {
+            match name {
+                HTTP_ACTIVE_REQUESTS => snapshot.record_http_active(&labels, value),
+                TCP_ACTIVE_CONNECTIONS => snapshot.record_tcp_active(&labels, value),
+                UPSTREAM_REQUESTS_TOTAL => snapshot.add_upstream_requests(&labels, value),
+                UPSTREAM_CONNECT_FAILURES_TOTAL => snapshot.add_connect_failures(&labels, value),
+                _ => {},
+            }
         }
     }
     snapshot
+}
+
+impl StatsMetricsSnapshot {
+    /// Record an HTTP active-requests gauge sample.
+    fn record_http_active(&mut self, labels: &std::collections::HashMap<String, String>, value: u64) {
+        record_by_listener(
+            &mut self.http_active_by_listener,
+            &mut self.http_active_aggregate,
+            labels,
+            value,
+        );
+    }
+
+    /// Record a TCP active-connections gauge sample.
+    fn record_tcp_active(&mut self, labels: &std::collections::HashMap<String, String>, value: u64) {
+        record_by_listener(
+            &mut self.tcp_active_by_listener,
+            &mut self.tcp_active_aggregate,
+            labels,
+            value,
+        );
+    }
+
+    /// Accumulate an upstream-requests counter sample.
+    fn add_upstream_requests(&mut self, labels: &std::collections::HashMap<String, String>, value: u64) {
+        accumulate_by_cluster(
+            &mut self.upstream_requests_by_cluster,
+            &mut self.upstream_requests_aggregate,
+            labels,
+            value,
+        );
+    }
+
+    /// Accumulate an upstream connect-failures counter sample.
+    fn add_connect_failures(&mut self, labels: &std::collections::HashMap<String, String>, value: u64) {
+        accumulate_by_cluster(
+            &mut self.connect_failures_by_cluster,
+            &mut self.connect_failures_aggregate,
+            labels,
+            value,
+        );
+    }
+}
+
+/// Record a by-listener gauge sample: keyed by the `listener` label, or the
+/// aggregate when the label is absent.
+fn record_by_listener(
+    by_listener: &mut std::collections::HashMap<String, u64>,
+    aggregate: &mut Option<u64>,
+    labels: &std::collections::HashMap<String, String>,
+    value: u64,
+) {
+    match labels.get("listener") {
+        Some(listener) => {
+            by_listener.insert(listener.clone(), value);
+        },
+        None => *aggregate = Some(value),
+    }
+}
+
+/// Accumulate a by-cluster counter sample: added to the `cluster` label's
+/// running total, or to the aggregate when the label is absent.
+fn accumulate_by_cluster(
+    by_cluster: &mut std::collections::HashMap<String, u64>,
+    aggregate: &mut Option<u64>,
+    labels: &std::collections::HashMap<String, String>,
+    value: u64,
+) {
+    match labels.get("cluster") {
+        Some(cluster) => {
+            *by_cluster.entry(cluster.clone()).or_insert(0) += value;
+        },
+        None => *aggregate = Some(aggregate.unwrap_or(0) + value),
+    }
 }
 
 // -----------------------------------------------------------------------------
