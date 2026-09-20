@@ -731,42 +731,6 @@ mod tests {
         warn_insecure_key_permissions(&config);
     }
 
-    // -------------------------------------------------------------------------
-    // Test Utilities
-    // -------------------------------------------------------------------------
-
-    #[cfg(unix)]
-    fn config_with_tls(cert_path: &str, key_path: &str) -> Config {
-        let yaml = format!(
-            r#"
-listeners:
-  - name: tls
-    address: "127.0.0.1:8443"
-    filter_chains: [main]
-    tls:
-      certificates:
-        - cert_path: "{cert_path}"
-          key_path: "{key_path}"
-          server_names: ["localhost"]
-filter_chains:
-  - name: main
-    filters:
-      - filter: router
-        routes:
-          - path_prefix: "/"
-            cluster: backend
-      - filter: load_balancer
-        clusters:
-          - name: backend
-            endpoints:
-              - "127.0.0.1:3000"
-insecure_options:
-  allow_private_endpoints: true
-"#
-        );
-        Config::from_yaml(&yaml).expect("test config should parse")
-    }
-
     #[test]
     fn init_runtime_limits_with_max_connections_does_not_panic() {
         let runtime = praxis_core::config::RuntimeConfig {
@@ -851,5 +815,41 @@ filter_chains:
         let connector = praxis_core::subrequest::SubRequestConnector::new(1, None);
         let client = praxis_core::subrequest::SubRequestClient::new(connector);
         spawn_circuit_eviction_task(client);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test Utilities
+    // -------------------------------------------------------------------------
+
+    #[cfg(unix)]
+    fn config_with_tls(cert_path: &str, key_path: &str) -> Config {
+        let yaml = format!(
+            r#"
+listeners:
+  - name: tls
+    address: "127.0.0.1:8443"
+    filter_chains: [main]
+    tls:
+      certificates:
+        - cert_path: "{cert_path}"
+          key_path: "{key_path}"
+          server_names: ["localhost"]
+filter_chains:
+  - name: main
+    filters:
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: backend
+      - filter: load_balancer
+        clusters:
+          - name: backend
+            endpoints:
+              - "127.0.0.1:3000"
+insecure_options:
+  allow_private_endpoints: true
+"#
+        );
+        Config::from_yaml(&yaml).expect("test config should parse")
     }
 }
