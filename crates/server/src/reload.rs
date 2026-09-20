@@ -1353,37 +1353,6 @@ filter_chains:
         assert!(escalated.is_empty(), "already-true flags should not be reported");
     }
 
-    fn health_checked_config() -> Config {
-        Config::from_yaml(
-            r#"
-listeners:
-  - name: web
-    address: "127.0.0.1:8080"
-    filter_chains: [main]
-clusters:
-  - name: backend
-    endpoints: ["10.0.0.1:80", "10.0.0.2:80"]
-    health_check:
-      type: tcp
-      interval_ms: 60000
-filter_chains:
-  - name: main
-    filters:
-      - filter: router
-        routes:
-          - path_prefix: "/"
-            cluster: "backend"
-      - filter: load_balancer
-        clusters:
-          - name: "backend"
-            endpoints:
-              - "10.0.0.1:80"
-              - "10.0.0.2:80"
-"#,
-        )
-        .unwrap()
-    }
-
     #[test]
     fn reload_carries_unhealthy_endpoint_state() {
         let config = health_checked_config();
@@ -1438,42 +1407,6 @@ filter_chains:
             entry.endpoints()[0].is_healthy(),
             "healthy endpoint must stay healthy across reload"
         );
-    }
-
-    /// Same cluster/chain as [`health_checked_config`] plus a second
-    /// listener that a later reload removes from the config.
-    fn health_checked_config_two_listeners() -> Config {
-        Config::from_yaml(
-            r#"
-listeners:
-  - name: web
-    address: "127.0.0.1:8080"
-    filter_chains: [main]
-  - name: legacy
-    address: "127.0.0.1:8081"
-    filter_chains: [main]
-clusters:
-  - name: backend
-    endpoints: ["10.0.0.1:80", "10.0.0.2:80"]
-    health_check:
-      type: tcp
-      interval_ms: 60000
-filter_chains:
-  - name: main
-    filters:
-      - filter: router
-        routes:
-          - path_prefix: "/"
-            cluster: "backend"
-      - filter: load_balancer
-        clusters:
-          - name: "backend"
-            endpoints:
-              - "10.0.0.1:80"
-              - "10.0.0.2:80"
-"#,
-        )
-        .unwrap()
     }
 
     #[test]
@@ -1730,6 +1663,73 @@ filter_chains:
     filters:
       - filter: static_response
         status: 200
+"#,
+        )
+        .unwrap()
+    }
+
+    fn health_checked_config() -> Config {
+        Config::from_yaml(
+            r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+clusters:
+  - name: backend
+    endpoints: ["10.0.0.1:80", "10.0.0.2:80"]
+    health_check:
+      type: tcp
+      interval_ms: 60000
+filter_chains:
+  - name: main
+    filters:
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: "backend"
+      - filter: load_balancer
+        clusters:
+          - name: "backend"
+            endpoints:
+              - "10.0.0.1:80"
+              - "10.0.0.2:80"
+"#,
+        )
+        .unwrap()
+    }
+
+    /// Same cluster/chain as [`health_checked_config`] plus a second
+    /// listener that a later reload removes from the config.
+    fn health_checked_config_two_listeners() -> Config {
+        Config::from_yaml(
+            r#"
+listeners:
+  - name: web
+    address: "127.0.0.1:8080"
+    filter_chains: [main]
+  - name: legacy
+    address: "127.0.0.1:8081"
+    filter_chains: [main]
+clusters:
+  - name: backend
+    endpoints: ["10.0.0.1:80", "10.0.0.2:80"]
+    health_check:
+      type: tcp
+      interval_ms: 60000
+filter_chains:
+  - name: main
+    filters:
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: "backend"
+      - filter: load_balancer
+        clusters:
+          - name: "backend"
+            endpoints:
+              - "10.0.0.1:80"
+              - "10.0.0.2:80"
 "#,
         )
         .unwrap()
