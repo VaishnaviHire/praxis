@@ -337,6 +337,26 @@ mod tests {
     }
 
     #[test]
+    fn three_component_prerelease_passes() {
+        let toml = "[workspace.dependencies]\nfoo = \"1.2.3-rc.1\"\n";
+        let violations = check_workspace_deps(toml);
+        assert!(
+            violations.is_empty(),
+            "prerelease version should count as three-component"
+        );
+    }
+
+    #[test]
+    fn three_component_build_metadata_passes() {
+        let toml = "[workspace.dependencies]\nfoo = \"1.2.3+build.5\"\n";
+        let violations = check_workspace_deps(toml);
+        assert!(
+            violations.is_empty(),
+            "build-metadata version should count as three-component"
+        );
+    }
+
+    #[test]
     fn two_component_version_fails() {
         let toml = "[workspace.dependencies]\nfoo = \"1.2\"\n";
         let violations = check_workspace_deps(toml);
