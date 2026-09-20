@@ -12,6 +12,10 @@ use tracing::{debug, error, warn};
 
 use crate::http::pingora::context::PingoraRequestCtx;
 
+// -----------------------------------------------------------------------------
+// Data Types
+// -----------------------------------------------------------------------------
+
 /// Classified proxy error with HTTP status and machine-readable fields.
 struct ProxyError {
     /// Machine-readable error code (e.g. `upstream_connect_refused`).
@@ -21,6 +25,10 @@ struct ProxyError {
     /// HTTP status code (e.g. 502, 504).
     status: u16,
 }
+
+// -----------------------------------------------------------------------------
+// Public Entry Point
+// -----------------------------------------------------------------------------
 
 /// Handle a fatal proxy error by writing a structured error response
 /// to the downstream client.
@@ -101,6 +109,10 @@ pub(super) async fn execute(
 
     write_error_response(session, err, formatter, grpc).await
 }
+
+// -----------------------------------------------------------------------------
+// Error Handlers
+// -----------------------------------------------------------------------------
 
 /// Build a `DEADLINE_EXCEEDED` response when an upstream timeout is the
 /// gRPC deadline firing.
@@ -223,6 +235,10 @@ fn is_connection_dead(etype: &ErrorType) -> bool {
     )
 }
 
+// -----------------------------------------------------------------------------
+// Response Writing
+// -----------------------------------------------------------------------------
+
 /// Build and write the error response to the downstream session.
 async fn write_error_response(
     session: &mut Session,
@@ -314,6 +330,10 @@ fn build_header(status: u16, content_length: usize, content_type: HeaderValue) -
 
     Some(header)
 }
+
+// -----------------------------------------------------------------------------
+// State Utilities
+// -----------------------------------------------------------------------------
 
 /// Whether a final downstream response has already been written.
 fn final_response_written(session: &Session) -> bool {
