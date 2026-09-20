@@ -51,7 +51,7 @@ impl TlsPeerIdentity {
     /// ```
     #[must_use]
     pub fn hex_digest(&self) -> String {
-        let mut hex = String::with_capacity(self.cert_digest.len() * 2);
+        let mut hex = String::with_capacity(self.cert_digest.len().saturating_mul(2));
         for byte in &self.cert_digest {
             hex.push(hex_digit(byte >> 4));
             hex.push(hex_digit(byte & 0x0F));
@@ -63,8 +63,8 @@ impl TlsPeerIdentity {
 /// Convert a four-bit value to its lowercase hexadecimal character.
 fn hex_digit(nibble: u8) -> char {
     match nibble {
-        0..=9 => char::from(b'0' + nibble),
-        _ => char::from(b'a' + nibble - 10),
+        0..=9 => char::from(b'0'.saturating_add(nibble)),
+        _ => char::from(b'a'.saturating_add(nibble).saturating_sub(10)),
     }
 }
 

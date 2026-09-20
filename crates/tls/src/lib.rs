@@ -3,7 +3,6 @@
 
 #![deny(unreachable_pub)]
 #![expect(
-    clippy::arithmetic_side_effects,
     clippy::min_ident_chars,
     reason = "TODO(conventions-sync): fix violations and remove"
 )]

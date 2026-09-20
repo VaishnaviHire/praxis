@@ -294,7 +294,7 @@ impl SniReassembler {
                 // caller's peek cap bounds real data to a few KiB: a
                 // 9-byte record must not drive a 16 MiB reservation.
                 self.body
-                    .reserve((hs_len - self.body.len()).min(buf.len().saturating_sub(self.pos)));
+                    .reserve((hs_len.saturating_sub(self.body.len())).min(buf.len().saturating_sub(self.pos)));
             }
         }
     }
@@ -310,17 +310,17 @@ impl Default for SniReassembler {
 /// fragment plus the offset of the next record.
 fn handshake_record_fragment(buf: &[u8], pos: usize) -> Result<(&[u8], usize), SniParseError> {
     let record_header = buf
-        .get(pos..pos + TLS_RECORD_HEADER_LEN)
+        .get(pos..pos.saturating_add(TLS_RECORD_HEADER_LEN))
         .ok_or(SniParseError::NeedMoreData)?;
     if *record_header.first().ok_or(SniParseError::NeedMoreData)? != CONTENT_TYPE_HANDSHAKE {
         return Err(SniParseError::NotHandshake);
     }
     let record_len = usize::from(read_u16(record_header, 3)?);
-    let frag_start = pos + TLS_RECORD_HEADER_LEN;
+    let frag_start = pos.saturating_add(TLS_RECORD_HEADER_LEN);
     let fragment = buf
-        .get(frag_start..frag_start + record_len)
+        .get(frag_start..frag_start.saturating_add(record_len))
         .ok_or(SniParseError::NeedMoreData)?;
-    Ok((fragment, frag_start + record_len))
+    Ok((fragment, frag_start.saturating_add(record_len)))
 }
 
 /// Copy up to the remaining handshake-header bytes from the front of
@@ -331,12 +331,12 @@ fn fill_handshake_header<'frag>(
     filled: usize,
     fragment: &'frag [u8],
 ) -> (&'frag [u8], usize) {
-    let take = fragment.len().min(HANDSHAKE_HEADER_LEN - filled);
+    let take = fragment.len().min(HANDSHAKE_HEADER_LEN.saturating_sub(filled));
     let (head, rest) = fragment.split_at(take);
     for (dst, src) in header.iter_mut().skip(filled).zip(head) {
         *dst = *src;
     }
-    (rest, filled + take)
+    (rest, filled.saturating_add(take))
 }
 
 // -----------------------------------------------------------------------------
@@ -370,7 +370,7 @@ fn parse_handshake_header(fragment: &[u8]) -> Result<&[u8], SniParseError> {
     }
 
     let hs_len = usize::try_from(read_u24(fragment, 1)?).map_err(|_err| SniParseError::MalformedExtension)?;
-    let end = HANDSHAKE_HEADER_LEN + hs_len;
+    let end = HANDSHAKE_HEADER_LEN.saturating_add(hs_len);
 
     fragment
         .get(HANDSHAKE_HEADER_LEN..end)
@@ -405,7 +405,7 @@ fn parse_client_hello(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
 fn skip_variable_u8(data: &[u8], pos: usize) -> Result<usize, SniParseError> {
     let len_byte = *data.get(pos).ok_or(SniParseError::MalformedExtension)?;
     let len = usize::from(len_byte);
-    let end = pos + 1 + len;
+    let end = pos.saturating_add(1).saturating_add(len);
     if end > data.len() {
         return Err(SniParseError::MalformedExtension);
     }
@@ -415,7 +415,7 @@ fn skip_variable_u8(data: &[u8], pos: usize) -> Result<usize, SniParseError> {
 /// Skip a variable-length field preceded by a 2-byte length.
 fn skip_variable_u16(data: &[u8], pos: usize) -> Result<usize, SniParseError> {
     let len = usize::from(read_u16(data, pos)?);
-    let end = pos + 2 + len;
+    let end = pos.saturating_add(2).saturating_add(len);
     if end > data.len() {
         return Err(SniParseError::MalformedExtension);
     }
@@ -425,8 +425,8 @@ fn skip_variable_u16(data: &[u8], pos: usize) -> Result<usize, SniParseError> {
 /// Read a variable-length sub-slice preceded by a 2-byte length.
 fn read_variable_u16(data: &[u8], pos: usize) -> Result<&[u8], SniParseError> {
     let len = usize::from(read_u16(data, pos)?);
-    let start = pos + 2;
-    let end = start + len;
+    let start = pos.saturating_add(2);
+    let end = start.saturating_add(len);
     if end > data.len() {
         return Err(SniParseError::MalformedExtension);
     }
@@ -514,15 +514,21 @@ fn parse_sni_extension(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
 /// Read a big-endian `u16` from `data` at `offset`.
 fn read_u16(data: &[u8], offset: usize) -> Result<u16, SniParseError> {
     let a = *data.get(offset).ok_or(SniParseError::MalformedExtension)?;
-    let b = *data.get(offset + 1).ok_or(SniParseError::MalformedExtension)?;
+    let b = *data
+        .get(offset.saturating_add(1))
+        .ok_or(SniParseError::MalformedExtension)?;
     Ok(u16::from_be_bytes([a, b]))
 }
 
 /// Read a big-endian 24-bit integer as `u32` from `data` at `offset`.
 fn read_u24(data: &[u8], offset: usize) -> Result<u32, SniParseError> {
     let a = *data.get(offset).ok_or(SniParseError::MalformedExtension)?;
-    let b = *data.get(offset + 1).ok_or(SniParseError::MalformedExtension)?;
-    let c = *data.get(offset + 2).ok_or(SniParseError::MalformedExtension)?;
+    let b = *data
+        .get(offset.saturating_add(1))
+        .ok_or(SniParseError::MalformedExtension)?;
+    let c = *data
+        .get(offset.saturating_add(2))
+        .ok_or(SniParseError::MalformedExtension)?;
     Ok(u32::from_be_bytes([0, a, b, c]))
 }
 
@@ -556,6 +562,7 @@ fn reject_ip_literal(hostname: &str) -> Result<(), SniParseError> {
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(
+    clippy::arithmetic_side_effects,
     clippy::as_conversions,
     clippy::unwrap_used,
     clippy::expect_used,

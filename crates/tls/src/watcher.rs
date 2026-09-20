@@ -208,7 +208,7 @@ async fn watch_loop(
                 if cert_ok && verifier_ok {
                     backoff_ms = MIN_SUCCESS_COOLDOWN_MS;
                 } else {
-                    backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
+                    backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
                     tracing::warn!(
                         next_backoff_ms = backoff_ms,
                         "reload failed, increasing backoff"
