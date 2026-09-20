@@ -59,7 +59,7 @@ pub enum DnsLabelError {
 /// Why a DNS hostname failed validation.
 ///
 /// Wraps [`DnsLabelError`] for per-label failures and adds the
-/// hostname-level [`HostnameTooLong`](Self::HostnameTooLong) variant.
+/// hostname-level [`HostnameTooLong`] variant.
 ///
 /// ```
 /// use praxis_tls::dns::{DnsHostnameError, DnsLabelError, validate_dns_hostname};
@@ -70,6 +70,8 @@ pub enum DnsLabelError {
 ///     Err(DnsHostnameError::Label(DnsLabelError::EmptyLabel)),
 /// );
 /// ```
+///
+/// [`HostnameTooLong`]: Self::HostnameTooLong
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum DnsHostnameError {
     /// The total hostname exceeds 253 bytes.

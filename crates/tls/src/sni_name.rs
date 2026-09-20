@@ -19,7 +19,7 @@ use crate::dns::DnsLabelError;
 /// Why an SNI server name failed validation.
 ///
 /// Covers both plain hostnames and wildcard patterns (`*.example.com`).
-/// DNS label errors are wrapped in the [`InvalidLabel`](Self::InvalidLabel) variant;
+/// DNS label errors are wrapped in the [`InvalidLabel`] variant;
 /// SNI-specific rules (empty, too long, IP literal, wildcard position)
 /// have their own variants.
 ///
@@ -30,6 +30,8 @@ use crate::dns::DnsLabelError;
 /// assert_eq!(validate("example.com"), Ok(()));
 /// assert_eq!(validate("*.example.com"), Ok(()));
 /// ```
+///
+/// [`InvalidLabel`]: Self::InvalidLabel
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum SniNameError {
     /// The name is empty.
@@ -74,7 +76,7 @@ pub enum SniNameError {
 /// 3. Strip leading `*.` (if present)
 /// 4. Remainder is not an IP literal ([RFC 6066 §3])
 /// 5. Remainder contains no further `*` characters
-/// 6. Each label in the remainder passes [`dns::validate_dns_label`](crate::dns::validate_dns_label)
+/// 6. Each label in the remainder passes [`dns::validate_dns_label`]
 ///
 /// # Errors
 ///
@@ -84,6 +86,7 @@ pub enum SniNameError {
 ///
 /// [RFC 6125]: https://datatracker.ietf.org/doc/html/rfc6125
 /// [RFC 6066 §3]: https://datatracker.ietf.org/doc/html/rfc6066#section-3
+/// [`dns::validate_dns_label`]: crate::dns::validate_dns_label
 pub fn validate(name: &str) -> Result<(), SniNameError> {
     if name.is_empty() {
         return Err(SniNameError::Empty);
