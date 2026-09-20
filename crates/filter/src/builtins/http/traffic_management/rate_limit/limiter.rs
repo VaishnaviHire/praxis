@@ -29,24 +29,12 @@ impl RateLimitFilter {
     ///
     /// Shared by the response path (which inserts headers directly) and the
     /// 429 rejection path (which builds an owned header list).
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "token count truncation"
-    )]
     pub(super) fn rate_limit_values(
         &self,
         remaining: f64,
         time_source: &dyn praxis_core::time::TimeSource,
     ) -> (String, String, u64) {
-        let retry_secs = if remaining < 1.0 {
-            ((1.0 - remaining) / self.rate).ceil().max(1.0) as u64
-        } else {
-            0
-        };
-        let now_unix = time_source.now().as_secs();
-        let reset_unix = now_unix.saturating_add(retry_secs);
-        let remaining_int = remaining.max(0.0) as u64;
+        let (remaining_int, reset_unix, retry_secs) = self.rate_limit_numbers(remaining, time_source);
         (format!("{remaining_int}"), format!("{reset_unix}"), retry_secs)
     }
 
