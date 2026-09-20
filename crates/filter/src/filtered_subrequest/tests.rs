@@ -591,13 +591,8 @@ async fn run_returns_buffered_for_locally_produced_response() {
 
     let client = SubRequestClient::new(SubRequestConnector::new(1, None));
     let downstream = crate::SubrequestRuntime::new(None, false, None, Instant::now());
-    let executor = crate::FilteredSubrequestExecutor::for_callout(
-        client,
-        downstream,
-        0,         // depth
-        1_048_576, // 1 MiB per-response ceiling
-        Duration::from_secs(5),
-    );
+    let executor =
+        crate::FilteredSubrequestExecutor::for_callout(client, downstream, 0, 1_048_576, Duration::from_secs(5));
 
     let request = crate::SubRequest {
         method: http::Method::GET,
@@ -639,21 +634,12 @@ async fn run_falls_back_to_next_staged_address_on_connection_refusal() {
 
     use praxis_core::subrequest::{SubRequestClient, SubRequestConnector};
 
-    // A hostname that resolved to several addresses stages the full validated
-    // set alongside the pinned primary. The low-level transport dials each in
-    // turn until one connects; the executor must preserve that fallback rather
-    // than giving up after the first refusal. Bind then drop a listener to
-    // obtain an address that is guaranteed unused (refuses connections), and
-    // spawn a live backend as the second address.
     let dead = {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap()
     };
     let (live_addr, backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
 
-    // The outbound chain carries no upstream-selecting filter: the destination
-    // is seeded from the staged upstream, so the chain runs the request straight
-    // to transport against the staged address set.
     let registry = crate::FilterRegistry::with_builtins();
     let mut entries: Vec<crate::FilterEntry> = serde_yaml::from_str("[]").unwrap();
     let pipeline = Arc::new(crate::FilterPipeline::build(&mut entries, &registry).unwrap());
@@ -663,9 +649,6 @@ async fn run_falls_back_to_next_staged_address_on_connection_refusal() {
     let executor =
         crate::FilteredSubrequestExecutor::for_callout(client, downstream, 0, 1_048_576, Duration::from_secs(5));
 
-    // Pin the primary address to the dead endpoint (as `from_prepared_target`
-    // would) and stage the whole resolver-ordered set so the executor can
-    // advance past the refusal to the live backend without re-resolving DNS.
     let staged = super::StagedUpstream(praxis_core::connectivity::Upstream {
         address: Arc::from(dead.to_string().as_str()),
         authority: None,
@@ -726,9 +709,6 @@ async fn run_falls_back_to_next_staged_address_on_connection_refusal() {
 async fn staged_upstream_from_prepared_target_non_tls_has_no_tls() {
     use std::time::{Duration, Instant};
 
-    // A plain-`http` target must pin the transport address to the first
-    // resolved address, carry the URL authority as the HTTP `Host`, and derive
-    // no TLS material.
     let target = praxis_core::connectivity::prepare_url_target(
         "http://127.0.0.1:9/health",
         Instant::now() + Duration::from_secs(5),
@@ -759,8 +739,6 @@ async fn staged_upstream_from_prepared_target_non_tls_has_no_tls() {
 async fn staged_upstream_from_prepared_target_tls_derives_sni() {
     use std::time::{Duration, Instant};
 
-    // An `https` target must derive cached TLS material whose SNI is the URL
-    // host.
     let target = praxis_core::connectivity::prepare_url_target(
         "https://127.0.0.1:8443/v1/messages",
         Instant::now() + Duration::from_secs(5),
@@ -785,9 +763,6 @@ async fn staged_upstream_from_prepared_target_tls_derives_sni() {
 async fn staged_upstream_fallback_from_prepared_target_captures_addresses() {
     use std::time::{Duration, Instant};
 
-    // The fallback set must mirror the target's resolved addresses in resolver
-    // order (a single IP literal here), so the executor can advance the DNS
-    // fallback without re-resolving.
     let target = praxis_core::connectivity::prepare_url_target(
         "http://127.0.0.1:9/health",
         Instant::now() + Duration::from_secs(5),
@@ -999,8 +974,6 @@ async fn selected_upstream_phase_does_not_inherit_parent_provider() {
 
     use praxis_core::subrequest::{SubRequestClient, SubRequestConnector};
 
-    // A live backend so the dial succeeds; the assertion is on what the reader
-    // observed, not the response.
     let (addr, backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
     let seen: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
 
@@ -1027,8 +1000,6 @@ async fn selected_upstream_phase_does_not_inherit_parent_provider() {
     let executor =
         crate::FilteredSubrequestExecutor::for_callout(client, downstream, 0, 1_048_576, Duration::from_secs(5));
 
-    // The parent hands down a selected-application provider. The child must NOT
-    // observe it (decision B: entry clear).
     let mut extensions = crate::RequestExtensions::default();
     extensions
         .insert(crate::extensions::SelectedClusterApplication::new(None, Some(Arc::from("parent-provider"))).unwrap());
@@ -1064,10 +1035,6 @@ async fn staged_upstream_clears_discarded_selection_metadata() {
     let (addr, backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
     let seen: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
 
-    // The recorder publishes a provider during on_request; a staged upstream
-    // discards any load-balancer selection, so the phase must read no provider
-    // (Correction 2). The recorder still sets ctx.upstream, but the staged
-    // upstream is what is re-pinned before the phase.
     let seen_factory = Arc::clone(&seen);
     let mut registry = crate::FilterRegistry::with_builtins();
     registry
@@ -1122,8 +1089,6 @@ async fn staged_upstream_clears_discarded_selection_metadata() {
 fn error_into_parts_scrubs_selected_application() {
     use std::sync::Arc;
 
-    // Direction-2 exit scrub (Correction 1): an error leaving `execute` must not
-    // carry the child's selected-application metadata back to the parent.
     let mut extensions = crate::RequestExtensions::default();
     extensions.insert(crate::extensions::SelectedClusterApplication::new(None, Some(Arc::from("leak"))).unwrap());
     let error = super::FilteredSubrequestError::new("boom".to_owned().into(), extensions);
@@ -1140,8 +1105,6 @@ fn error_into_parts_scrubs_selected_application() {
 fn into_parent_extensions_scrubs_selected_application() {
     use std::sync::Arc;
 
-    // Direction-2 exit scrub (Correction 1): success-path `into_parent_extensions`
-    // must not carry the child's selected-application metadata back to the parent.
     let registry = crate::FilterRegistry::with_builtins();
     let pipeline = Arc::new(crate::FilterPipeline::build(&mut [], &registry).unwrap());
     let request_snapshot = crate::Request {
@@ -1190,8 +1153,6 @@ fn into_parent_extensions_scrubs_selected_application() {
 fn into_completion_scrubs_selected_application() {
     use std::sync::Arc;
 
-    // Direction-2 exit scrub (Correction 1): success-path `into_completion`
-    // must not carry the child's selected-application metadata back to the parent.
     let registry = crate::FilterRegistry::with_builtins();
     let pipeline = Arc::new(crate::FilterPipeline::build(&mut [], &registry).unwrap());
     let request_snapshot = crate::Request {
@@ -1247,12 +1208,6 @@ async fn run_re_pins_staged_upstream_over_chain_filter_rewrite() {
 
     use praxis_core::subrequest::{SubRequestClient, SubRequestConnector};
 
-    // Two distinguishable live backends: the staged destination and the
-    // attacker's. The outbound chain filter rewrites `ctx.upstream` to the
-    // attacker during `on_request`; the executor's post-request re-pin must
-    // restore the staged address, so the response can only come from the staged
-    // backend. Without the re-pin, the callout would dial the attacker and
-    // return "hijack" — the credential-exfiltration path the invariant blocks.
     let (staged_addr, staged_backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nstaged").await;
     let (attacker_addr, attacker_backend) =
         spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nhijack").await;
@@ -1269,9 +1224,6 @@ async fn run_re_pins_staged_upstream_over_chain_filter_rewrite() {
         )
         .unwrap();
 
-    // The outbound chain carries only the hijack filter: the destination is
-    // seeded from the staged upstream, and the re-pin overrides whatever the
-    // chain wrote before transport.
     let mut entries: Vec<crate::FilterEntry> = serde_yaml::from_str("- filter: test_upstream_hijack").unwrap();
     let pipeline = Arc::new(crate::FilterPipeline::build(&mut entries, &registry).unwrap());
 
@@ -2142,12 +2094,6 @@ async fn run_streaming_falls_back_to_next_staged_address_on_connection_refusal()
         time::{Duration, Instant},
     };
 
-    // The streaming transport arm has its own peer loop and send path, distinct
-    // from the buffered arm, so it needs its own fallback regression (see
-    // `run_falls_back_to_next_staged_address_on_connection_refusal` for the
-    // buffered sibling). Bind then drop a listener for a guaranteed-unused
-    // address that refuses connections, and spawn a live chunked backend as the
-    // second staged address.
     let dead = {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap()
@@ -2155,18 +2101,12 @@ async fn run_streaming_falls_back_to_next_staged_address_on_connection_refusal()
     let (live_addr, backend) =
         spawn_raw_backend("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n").await;
 
-    // Select streaming mode but resolve no upstream through the chain: the
-    // destination is seeded from the staged upstream, so the streaming request
-    // runs straight to transport against the staged address set.
     let registry = callout_registry();
     let mut entries: Vec<crate::FilterEntry> = serde_yaml::from_str("- filter: test_streaming_selector\n").unwrap();
     let pipeline = Arc::new(crate::FilterPipeline::build(&mut entries, &registry).unwrap());
 
     let executor = streaming_executor(1_048_576);
 
-    // Pin the primary address to the dead endpoint and stage the whole
-    // resolver-ordered set so the streaming arm advances past the refusal to the
-    // live backend without re-resolving DNS.
     let staged = super::StagedUpstream(praxis_core::connectivity::Upstream {
         address: Arc::from(dead.to_string().as_str()),
         authority: None,
@@ -2653,8 +2593,6 @@ async fn run_classified_exactly_max_response_bytes_succeeds() {
         time::{Duration, Instant},
     };
 
-    // A 4-byte body sits exactly at the 4-byte ceiling and must be delivered
-    // whole, not classified as too large.
     let (addr, backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd").await;
     let registry = crate::FilterRegistry::with_builtins();
     let mut entries: Vec<crate::FilterEntry> = serde_yaml::from_str(&buffered_chain_yaml(addr, "")).unwrap();
@@ -2700,8 +2638,6 @@ async fn run_classified_one_byte_over_returns_typed_response_too_large() {
         time::{Duration, Instant},
     };
 
-    // A 5-byte body is one byte over the 4-byte ceiling: the transport trips the
-    // overflow and the typed classification must reach the caller.
     let (addr, backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nabcde").await;
     let registry = crate::FilterRegistry::with_builtins();
     let mut entries: Vec<crate::FilterEntry> = serde_yaml::from_str(&buffered_chain_yaml(addr, "")).unwrap();
@@ -2741,8 +2677,6 @@ async fn run_classified_real_upstream_502_is_not_response_too_large() {
         time::{Duration, Instant},
     };
 
-    // A genuine upstream 502 with a small body must be delivered as-is, never
-    // inferred to be an overflow from its status.
     let (addr, backend) = spawn_raw_backend("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 3\r\n\r\nerr").await;
     let registry = crate::FilterRegistry::with_builtins();
     let mut entries: Vec<crate::FilterEntry> = serde_yaml::from_str(&buffered_chain_yaml(addr, "")).unwrap();
@@ -2808,8 +2742,6 @@ async fn run_classified_runs_response_filters_on_transport_overflow() {
             .unwrap();
     }
 
-    // The transport overflows on a 5-byte body under a 4-byte ceiling, yet the
-    // response-header phase must still run over the synthesized response.
     let (addr, backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nabcde").await;
     let mut entries: Vec<crate::FilterEntry> =
         serde_yaml::from_str(&buffered_chain_yaml(addr, "- filter: test_response_header_recorder\n")).unwrap();
@@ -2848,8 +2780,6 @@ async fn run_preserves_buffered_502_on_transport_overflow() {
         time::{Duration, Instant},
     };
 
-    // Existing `run` callers must keep seeing an overflow collapsed into a
-    // generic empty 502 — the additive classified API must not change this.
     let (addr, backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nabcde").await;
     let registry = crate::FilterRegistry::with_builtins();
     let mut entries: Vec<crate::FilterEntry> = serde_yaml::from_str(&buffered_chain_yaml(addr, "")).unwrap();
@@ -2897,9 +2827,6 @@ async fn run_classified_executor_side_body_overflow_returns_typed_response_too_l
         )
         .unwrap();
 
-    // The transport delivers a 2-byte body within the 4-byte ceiling; the filter
-    // then grows it to 5 bytes, so the executor's own post-filter body-limit
-    // check — not the transport — must produce the typed classification.
     let (addr, backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
     let mut entries: Vec<crate::FilterEntry> =
         serde_yaml::from_str(&buffered_chain_yaml(addr, "- filter: test_body_expanding\n")).unwrap();
@@ -2939,18 +2866,13 @@ async fn abnormal_completion_body_is_bounded_by_max_response_bytes() {
         time::{Duration, Instant},
     };
 
-    // Drive the abnormal stream-completion path end-to-end: streaming is selected,
-    // the transport is dropped before response headers, and the completion filter
-    // flushes an 8-byte terminal frame. With `max_response_bytes` above 8, the
-    // completion body rides through as a normal buffered response — the executor's
-    // per-step ceiling is the only bound on the completion body here.
     let (addr, backend) = spawn_request_dropping_backend().await;
     let registry = callout_registry();
     let mut entries: Vec<crate::FilterEntry> =
         serde_yaml::from_str(&routed_chain_yaml(addr, "- filter: test_bounded_completion\n")).unwrap();
     let pipeline = Arc::new(crate::FilterPipeline::build(&mut entries, &registry).unwrap());
 
-    let executor = streaming_executor(1_048_576); // 1 MiB, far above the 8-byte frame
+    let executor = streaming_executor(1_048_576);
     let request = crate::SubRequest {
         method: http::Method::GET,
         uri: http::Uri::from_static("/"),
@@ -2990,16 +2912,13 @@ async fn abnormal_completion_over_ceiling_is_classified_too_large() {
         time::{Duration, Instant},
     };
 
-    // Same abnormal stream-completion path, but with `max_response_bytes` below the
-    // 8-byte completion frame. The flushed completion body must be classified as
-    // too large, preserving the observed size and the tripped ceiling.
     let (addr, backend) = spawn_request_dropping_backend().await;
     let registry = callout_registry();
     let mut entries: Vec<crate::FilterEntry> =
         serde_yaml::from_str(&routed_chain_yaml(addr, "- filter: test_bounded_completion\n")).unwrap();
     let pipeline = Arc::new(crate::FilterPipeline::build(&mut entries, &registry).unwrap());
 
-    let executor = streaming_executor(4); // below the 8-byte completion frame
+    let executor = streaming_executor(4);
     let request = crate::SubRequest {
         method: http::Method::GET,
         uri: http::Uri::from_static("/"),
@@ -3035,9 +2954,6 @@ async fn selected_upstream_reject_short_circuits_before_dialing() {
 
     use praxis_core::subrequest::{SubRequestClient, SubRequestConnector};
 
-    // Point the selected upstream at a dead port: if the phase's rejection did
-    // not short-circuit, the executor would dial and classify a connect failure
-    // as 502. A 403 proves the phase rejected before any dial.
     let dead = {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap()
@@ -3079,7 +2995,8 @@ async fn selected_upstream_reject_short_circuits_before_dialing() {
 
     assert_eq!(
         response.status, 403,
-        "the selected-upstream phase rejection returns 403 with no upstream dial"
+        "the selected-upstream phase rejection returns 403 with no upstream dial; had it dialed the \
+         dead port, the connect failure would classify as 502"
     );
 }
 
@@ -3281,13 +3198,6 @@ async fn selected_upstream_phase_re_pins_staged_upstream_over_body_filter_rewrit
 
     use praxis_core::subrequest::{SubRequestClient, SubRequestConnector};
 
-    // Two distinguishable live backends: the staged destination and the
-    // attacker's. A body-phase filter rewrites `ctx.upstream` to the attacker
-    // AFTER the pre-phase re-pin; the executor's post-phase re-pin must restore
-    // the staged address so the adapted body can only reach the destination it
-    // was prepared for. Without the post-phase re-pin the callout would dial the
-    // attacker and return "hijack" — the credential-exfiltration path the
-    // invariant blocks, now reachable through the selected-upstream body phase.
     let (staged_addr, staged_backend) = spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nstaged").await;
     let (attacker_addr, attacker_backend) =
         spawn_raw_backend("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nhijack").await;
@@ -3303,9 +3213,6 @@ async fn selected_upstream_phase_re_pins_staged_upstream_over_body_filter_rewrit
             })),
         )
         .unwrap();
-    // The outbound chain carries only the body-phase hijack filter: the
-    // destination is seeded from the staged upstream, and the post-phase re-pin
-    // overrides whatever the phase wrote before transport.
     let mut entries: Vec<crate::FilterEntry> =
         serde_yaml::from_str("- filter: test_selected_upstream_body_hijack").unwrap();
     let pipeline = Arc::new(crate::FilterPipeline::build(&mut entries, &registry).unwrap());
@@ -3364,19 +3271,6 @@ async fn selected_upstream_phase_enforces_retained_state_ceiling() {
 
     use praxis_core::subrequest::{SubRequestClient, SubRequestConnector};
 
-    // Point the selected upstream at a LIVE backend that records every byte it
-    // receives. The ceiling must reject the phase's retained-state overflow
-    // BEFORE the dial, so the backend must observe nothing.
-    //
-    // Asserting status alone cannot prove the "before dialing" guarantee: a
-    // post-transport accounting checkpoint already returns 413 for the same
-    // oversized state (see mod.rs, the `execute_http_response` re-check), so a
-    // dead-port variant would report 413 whether or not the dial happened. The
-    // captured-request buffer is the discriminator — empty only if the ceiling
-    // fired before transport. Without the pre-dial check the executor dials
-    // first, the credential-bearing request body crosses the wire, and only the
-    // post-transport check then returns 413: too late for a body-authenticated
-    // provider.
     let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
     let (backend_addr, backend) =
         spawn_capturing_backend("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", Arc::clone(&captured)).await;
@@ -3388,7 +3282,6 @@ async fn selected_upstream_phase_enforces_retained_state_ceiling() {
             crate::FilterFactory::Http(Arc::new(move |_| {
                 Ok(Box::new(SelectedUpstreamStateExpandFilter {
                     upstream_addr: backend_addr,
-                    // Far past the 64-byte ceiling below.
                     accumulator_bytes: 4096,
                 }))
             })),
@@ -3400,9 +3293,6 @@ async fn selected_upstream_phase_enforces_retained_state_ceiling() {
 
     let client = SubRequestClient::new(SubRequestConnector::new(1, None));
     let downstream = crate::SubrequestRuntime::new(None, false, None, Instant::now());
-    // Build with real (non-noop) retained-state accounting: a 64-byte ceiling the
-    // phase's inserted IterationState blows past. `for_callout` wires the noop
-    // accounting, which cannot exercise this boundary.
     let executor = crate::FilteredSubrequestExecutor::new(
         Box::new(IterationStateCeiling { max_state_bytes: 64 }),
         client,
