@@ -9,14 +9,8 @@ use http::Response;
 // JSON
 // -----------------------------------------------------------------------------
 
-/// Build an HTTP response with `Content-Type: application/json`.
-///
-/// ```ignore
-/// use praxis_protocol::http::pingora::json::json_response;
-///
-/// let resp = json_response(200, b"{\"ok\":true}");
-/// assert_eq!(resp.status().as_u16(), 200);
-/// ```
+/// Build an HTTP response with `Content-Type: application/json` and a
+/// matching `Content-Length`.
 #[expect(clippy::expect_used, reason = "valid static response")]
 pub(crate) fn json_response(status: u16, body: &[u8]) -> Response<Vec<u8>> {
     Response::builder()
