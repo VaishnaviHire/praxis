@@ -13,7 +13,7 @@ use super::listener_meta::{ListenerMeta, ListenerMetaStore};
 use crate::{ListenerPipelines, http::pingora::json::json_response};
 
 // -----------------------------------------------------------------------------
-// Response DTOs
+// PipelinesAggregateResponse
 // -----------------------------------------------------------------------------
 
 /// Aggregate `GET /api/pipelines` body.
@@ -23,6 +23,10 @@ pub(super) struct PipelinesAggregateResponse {
     pub listeners: Vec<ListenerPipelineView>,
 }
 
+// -----------------------------------------------------------------------------
+// PipelinesSingleResponse
+// -----------------------------------------------------------------------------
+
 /// Per-listener `GET /api/pipelines?listener=<name>` body.
 #[derive(Debug, Serialize)]
 pub(super) struct PipelinesSingleResponse {
@@ -30,21 +34,45 @@ pub(super) struct PipelinesSingleResponse {
     pub listener: ListenerPipelineView,
 }
 
+// -----------------------------------------------------------------------------
+// PipelinesAdminState
+// -----------------------------------------------------------------------------
+
+/// Pipelines + metadata handles for the admin service.
+#[derive(Clone)]
+pub(super) struct PipelinesAdminState {
+    /// Live per-listener pipelines.
+    pub pipelines: Arc<ListenerPipelines>,
+
+    /// Hot-swappable listener metadata.
+    pub meta: ListenerMetaStore,
+}
+
+// -----------------------------------------------------------------------------
+// ListenerPipeLineView
+// -----------------------------------------------------------------------------
+
 /// Resolved pipeline view for one listener.
 #[derive(Debug, Serialize)]
 pub(super) struct ListenerPipelineView {
     /// Listener name.
     pub name: String,
+
     /// Bind address.
     pub address: String,
+
     /// Protocol (`http` / `tcp`).
     pub protocol: praxis_core::config::ProtocolKind,
+
     /// Whether TLS is configured.
     pub tls: bool,
+
     /// Named chains from the last applied config.
     pub chain_names: Vec<String>,
+
     /// Top-level filter count (`filters.len()`).
     pub filter_count: usize,
+
     /// Ordered top-level filters.
     pub filters: Vec<FilterIntrospection>,
 }
@@ -79,6 +107,28 @@ pub(super) fn pipelines_response(
 
     if method == "HEAD" { as_head_response(resp) } else { resp }
 }
+
+/// Parse `listener=<name>` from a raw query string.
+pub(super) fn parse_listener_query(query: Option<&str>) -> Option<String> {
+    let query = query?;
+    for pair in query.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next()?;
+        if key != "listener" {
+            continue;
+        }
+        let value = parts.next().unwrap_or("");
+        if value.is_empty() {
+            return None;
+        }
+        return Some(percent_decode_basic(value));
+    }
+    None
+}
+
+// -----------------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------------
 
 /// Build the aggregate `GET /api/pipelines` JSON response.
 fn aggregate_pipelines_response(
@@ -149,24 +199,6 @@ fn build_listener_view(
     })
 }
 
-/// Parse `listener=<name>` from a raw query string.
-pub(super) fn parse_listener_query(query: Option<&str>) -> Option<String> {
-    let query = query?;
-    for pair in query.split('&') {
-        let mut parts = pair.splitn(2, '=');
-        let key = parts.next()?;
-        if key != "listener" {
-            continue;
-        }
-        let value = parts.next().unwrap_or("");
-        if value.is_empty() {
-            return None;
-        }
-        return Some(percent_decode_basic(value));
-    }
-    None
-}
-
 /// Minimal percent-decoding for query values.
 fn percent_decode_basic(input: &str) -> String {
     let bytes = input.as_bytes();
@@ -211,14 +243,9 @@ fn from_hex(b: u8) -> Option<u8> {
     }
 }
 
-/// Pipelines + metadata handles for the admin service.
-#[derive(Clone)]
-pub(super) struct PipelinesAdminState {
-    /// Live per-listener pipelines.
-    pub pipelines: Arc<ListenerPipelines>,
-    /// Hot-swappable listener metadata.
-    pub meta: ListenerMetaStore,
-}
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

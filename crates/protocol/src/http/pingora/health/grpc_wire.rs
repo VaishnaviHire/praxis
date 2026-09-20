@@ -10,7 +10,7 @@
 use bytes::Bytes;
 
 // -----------------------------------------------------------------------------
-// Constants
+// Constants (Public)
 // -----------------------------------------------------------------------------
 
 /// `content-type` for length-prefixed protobuf gRPC messages.
@@ -30,6 +30,10 @@ pub(crate) const HEALTH_CHECK_PATH: &str = "/grpc.health.v1.Health/Check";
 
 /// Largest response frame accepted from an upstream health server.
 pub(crate) const MAX_RESPONSE_BYTES: usize = 4_096; // 4 KiB
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
 
 /// Length-prefix size: one compression flag plus a four-byte length.
 const PREFIX_LEN: usize = 5;
@@ -96,6 +100,7 @@ pub(crate) fn encode_request(service: &str) -> Bytes {
     framed.push(0); // compression flag: identity
     framed.extend_from_slice(&length.to_be_bytes());
     framed.extend_from_slice(&message);
+
     Bytes::from(framed)
 }
 
@@ -116,8 +121,7 @@ pub(crate) fn decode_serving_status(frame: &[u8]) -> Option<ServingStatus> {
     }
     let message = rest.get(4..4_usize.checked_add(length)?)?;
 
-    // An absent field is the proto3 default, which is UNKNOWN — not a
-    // decode failure.
+    // Absent field is the proto3 default which is UNKNOWN, not a decode failure
     let mut status = ServingStatus::Unknown;
     let mut pos = 0;
     while pos < message.len() {
@@ -130,6 +134,7 @@ pub(crate) fn decode_serving_status(frame: &[u8]) -> Option<ServingStatus> {
             skip_field(message, &mut pos, wire_type)?;
         }
     }
+
     Some(status)
 }
 

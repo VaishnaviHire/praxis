@@ -102,6 +102,10 @@ pub fn spawn_health_checks(clusters: &[Cluster], registry: &HealthRegistry, shut
     }
 }
 
+// -----------------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------------
+
 /// Build [`HealthCheckParams`] from a cluster and its health config.
 fn build_health_params(
     cluster: &Cluster,

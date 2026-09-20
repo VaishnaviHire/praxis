@@ -37,6 +37,42 @@ const H2_FRAME_TYPE_SETTINGS: u8 = 0x04;
 const H2_FRAME_HEADER_LEN: usize = 9;
 
 // -----------------------------------------------------------------------------
+// TCP Probe
+// -----------------------------------------------------------------------------
+
+/// Probe an endpoint by attempting a TCP connection.
+///
+/// Returns `true` if the connection succeeds within the timeout.
+/// The connection is immediately closed on success.
+///
+/// ```ignore
+/// # async fn example() {
+/// use std::time::Duration;
+///
+/// use praxis_protocol::http::pingora::health::probe::tcp_probe;
+///
+/// let healthy = tcp_probe("127.0.0.1:5432", Duration::from_secs(2)).await;
+/// assert!(healthy);
+/// # }
+/// ```
+pub async fn tcp_probe(addr: &str, timeout: Duration) -> bool {
+    match tokio::time::timeout(timeout, TcpStream::connect(addr)).await {
+        Ok(Ok(_stream)) => {
+            trace!(addr, "tcp health check succeeded");
+            true
+        },
+        Ok(Err(e)) => {
+            trace!(addr, error = %e, "tcp health check connect failed");
+            false
+        },
+        Err(_) => {
+            trace!(addr, "tcp health check timed out");
+            false
+        },
+    }
+}
+
+// -----------------------------------------------------------------------------
 // HTTP Probe
 // -----------------------------------------------------------------------------
 
@@ -78,56 +114,6 @@ pub(crate) async fn http_probe_with_request(
         trace!(addr, "health check timed out");
         false
     }
-}
-
-/// Inner HTTP probe logic (no timeout wrapper).
-async fn http_probe_inner(addr: &str, request: &str, expected_status: u16) -> bool {
-    let mut stream = match TcpStream::connect(addr).await {
-        Ok(s) => s,
-        Err(e) => {
-            trace!(addr, error = %e, "health check connect failed");
-            return false;
-        },
-    };
-
-    if let Err(e) = stream.write_all(request.as_bytes()).await {
-        trace!(addr, error = %e, "health check write failed");
-        return false;
-    }
-
-    match read_status_line(&mut stream, addr).await {
-        Some(data) => parse_status_code(&data) == Some(expected_status),
-        None => false,
-    }
-}
-
-/// Read from `stream` until the first `\r\n` (end of status line) or buffer full.
-///
-/// Returns `None` on empty response or I/O error.
-#[expect(clippy::indexing_slicing, reason = "bounded by filled counter")]
-async fn read_status_line(stream: &mut TcpStream, addr: &str) -> Option<String> {
-    let mut buf = [0_u8; 256];
-    let mut filled = 0;
-    loop {
-        match stream.read(&mut buf[filled..]).await {
-            Ok(0) => break,
-            Ok(n) => {
-                filled += n;
-                if buf[..filled].windows(2).any(|w| w == b"\r\n") || filled >= buf.len() {
-                    break;
-                }
-            },
-            Err(e) => {
-                trace!(addr, error = %e, "health check read failed");
-                return None;
-            },
-        }
-    }
-    if filled == 0 {
-        trace!(addr, "health check received empty response");
-        return None;
-    }
-    Some(String::from_utf8_lossy(&buf[..filled]).into_owned())
 }
 
 /// Extract the HTTP status code from a response status line.
@@ -180,6 +166,79 @@ pub async fn h2_probe(addr: &str, timeout: Duration) -> bool {
         false
     }
 }
+
+/// Check whether a buffer starts with an H2 SETTINGS frame.
+///
+/// ```ignore
+/// use praxis_protocol::http::pingora::health::probe::is_settings_frame;
+///
+/// let settings = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
+/// assert!(is_settings_frame(settings));
+///
+/// let not_settings = &[0, 0, 0, 1, 0, 0, 0, 0, 0];
+/// assert!(!is_settings_frame(not_settings));
+/// ```
+pub(crate) fn is_settings_frame(buf: &[u8]) -> bool {
+    buf.len() >= H2_FRAME_HEADER_LEN && buf.get(3) == Some(&H2_FRAME_TYPE_SETTINGS)
+}
+
+// -----------------------------------------------------------------------------
+// HTTP Utilities
+// -----------------------------------------------------------------------------
+
+/// Inner HTTP probe logic (no timeout wrapper).
+async fn http_probe_inner(addr: &str, request: &str, expected_status: u16) -> bool {
+    let mut stream = match TcpStream::connect(addr).await {
+        Ok(s) => s,
+        Err(e) => {
+            trace!(addr, error = %e, "health check connect failed");
+            return false;
+        },
+    };
+
+    if let Err(e) = stream.write_all(request.as_bytes()).await {
+        trace!(addr, error = %e, "health check write failed");
+        return false;
+    }
+
+    match read_status_line(&mut stream, addr).await {
+        Some(data) => parse_status_code(&data) == Some(expected_status),
+        None => false,
+    }
+}
+
+/// Read from `stream` until the first `\r\n` (end of status line) or buffer full.
+///
+/// Returns `None` on empty response or I/O error.
+#[expect(clippy::indexing_slicing, reason = "bounded by filled counter")]
+async fn read_status_line(stream: &mut TcpStream, addr: &str) -> Option<String> {
+    let mut buf = [0_u8; 256];
+    let mut filled = 0;
+    loop {
+        match stream.read(&mut buf[filled..]).await {
+            Ok(0) => break,
+            Ok(n) => {
+                filled += n;
+                if buf[..filled].windows(2).any(|w| w == b"\r\n") || filled >= buf.len() {
+                    break;
+                }
+            },
+            Err(e) => {
+                trace!(addr, error = %e, "health check read failed");
+                return None;
+            },
+        }
+    }
+    if filled == 0 {
+        trace!(addr, "health check received empty response");
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buf[..filled]).into_owned())
+}
+
+// -----------------------------------------------------------------------------
+// HTTP2 Utilities
+// -----------------------------------------------------------------------------
 
 /// Inner HTTP/2 probe logic (no timeout wrapper).
 async fn h2_probe_inner(addr: &str) -> bool {
@@ -245,57 +304,6 @@ async fn h2_close_gracefully(stream: &mut TcpStream) {
 
     let mut drain = [0_u8; 256];
     while stream.read(&mut drain).await.unwrap_or(0) > 0 {}
-}
-
-/// Check whether a buffer starts with an H2 SETTINGS frame.
-///
-/// ```ignore
-/// use praxis_protocol::http::pingora::health::probe::is_settings_frame;
-///
-/// let settings = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
-/// assert!(is_settings_frame(settings));
-///
-/// let not_settings = &[0, 0, 0, 1, 0, 0, 0, 0, 0];
-/// assert!(!is_settings_frame(not_settings));
-/// ```
-pub(crate) fn is_settings_frame(buf: &[u8]) -> bool {
-    buf.len() >= H2_FRAME_HEADER_LEN && buf.get(3) == Some(&H2_FRAME_TYPE_SETTINGS)
-}
-
-// -----------------------------------------------------------------------------
-// TCP Probe
-// -----------------------------------------------------------------------------
-
-/// Probe an endpoint by attempting a TCP connection.
-///
-/// Returns `true` if the connection succeeds within the timeout.
-/// The connection is immediately closed on success.
-///
-/// ```ignore
-/// # async fn example() {
-/// use std::time::Duration;
-///
-/// use praxis_protocol::http::pingora::health::probe::tcp_probe;
-///
-/// let healthy = tcp_probe("127.0.0.1:5432", Duration::from_secs(2)).await;
-/// assert!(healthy);
-/// # }
-/// ```
-pub async fn tcp_probe(addr: &str, timeout: Duration) -> bool {
-    match tokio::time::timeout(timeout, TcpStream::connect(addr)).await {
-        Ok(Ok(_stream)) => {
-            trace!(addr, "tcp health check succeeded");
-            true
-        },
-        Ok(Err(e)) => {
-            trace!(addr, error = %e, "tcp health check connect failed");
-            false
-        },
-        Err(_) => {
-            trace!(addr, "tcp health check timed out");
-            false
-        },
-    }
 }
 
 // -----------------------------------------------------------------------------

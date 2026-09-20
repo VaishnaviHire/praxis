@@ -35,9 +35,10 @@ pub struct ClusterMeta {
 /// Hot-swappable cluster metadata for `/api/stats`.
 pub type ClusterMetaStore = Arc<ArcSwap<HashMap<String, ClusterMeta>>>;
 
-// -----------------------------------------------------------------------------
-// Metadata extraction
-// -----------------------------------------------------------------------------
+/// Wrap a metadata map in an [`ArcSwap`] store.
+pub fn new_cluster_meta_store(meta: HashMap<String, ClusterMeta>) -> ClusterMetaStore {
+    Arc::new(ArcSwap::from_pointee(meta))
+}
 
 /// Build cluster metadata from configuration.
 pub fn cluster_meta_from_config(config: &Config) -> HashMap<String, ClusterMeta> {
@@ -63,6 +64,10 @@ fn cluster_meta_from_cluster(cluster: &Cluster) -> ClusterMeta {
         endpoints: cluster.endpoints.iter().map(|ep| ep.address().to_owned()).collect(),
     }
 }
+
+// -----------------------------------------------------------------------------
+// Metadata Extraction
+// -----------------------------------------------------------------------------
 
 /// Merge inline and nested load-balancer clusters into `meta`.
 fn collect_clusters_from_entry(entry: &FilterEntry, meta: &mut HashMap<String, ClusterMeta>) {
@@ -122,11 +127,6 @@ fn step_filters_from_entry(entry: &FilterEntry) -> Vec<FilterEntry> {
         }
     }
     filters
-}
-
-/// Wrap a metadata map in an [`ArcSwap`] store.
-pub fn new_cluster_meta_store(meta: HashMap<String, ClusterMeta>) -> ClusterMetaStore {
-    Arc::new(ArcSwap::from_pointee(meta))
 }
 
 // -----------------------------------------------------------------------------

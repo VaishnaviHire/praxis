@@ -131,9 +131,66 @@ impl PingoraHealthService {
     }
 }
 
+#[async_trait]
+impl ServeHttp for PingoraHealthService {
+    async fn response(&self, http_session: &mut ServerSession) -> Response<Vec<u8>> {
+        let path = http_session.req_header().uri.path().to_owned();
+
+        match path.as_str() {
+            "/healthy" => json_response(200, br#"{"status":"ok"}"#),
+            "/metrics" => prometheus_response(),
+            "/ready" => {
+                let (status, body) = self.ready_response();
+                json_response(status, body.as_bytes())
+            },
+            _ => json_response(404, br#"{"error":"not found"}"#),
+        }
+    }
+}
+
+/// Backward-compatible alias for [`add_admin_endpoints_to_pingora_server`].
+pub fn add_health_endpoint_to_pingora_server(
+    server: &mut Server,
+    admin_addr: &str,
+    registry: Option<HealthRegistry>,
+    verbose: bool,
+) {
+    add_admin_endpoints_to_pingora_server(
+        server,
+        admin_addr,
+        AdminEndpointOptions {
+            health_registry: registry,
+            verbose,
+            ..AdminEndpointOptions::default()
+        },
+    );
+}
+
 // -----------------------------------------------------------------------------
 // PingoraAdminService
 // -----------------------------------------------------------------------------
+
+/// Optional registries and flags for [`add_admin_endpoints_to_pingora_server`].
+#[derive(Default)]
+pub struct AdminEndpointOptions {
+    /// Shared health registry for `/ready` cluster status.
+    pub health_registry: Option<HealthRegistry>,
+
+    /// Shared KV stores for `/api/kv/*`.
+    pub kv_registry: Option<KvStoreRegistry>,
+
+    /// Live pipelines + metadata for `GET /api/pipelines`.
+    pub pipelines: Option<(Arc<crate::ListenerPipelines>, ListenerMetaStore)>,
+
+    /// Runtime log-level state for `/api/log-level`.
+    pub log_level: Option<Arc<praxis_core::logging::LogLevelState>>,
+
+    /// Runtime stats snapshot state for `/api/stats`.
+    pub stats: Option<stats_admin::StatsAdminState>,
+
+    /// When `true`, include per-cluster detail in `/ready`.
+    pub verbose: bool,
+}
 
 /// Combined admin service that routes health, metrics, and KV endpoints
 /// through a single Pingora [`Service`].
@@ -277,116 +334,6 @@ impl ServeHttp for PingoraAdminService {
     }
 }
 
-/// Build an HTTP response containing Prometheus text exposition format.
-///
-/// Returns 200 with `text/plain; version=0.0.4` content type when the
-/// recorder is installed, or 503 if it has not been initialised.
-#[expect(clippy::expect_used, reason = "valid static response")]
-fn prometheus_response() -> Response<Vec<u8>> {
-    match metrics::render_prometheus() {
-        Some(body) => Response::builder()
-            .status(200)
-            .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-            .body(body.into_bytes())
-            .expect("valid prometheus response"),
-        None => Response::builder()
-            .status(503)
-            .header("Content-Type", "text/plain")
-            .body(b"metrics recorder not installed\n".to_vec())
-            .expect("valid error response"),
-    }
-}
-
-/// Optional registries and flags for [`add_admin_endpoints_to_pingora_server`].
-#[derive(Default)]
-pub struct AdminEndpointOptions {
-    /// Shared health registry for `/ready` cluster status.
-    pub health_registry: Option<HealthRegistry>,
-
-    /// Shared KV stores for `/api/kv/*`.
-    pub kv_registry: Option<KvStoreRegistry>,
-
-    /// Live pipelines + metadata for `GET /api/pipelines`.
-    pub pipelines: Option<(Arc<crate::ListenerPipelines>, ListenerMetaStore)>,
-
-    /// Runtime log-level state for `/api/log-level`.
-    pub log_level: Option<Arc<praxis_core::logging::LogLevelState>>,
-
-    /// Runtime stats snapshot state for `/api/stats`.
-    pub stats: Option<stats_admin::StatsAdminState>,
-
-    /// When `true`, include per-cluster detail in `/ready`.
-    pub verbose: bool,
-}
-
-/// Pingora-managed recorder maintenance service.
-struct PrometheusUpkeepService {
-    /// Exporter handle used by each recorder maintenance pass.
-    handle: metrics_exporter_prometheus::PrometheusHandle,
-}
-
-/// Recorder installed for the combined admin endpoint.
-///
-/// The concrete exporter handle stays private so applications cannot create a
-/// second lifecycle for the recorder. Pass this value to
-/// [`add_admin_endpoints_to_pingora_server_with_recorder`].
-pub struct PrometheusAdminRecorder {
-    /// Exporter handle shared by metrics rendering and recorder upkeep.
-    handle: metrics_exporter_prometheus::PrometheusHandle,
-}
-
-/// Install the admin Prometheus recorder before startup instrumentation runs.
-#[must_use]
-pub fn install_prometheus_admin_recorder() -> PrometheusAdminRecorder {
-    PrometheusAdminRecorder {
-        handle: metrics::install_prometheus_recorder().clone(),
-    }
-}
-
-#[async_trait]
-impl BackgroundService for PrometheusUpkeepService {
-    async fn start(&self, shutdown: pingora_core::server::ShutdownWatch) {
-        let handle = self.handle.clone();
-        run_prometheus_upkeep(
-            shutdown,
-            PROMETHEUS_UPKEEP_INTERVAL,
-            Arc::new(move || handle.run_upkeep()),
-        )
-        .await;
-    }
-}
-
-/// Closure used for one recorder maintenance pass.
-type UpkeepFn = Arc<dyn Fn() + Send + Sync>;
-
-/// Run non-overlapping upkeep passes until Pingora begins shutdown.
-async fn run_prometheus_upkeep(
-    mut shutdown: pingora_core::server::ShutdownWatch,
-    interval: Duration,
-    upkeep: UpkeepFn,
-) {
-    loop {
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            () = tokio::time::sleep(interval) => {
-                let upkeep = Arc::clone(&upkeep);
-                let task = tokio::task::spawn_blocking(move || upkeep());
-                tokio::select! {
-                    // Dropping the JoinHandle does not cancel a pass that is already
-                    // running, but shutdown remains responsive and no new pass is
-                    // scheduled.
-                    _ = shutdown.changed() => break,
-                    result = task => {
-                        if let Err(error) = result {
-                            error!(?error, "Prometheus recorder upkeep task failed");
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// Add admin endpoints to a Pingora server.
 ///
 /// Installs the global Prometheus metrics recorder and binds a
@@ -418,6 +365,82 @@ pub fn add_admin_endpoints_to_pingora_server(server: &mut Server, admin_addr: &s
     );
 }
 
+// -----------------------------------------------------------------------------
+// Metrics (PrometheusUpkeepService)
+// -----------------------------------------------------------------------------
+
+/// Closure used for one recorder maintenance pass.
+type UpkeepFn = Arc<dyn Fn() + Send + Sync>;
+
+/// Pingora-managed recorder maintenance service.
+struct PrometheusUpkeepService {
+    /// Exporter handle used by each recorder maintenance pass.
+    handle: metrics_exporter_prometheus::PrometheusHandle,
+}
+
+/// Run non-overlapping upkeep passes until Pingora begins shutdown.
+async fn run_prometheus_upkeep(
+    mut shutdown: pingora_core::server::ShutdownWatch,
+    interval: Duration,
+    upkeep: UpkeepFn,
+) {
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => break,
+            () = tokio::time::sleep(interval) => {
+                let upkeep = Arc::clone(&upkeep);
+                let task = tokio::task::spawn_blocking(move || upkeep());
+                tokio::select! {
+                    // Dropping the JoinHandle does not cancel a pass that is already
+                    // running, but shutdown remains responsive and no new pass is
+                    // scheduled.
+                    _ = shutdown.changed() => break,
+                    result = task => {
+                        if let Err(error) = result {
+                            error!(?error, "Prometheus recorder upkeep task failed");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl BackgroundService for PrometheusUpkeepService {
+    async fn start(&self, shutdown: pingora_core::server::ShutdownWatch) {
+        let handle = self.handle.clone();
+        run_prometheus_upkeep(
+            shutdown,
+            PROMETHEUS_UPKEEP_INTERVAL,
+            Arc::new(move || handle.run_upkeep()),
+        )
+        .await;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Metrics (PrometheusAdminRecorder)
+// -----------------------------------------------------------------------------
+
+/// Recorder installed for the combined admin endpoint.
+///
+/// The concrete exporter handle stays private so applications cannot create a
+/// second lifecycle for the recorder. Pass this value to
+/// [`add_admin_endpoints_to_pingora_server_with_recorder`].
+pub struct PrometheusAdminRecorder {
+    /// Exporter handle shared by metrics rendering and recorder upkeep.
+    handle: metrics_exporter_prometheus::PrometheusHandle,
+}
+
+/// Install the admin Prometheus recorder before startup instrumentation runs.
+#[must_use]
+pub fn install_prometheus_admin_recorder() -> PrometheusAdminRecorder {
+    PrometheusAdminRecorder {
+        handle: metrics::install_prometheus_recorder().clone(),
+    }
+}
+
 /// Add admin endpoints using an already-installed Prometheus recorder.
 ///
 /// This entry point lets applications install the recorder before
@@ -445,41 +468,6 @@ pub fn add_admin_endpoints_to_pingora_server_with_recorder(
     service.add_tcp(admin_addr);
     info!(address = %admin_addr, verbose, "admin endpoints enabled (health + metrics + kv + pipelines + log-level + stats)");
     server.add_service(service);
-}
-
-/// Backward-compatible alias for [`add_admin_endpoints_to_pingora_server`].
-pub fn add_health_endpoint_to_pingora_server(
-    server: &mut Server,
-    admin_addr: &str,
-    registry: Option<HealthRegistry>,
-    verbose: bool,
-) {
-    add_admin_endpoints_to_pingora_server(
-        server,
-        admin_addr,
-        AdminEndpointOptions {
-            health_registry: registry,
-            verbose,
-            ..AdminEndpointOptions::default()
-        },
-    );
-}
-
-#[async_trait]
-impl ServeHttp for PingoraHealthService {
-    async fn response(&self, http_session: &mut ServerSession) -> Response<Vec<u8>> {
-        let path = http_session.req_header().uri.path().to_owned();
-
-        match path.as_str() {
-            "/healthy" => json_response(200, br#"{"status":"ok"}"#),
-            "/metrics" => prometheus_response(),
-            "/ready" => {
-                let (status, body) = self.ready_response();
-                json_response(status, body.as_bytes())
-            },
-            _ => json_response(404, br#"{"error":"not found"}"#),
-        }
-    }
 }
 
 // -----------------------------------------------------------------------------
@@ -586,6 +574,30 @@ fn format_ready_body(status_str: &str, agg: &HealthAggregate) -> String {
         format!(
             r#"{{"status":"{status_str}","clusters":{{"total":{total},"healthy":{healthy},"degraded":{degraded}}}}}"#,
         )
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Utilities (Generators)
+// -----------------------------------------------------------------------------
+
+/// Build an HTTP response containing Prometheus text exposition format.
+///
+/// Returns 200 with `text/plain; version=0.0.4` content type when the
+/// recorder is installed, or 503 if it has not been initialised.
+#[expect(clippy::expect_used, reason = "valid static response")]
+fn prometheus_response() -> Response<Vec<u8>> {
+    match metrics::render_prometheus() {
+        Some(body) => Response::builder()
+            .status(200)
+            .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            .body(body.into_bytes())
+            .expect("valid prometheus response"),
+        None => Response::builder()
+            .status(503)
+            .header("Content-Type", "text/plain")
+            .body(b"metrics recorder not installed\n".to_vec())
+            .expect("valid error response"),
     }
 }
 

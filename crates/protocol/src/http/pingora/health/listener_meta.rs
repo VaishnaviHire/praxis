@@ -2,6 +2,15 @@
 // Copyright (c) 2026 Praxis Contributors
 
 //! Listener metadata snapshot for `GET /api/pipelines`.
+//!
+//! This module provides the types and utilities for extracting listener-level
+//! metadata from the active configuration and exposing it through the admin API.
+//! The metadata includes transport details (address, protocol, TLS state) and
+//! the filter chains attached to each listener.
+//!
+//! The [`ListenerMetaStore`] type wraps the metadata in a hot-swappable
+//! `ArcSwap` so dynamic config reloads can update the snapshot atomically
+//! without blocking readers.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -28,10 +37,11 @@ pub struct ListenerMeta {
     pub chain_names: Vec<String>,
 }
 
-/// Hot-swappable listener metadata for the admin pipelines API.
-pub type ListenerMetaStore = Arc<ArcSwap<HashMap<String, ListenerMeta>>>;
-
 /// Build listener metadata from configuration.
+///
+/// Extracts the listener name, bind address, protocol kind, TLS state, and
+/// attached filter chain names from each listener in the config. Returns a map
+/// keyed by listener name for efficient lookup by the admin API handler.
 pub fn listener_meta_from_config(config: &Config) -> HashMap<String, ListenerMeta> {
     config
         .listeners
@@ -51,15 +61,64 @@ pub fn listener_meta_from_config(config: &Config) -> HashMap<String, ListenerMet
         .collect()
 }
 
+// -----------------------------------------------------------------------------
+// ListenerMetaStore
+// -----------------------------------------------------------------------------
+
+/// Hot-swappable listener metadata for the admin pipelines API.
+pub type ListenerMetaStore = Arc<ArcSwap<HashMap<String, ListenerMeta>>>;
+
 /// Wrap a metadata map in an [`ArcSwap`] store.
+///
+/// Creates a hot-swappable store for listener metadata. The admin API handler
+/// holds a clone of this `Arc<ArcSwap<...>>` and reads the current snapshot
+/// without blocking. Dynamic config reloads call [`ArcSwap::store`] to swap in
+/// a new snapshot atomically.
 pub fn new_listener_meta_store(meta: HashMap<String, ListenerMeta>) -> ListenerMetaStore {
     Arc::new(ArcSwap::from_pointee(meta))
 }
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_listener_meta_includes_chain_names() {
+        let meta = listener_meta_from_config(&sample_config());
+        let web = meta.get("web").expect("web listener");
+        assert_eq!(web.address, "127.0.0.1:8080", "web address should match config");
+        assert_eq!(web.protocol, ProtocolKind::Http, "web should be HTTP");
+        assert!(!web.tls, "web listener should not enable TLS");
+        assert_eq!(web.chain_names, ["main", "edge"], "web chain_names should match config");
+    }
+
+    #[test]
+    fn tcp_listener_meta_sets_protocol() {
+        let meta = listener_meta_from_config(&sample_config());
+        let tcp = meta.get("plain_tcp").expect("tcp listener");
+        assert_eq!(tcp.protocol, ProtocolKind::Tcp, "plain_tcp should be TCP");
+        assert!(!tcp.tls, "plain_tcp should not enable TLS");
+        assert_eq!(tcp.chain_names, ["tcp_main"], "tcp chain_names should match config");
+    }
+
+    #[test]
+    fn tls_listener_meta_sets_tls_flag() {
+        let meta = listener_meta_from_config(&sample_config());
+        assert_eq!(meta.len(), 3, "sample config has three listeners");
+        let secure = meta.get("secure").expect("tls listener");
+        assert!(secure.tls, "secure listener should enable TLS");
+        assert_eq!(secure.protocol, ProtocolKind::Http, "secure should be HTTP");
+        assert_eq!(secure.chain_names, ["main"], "secure chain_names should match config");
+    }
+
+    // -------------------------------------------------------------------------
+    // Test Utilities
+    // -------------------------------------------------------------------------
 
     fn sample_config() -> Config {
         Config::from_yaml(
@@ -89,34 +148,5 @@ filter_chains:
 "#,
         )
         .expect("config should parse")
-    }
-
-    #[test]
-    fn http_listener_meta_includes_chain_names() {
-        let meta = listener_meta_from_config(&sample_config());
-        let web = meta.get("web").expect("web listener");
-        assert_eq!(web.address, "127.0.0.1:8080", "web address should match config");
-        assert_eq!(web.protocol, ProtocolKind::Http, "web should be HTTP");
-        assert!(!web.tls, "web listener should not enable TLS");
-        assert_eq!(web.chain_names, ["main", "edge"], "web chain_names should match config");
-    }
-
-    #[test]
-    fn tcp_listener_meta_sets_protocol() {
-        let meta = listener_meta_from_config(&sample_config());
-        let tcp = meta.get("plain_tcp").expect("tcp listener");
-        assert_eq!(tcp.protocol, ProtocolKind::Tcp, "plain_tcp should be TCP");
-        assert!(!tcp.tls, "plain_tcp should not enable TLS");
-        assert_eq!(tcp.chain_names, ["tcp_main"], "tcp chain_names should match config");
-    }
-
-    #[test]
-    fn tls_listener_meta_sets_tls_flag() {
-        let meta = listener_meta_from_config(&sample_config());
-        assert_eq!(meta.len(), 3, "sample config has three listeners");
-        let secure = meta.get("secure").expect("tls listener");
-        assert!(secure.tls, "secure listener should enable TLS");
-        assert_eq!(secure.protocol, ProtocolKind::Http, "secure should be HTTP");
-        assert_eq!(secure.chain_names, ["main"], "secure chain_names should match config");
     }
 }

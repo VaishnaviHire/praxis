@@ -70,6 +70,10 @@ async fn probe_inner(addr: &str, service: &str, timeout: Duration) -> bool {
     exchange(send_request, addr, service, timeout).await.unwrap_or(false)
 }
 
+// -----------------------------------------------------------------------------
+// AbortOnDrop
+// -----------------------------------------------------------------------------
+
 /// Aborts the h2 connection driver when the probe ends, so no probe cycle
 /// leaves a task running past its timeout.
 struct AbortOnDrop {
@@ -82,6 +86,10 @@ impl Drop for AbortOnDrop {
         self.handle.abort();
     }
 }
+
+// -----------------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------------
 
 /// Run the `Health/Check` call and decide health from the answer.
 async fn exchange(
@@ -150,7 +158,7 @@ async fn read_frame(stream: &mut h2::RecvStream) -> Option<Vec<u8>> {
 }
 
 // -----------------------------------------------------------------------------
-// Verdict
+// Utilities - Verdict
 // -----------------------------------------------------------------------------
 
 /// Decide endpoint health from one `Health/Check` exchange.
