@@ -965,55 +965,6 @@ mod tests {
         );
     }
 
-    // -------------------------------------------------------------------------
-    // Test Utilities
-    // -------------------------------------------------------------------------
-
-    /// Build an SNI extension payload (type 0x0000).
-    fn build_sni_extension(hostname: &str) -> Vec<u8> {
-        let name_bytes = hostname.as_bytes();
-
-        #[expect(clippy::cast_possible_truncation, reason = "test hostnames are short")]
-        let name_len = name_bytes.len() as u16;
-
-        let entry_len = 1 + 2 + name_len;
-        let list_len = entry_len;
-
-        let mut ext = Vec::new();
-        ext.extend_from_slice(&0_u16.to_be_bytes());
-        let ext_data_len = 2 + list_len;
-        ext.extend_from_slice(&ext_data_len.to_be_bytes());
-        ext.extend_from_slice(&list_len.to_be_bytes());
-        ext.push(SNI_NAME_TYPE_HOST);
-        ext.extend_from_slice(&name_len.to_be_bytes());
-        ext.extend_from_slice(name_bytes);
-        ext
-    }
-
-    /// Build an SNI extension payload carrying two `host_name` entries, which
-    /// RFC 6066 forbids.
-    #[expect(clippy::cast_possible_truncation, reason = "test hostnames are short")]
-    fn build_sni_extension_two_hosts(a: &str, b: &str) -> Vec<u8> {
-        let entry = |name: &str| {
-            let nb = name.as_bytes();
-            let mut e = Vec::new();
-            e.push(SNI_NAME_TYPE_HOST);
-            e.extend_from_slice(&(nb.len() as u16).to_be_bytes());
-            e.extend_from_slice(nb);
-            e
-        };
-        let mut list = entry(a);
-        list.extend_from_slice(&entry(b));
-
-        let mut ext = Vec::new();
-        ext.extend_from_slice(&0_u16.to_be_bytes());
-        let ext_data_len = (2 + list.len()) as u16;
-        ext.extend_from_slice(&ext_data_len.to_be_bytes());
-        ext.extend_from_slice(&(list.len() as u16).to_be_bytes());
-        ext.extend_from_slice(&list);
-        ext
-    }
-
     #[test]
     fn duplicate_host_name_entries_rejected() {
         let ext = build_sni_extension_two_hosts("a.example.com", "b.example.com");
@@ -1024,92 +975,6 @@ mod tests {
             Err(SniParseError::MalformedExtension),
             "two host_name entries violate RFC 6066 §3 and must be rejected, not silently first-wins"
         );
-    }
-
-    /// Build a non-SNI extension with the given type and data.
-    fn build_dummy_extension(ext_type: u16, data: &[u8]) -> Vec<u8> {
-        let mut ext = Vec::new();
-        ext.extend_from_slice(&ext_type.to_be_bytes());
-
-        #[expect(clippy::cast_possible_truncation, reason = "test data is short")]
-        let len = data.len() as u16;
-
-        ext.extend_from_slice(&len.to_be_bytes());
-        ext.extend_from_slice(data);
-        ext
-    }
-
-    /// Build a `ClientHello` body from components.
-    #[expect(clippy::cast_possible_truncation, reason = "test payloads are small")]
-    fn build_client_hello(session_id: &[u8], cipher_suites: &[u8], compression: &[u8], extensions: &[u8]) -> Vec<u8> {
-        let mut hello = Vec::new();
-
-        hello.extend_from_slice(&[0x03, 0x03]);
-        hello.extend_from_slice(&[0_u8; 32]);
-
-        hello.push(session_id.len() as u8);
-        hello.extend_from_slice(session_id);
-
-        let cs_len = cipher_suites.len() as u16;
-        hello.extend_from_slice(&cs_len.to_be_bytes());
-        hello.extend_from_slice(cipher_suites);
-
-        hello.push(compression.len() as u8);
-        hello.extend_from_slice(compression);
-
-        if !extensions.is_empty() {
-            let ext_len = extensions.len() as u16;
-            hello.extend_from_slice(&ext_len.to_be_bytes());
-            hello.extend_from_slice(extensions);
-        }
-
-        hello
-    }
-
-    /// Wrap a `ClientHello` body in handshake + record headers.
-    #[expect(clippy::cast_possible_truncation, reason = "test payloads are small")]
-    fn wrap_in_record(hello_body: &[u8]) -> Vec<u8> {
-        let mut handshake = Vec::new();
-        handshake.push(HANDSHAKE_TYPE_CLIENT_HELLO);
-        let hs_len = hello_body.len() as u32;
-        handshake.push((hs_len >> 16) as u8);
-        handshake.push((hs_len >> 8) as u8);
-        handshake.push(hs_len as u8);
-        handshake.extend_from_slice(hello_body);
-
-        let mut record = Vec::new();
-        record.push(CONTENT_TYPE_HANDSHAKE);
-        record.extend_from_slice(&[0x03, 0x01]);
-        let rec_len = handshake.len() as u16;
-        record.extend_from_slice(&rec_len.to_be_bytes());
-        record.extend_from_slice(&handshake);
-
-        record
-    }
-
-    /// Build the raw handshake message bytes (type + 3-byte length + body).
-    #[expect(clippy::cast_possible_truncation, reason = "test payloads are small")]
-    fn build_handshake_message(hello_body: &[u8]) -> Vec<u8> {
-        let mut handshake = Vec::new();
-        handshake.push(HANDSHAKE_TYPE_CLIENT_HELLO);
-        let hs_len = hello_body.len() as u32;
-        handshake.push((hs_len >> 16) as u8);
-        handshake.push((hs_len >> 8) as u8);
-        handshake.push(hs_len as u8);
-        handshake.extend_from_slice(hello_body);
-        handshake
-    }
-
-    /// Wrap raw handshake bytes (which may be a partial fragment) in one TLS record.
-    #[expect(clippy::cast_possible_truncation, reason = "test payloads are small")]
-    fn wrap_fragment_in_record(fragment: &[u8]) -> Vec<u8> {
-        let mut record = Vec::new();
-        record.push(CONTENT_TYPE_HANDSHAKE);
-        record.extend_from_slice(&[0x03, 0x01]);
-        let rec_len = fragment.len() as u16;
-        record.extend_from_slice(&rec_len.to_be_bytes());
-        record.extend_from_slice(fragment);
-        record
     }
 
     #[test]
@@ -1258,5 +1123,140 @@ mod tests {
             Err(SniParseError::NotHandshake),
             "a non-handshake record must end reassembly rather than being concatenated"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Test Utilities
+    // -------------------------------------------------------------------------
+
+    /// Build an SNI extension payload (type 0x0000).
+    fn build_sni_extension(hostname: &str) -> Vec<u8> {
+        let name_bytes = hostname.as_bytes();
+
+        #[expect(clippy::cast_possible_truncation, reason = "test hostnames are short")]
+        let name_len = name_bytes.len() as u16;
+
+        let entry_len = 1 + 2 + name_len;
+        let list_len = entry_len;
+
+        let mut ext = Vec::new();
+        ext.extend_from_slice(&0_u16.to_be_bytes());
+        let ext_data_len = 2 + list_len;
+        ext.extend_from_slice(&ext_data_len.to_be_bytes());
+        ext.extend_from_slice(&list_len.to_be_bytes());
+        ext.push(SNI_NAME_TYPE_HOST);
+        ext.extend_from_slice(&name_len.to_be_bytes());
+        ext.extend_from_slice(name_bytes);
+        ext
+    }
+
+    /// Build an SNI extension payload carrying two `host_name` entries, which
+    /// RFC 6066 forbids.
+    #[expect(clippy::cast_possible_truncation, reason = "test hostnames are short")]
+    fn build_sni_extension_two_hosts(a: &str, b: &str) -> Vec<u8> {
+        let entry = |name: &str| {
+            let nb = name.as_bytes();
+            let mut e = Vec::new();
+            e.push(SNI_NAME_TYPE_HOST);
+            e.extend_from_slice(&(nb.len() as u16).to_be_bytes());
+            e.extend_from_slice(nb);
+            e
+        };
+        let mut list = entry(a);
+        list.extend_from_slice(&entry(b));
+
+        let mut ext = Vec::new();
+        ext.extend_from_slice(&0_u16.to_be_bytes());
+        let ext_data_len = (2 + list.len()) as u16;
+        ext.extend_from_slice(&ext_data_len.to_be_bytes());
+        ext.extend_from_slice(&(list.len() as u16).to_be_bytes());
+        ext.extend_from_slice(&list);
+        ext
+    }
+
+    /// Build a non-SNI extension with the given type and data.
+    fn build_dummy_extension(ext_type: u16, data: &[u8]) -> Vec<u8> {
+        let mut ext = Vec::new();
+        ext.extend_from_slice(&ext_type.to_be_bytes());
+
+        #[expect(clippy::cast_possible_truncation, reason = "test data is short")]
+        let len = data.len() as u16;
+
+        ext.extend_from_slice(&len.to_be_bytes());
+        ext.extend_from_slice(data);
+        ext
+    }
+
+    /// Build a `ClientHello` body from components.
+    #[expect(clippy::cast_possible_truncation, reason = "test payloads are small")]
+    fn build_client_hello(session_id: &[u8], cipher_suites: &[u8], compression: &[u8], extensions: &[u8]) -> Vec<u8> {
+        let mut hello = Vec::new();
+
+        hello.extend_from_slice(&[0x03, 0x03]);
+        hello.extend_from_slice(&[0_u8; 32]);
+
+        hello.push(session_id.len() as u8);
+        hello.extend_from_slice(session_id);
+
+        let cs_len = cipher_suites.len() as u16;
+        hello.extend_from_slice(&cs_len.to_be_bytes());
+        hello.extend_from_slice(cipher_suites);
+
+        hello.push(compression.len() as u8);
+        hello.extend_from_slice(compression);
+
+        if !extensions.is_empty() {
+            let ext_len = extensions.len() as u16;
+            hello.extend_from_slice(&ext_len.to_be_bytes());
+            hello.extend_from_slice(extensions);
+        }
+
+        hello
+    }
+
+    /// Wrap a `ClientHello` body in handshake + record headers.
+    #[expect(clippy::cast_possible_truncation, reason = "test payloads are small")]
+    fn wrap_in_record(hello_body: &[u8]) -> Vec<u8> {
+        let mut handshake = Vec::new();
+        handshake.push(HANDSHAKE_TYPE_CLIENT_HELLO);
+        let hs_len = hello_body.len() as u32;
+        handshake.push((hs_len >> 16) as u8);
+        handshake.push((hs_len >> 8) as u8);
+        handshake.push(hs_len as u8);
+        handshake.extend_from_slice(hello_body);
+
+        let mut record = Vec::new();
+        record.push(CONTENT_TYPE_HANDSHAKE);
+        record.extend_from_slice(&[0x03, 0x01]);
+        let rec_len = handshake.len() as u16;
+        record.extend_from_slice(&rec_len.to_be_bytes());
+        record.extend_from_slice(&handshake);
+
+        record
+    }
+
+    /// Build the raw handshake message bytes (type + 3-byte length + body).
+    #[expect(clippy::cast_possible_truncation, reason = "test payloads are small")]
+    fn build_handshake_message(hello_body: &[u8]) -> Vec<u8> {
+        let mut handshake = Vec::new();
+        handshake.push(HANDSHAKE_TYPE_CLIENT_HELLO);
+        let hs_len = hello_body.len() as u32;
+        handshake.push((hs_len >> 16) as u8);
+        handshake.push((hs_len >> 8) as u8);
+        handshake.push(hs_len as u8);
+        handshake.extend_from_slice(hello_body);
+        handshake
+    }
+
+    /// Wrap raw handshake bytes (which may be a partial fragment) in one TLS record.
+    #[expect(clippy::cast_possible_truncation, reason = "test payloads are small")]
+    fn wrap_fragment_in_record(fragment: &[u8]) -> Vec<u8> {
+        let mut record = Vec::new();
+        record.push(CONTENT_TYPE_HANDSHAKE);
+        record.extend_from_slice(&[0x03, 0x01]);
+        let rec_len = fragment.len() as u16;
+        record.extend_from_slice(&rec_len.to_be_bytes());
+        record.extend_from_slice(fragment);
+        record
     }
 }
