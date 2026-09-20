@@ -4,7 +4,7 @@
 //! W3C Trace Context propagation filter.
 //!
 //! Parses incoming `traceparent` and `tracestate` headers per the
-//! [W3C Trace Context](https://www.w3.org/TR/trace-context/) specification,
+//! [W3C Trace Context] specification,
 //! joins an existing trace or generates a new trace ID, and injects
 //! the updated headers into the upstream request.
 //!
@@ -17,6 +17,8 @@
 //! spans (the `otel` feature) should rely on span-context propagation
 //! there instead. New traces are always flagged sampled (`01`) because
 //! the filter cannot consult any sampler configuration.
+//!
+//! [W3C Trace Context]: https://www.w3.org/TR/trace-context/
 
 use std::borrow::Cow;
 
