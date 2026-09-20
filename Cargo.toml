@@ -62,7 +62,7 @@ pingora-core = { version = "0.9.0", package = "quixotic-plecostomus-core", featu
 pingora-http = { version = "0.9.0", package = "quixotic-plecostomus-http" }
 pingora-proxy = { version = "0.9.0", package = "quixotic-plecostomus-proxy", features = ["rustls"] }
 percent-encoding = "2.3.2"
-rand = "0.10.2"
+rand = "0.10.3"
 plotters = { version = "0.3.7", default-features = false, features = ["svg_backend", "line_series"] }
 ppe = { version = "0.3.0", package = "praxis-policy", features = ["builtins"] }
 parking_lot = "0.12.5"
