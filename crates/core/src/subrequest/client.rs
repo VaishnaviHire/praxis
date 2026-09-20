@@ -636,33 +636,26 @@ async fn fail_header_exchange(
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(
-    clippy::test_attr_in_doctest,
-    clippy::redundant_test_prefix,
-    clippy::uninlined_format_args,
-    clippy::too_many_lines,
-    clippy::items_after_statements,
-    clippy::bool_assert_comparison,
-    reason = "tests"
-)]
+#[allow(clippy::too_many_lines, clippy::items_after_statements, reason = "tests")]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_max_interim_responses_constant() {
-        // Verify the constant is set to expected value
-        assert_eq!(MAX_INTERIM_RESPONSES, 32);
+    fn max_interim_responses_constant_is_32() {
+        assert_eq!(MAX_INTERIM_RESPONSES, 32, "MAX_INTERIM_RESPONSES should equal 32");
     }
 
     #[test]
-    fn test_eager_body_capacity_constant() {
-        // Verify the constant is 128 KiB
-        assert_eq!(EAGER_BODY_CAPACITY, 131_072);
-        assert_eq!(EAGER_BODY_CAPACITY, 128 * 1024);
+    fn eager_body_capacity_constant_is_128_kib() {
+        assert_eq!(
+            EAGER_BODY_CAPACITY, 131_072,
+            "EAGER_BODY_CAPACITY should be 128 KiB in bytes"
+        );
+        assert_eq!(EAGER_BODY_CAPACITY, 128 * 1024, "EAGER_BODY_CAPACITY should be 128 KiB");
     }
 
     #[test]
-    fn test_new_client_uses_absolute_max_body_bytes() {
+    fn new_client_uses_absolute_max_body_bytes() {
         let connector = SubRequestConnector::new(128, None);
         let client = SubRequestClient::new(connector);
 
@@ -674,9 +667,9 @@ mod tests {
     }
 
     #[test]
-    fn test_with_max_response_bytes_sets_ceiling() {
+    fn with_max_response_bytes_sets_ceiling() {
         let connector = SubRequestConnector::new(128, None);
-        let custom_ceiling = 1_048_576; // 1 MiB
+        let custom_ceiling = 1_048_576;
         let client = SubRequestClient::with_max_response_bytes(connector, custom_ceiling);
 
         assert_eq!(
@@ -686,21 +679,19 @@ mod tests {
     }
 
     #[test]
-    fn test_connector_accessor() {
+    fn connector_accessor_returns_stored_connector() {
         let connector = SubRequestConnector::new(128, None);
         let client = SubRequestClient::new(connector.clone());
 
-        // Verify connector() returns a reference to the underlying connector
         let retrieved = client.connector();
-        assert_eq!(
-            std::ptr::eq(retrieved, &connector),
-            false,
+        assert!(
+            !std::ptr::eq(retrieved, &connector),
             "connector() should return reference to the stored connector"
         );
     }
 
     #[test]
-    fn test_evict_idle_circuits_with_no_circuit_breaker() {
+    fn evict_idle_circuits_returns_zero_without_circuit_breaker() {
         let connector = SubRequestConnector::new(128, None);
         let client = SubRequestClient::new(connector);
 
@@ -713,11 +704,11 @@ mod tests {
     }
 
     #[test]
-    fn test_debug_impl() {
+    fn debug_output_names_the_type() {
         let connector = SubRequestConnector::new(128, None);
         let client = SubRequestClient::new(connector);
 
-        let debug_str = format!("{:?}", client);
+        let debug_str = format!("{client:?}");
         assert!(
             debug_str.contains("SubRequestClient"),
             "Debug impl should include type name"
@@ -733,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_impl() {
+    fn clone_preserves_ceiling() {
         let connector = SubRequestConnector::new(128, None);
         let client = SubRequestClient::with_max_response_bytes(connector, 5_000_000);
 
@@ -746,10 +737,9 @@ mod tests {
     }
 
     #[test]
-    fn test_response_ceiling_scenarios() {
+    fn with_max_response_bytes_sets_various_ceilings() {
         let connector = SubRequestConnector::new(128, None);
 
-        // Test various ceiling values
         let test_cases = vec![
             (1_000, "small ceiling"),
             (10_000_000, "large ceiling"),
@@ -765,26 +755,31 @@ mod tests {
     }
 
     #[test]
-    fn test_max_response_bytes_values() {
+    fn with_max_response_bytes_accepts_boundary_values() {
         let connector = SubRequestConnector::new(128, None);
 
-        // Test boundary values for max_response_bytes
         let zero_client = SubRequestClient::with_max_response_bytes(connector.clone(), 0);
-        assert_eq!(zero_client.max_response_bytes, 0);
+        assert_eq!(
+            zero_client.max_response_bytes, 0,
+            "a ceiling of 0 should be stored unchanged"
+        );
 
         let one_client = SubRequestClient::with_max_response_bytes(connector.clone(), 1);
-        assert_eq!(one_client.max_response_bytes, 1);
+        assert_eq!(
+            one_client.max_response_bytes, 1,
+            "a ceiling of 1 should be stored unchanged"
+        );
 
         let large_client = SubRequestClient::with_max_response_bytes(connector, usize::MAX);
-        assert_eq!(large_client.max_response_bytes, usize::MAX);
+        assert_eq!(
+            large_client.max_response_bytes,
+            usize::MAX,
+            "a ceiling of usize::MAX should be stored unchanged"
+        );
     }
 
     #[test]
-    fn test_eager_capacity_boundary_values() {
-        // Test that EAGER_BODY_CAPACITY is used correctly for buffer pre-sizing
-        // This tests the constant's usage in the context of response body collection
-
-        // Values around the EAGER_BODY_CAPACITY boundary
+    fn eager_capacity_caps_preallocation() {
         let test_sizes = vec![
             0,
             1,
@@ -793,13 +788,11 @@ mod tests {
             EAGER_BODY_CAPACITY,
             EAGER_BODY_CAPACITY + 1,
             EAGER_BODY_CAPACITY * 2,
-            10_485_760, // 10 MiB
+            10_485_760,
         ];
 
         for size in test_sizes {
-            // The actual clamping logic:
-            // len.min(effective_limit).min(EAGER_BODY_CAPACITY)
-            let effective_limit = 67_108_864; // ABSOLUTE_MAX_BODY_BYTES
+            let effective_limit = 67_108_864;
             let pre_alloc = size.min(effective_limit).min(EAGER_BODY_CAPACITY);
 
             if size <= EAGER_BODY_CAPACITY {
@@ -817,15 +810,11 @@ mod tests {
     }
 
     #[test]
-    fn test_per_call_vs_client_limit_interaction() {
+    fn per_call_limit_clamps_to_client_ceiling() {
         let connector = SubRequestConnector::new(128, None);
 
-        // Client-wide ceiling: 1 MiB
         let client_ceiling = 1_048_576;
         let client = SubRequestClient::with_max_response_bytes(connector, client_ceiling);
-
-        // Simulate the clamping logic from execute()
-        // effective_limit = max_response_bytes.min(self.max_response_bytes)
 
         let test_cases = vec![
             (500_000, 500_000, "per-call smaller than ceiling"),
@@ -842,10 +831,9 @@ mod tests {
     }
 
     #[test]
-    fn test_limit_clamping_with_various_ceilings() {
+    fn limit_clamping_across_various_ceilings() {
         let connector = SubRequestConnector::new(128, None);
 
-        // Test different client ceiling scenarios
         struct TestCase {
             client_ceiling: usize,
             per_call_limit: usize,
@@ -890,29 +878,25 @@ mod tests {
             let client = SubRequestClient::with_max_response_bytes(connector.clone(), tc.client_ceiling);
 
             let effective = tc.per_call_limit.min(client.max_response_bytes);
+            let description = tc.description;
 
-            assert_eq!(effective, tc.expected_effective, "Failed for case: {}", tc.description);
+            assert_eq!(effective, tc.expected_effective, "Failed for case: {description}");
         }
     }
 
     #[test]
-    fn test_constants_are_power_of_two_friendly() {
-        // EAGER_BODY_CAPACITY should be a nice round number
+    fn eager_body_capacity_is_kib_aligned() {
         assert_eq!(EAGER_BODY_CAPACITY % 1024, 0, "should be KiB-aligned");
         assert_eq!(EAGER_BODY_CAPACITY / 1024, 128, "should be exactly 128 KiB");
     }
 
     #[test]
-    fn test_interim_responses_limit_boundary() {
-        // Test the boundary around MAX_INTERIM_RESPONSES
+    fn interim_responses_limit_boundary() {
         let limit = MAX_INTERIM_RESPONSES;
 
-        // Values just below, at, and above the limit
         assert!(limit > 0, "limit should be positive");
         assert!(limit < 1000, "limit should be reasonable");
 
-        // The actual check in the code: interim_count > MAX_INTERIM_RESPONSES
-        // So 32 interim responses is OK, 33 would fail
         let acceptable_count = limit;
         let unacceptable_count = limit + 1;
 
@@ -922,31 +906,38 @@ mod tests {
         );
         assert!(
             unacceptable_count > limit,
-            "{} interim responses should exceed limit",
-            limit + 1
+            "{unacceptable_count} interim responses should exceed limit"
         );
     }
 
     #[test]
-    fn test_multiple_clients_with_different_limits() {
+    fn multiple_clients_keep_independent_limits() {
         let connector = SubRequestConnector::new(128, None);
 
-        // Create multiple clients with different ceilings
         let client_a = SubRequestClient::with_max_response_bytes(connector.clone(), 1_000_000);
         let client_b = SubRequestClient::with_max_response_bytes(connector.clone(), 5_000_000);
         let client_c = SubRequestClient::new(connector);
 
-        assert_eq!(client_a.max_response_bytes, 1_000_000);
-        assert_eq!(client_b.max_response_bytes, 5_000_000);
-        assert_eq!(client_c.max_response_bytes, crate::config::ABSOLUTE_MAX_BODY_BYTES);
+        assert_eq!(
+            client_a.max_response_bytes, 1_000_000,
+            "client_a should keep its own ceiling"
+        );
+        assert_eq!(
+            client_b.max_response_bytes, 5_000_000,
+            "client_b should keep its own ceiling"
+        );
+        assert_eq!(
+            client_c.max_response_bytes,
+            crate::config::ABSOLUTE_MAX_BODY_BYTES,
+            "client_c should default to ABSOLUTE_MAX_BODY_BYTES"
+        );
     }
 
     #[test]
-    fn test_evict_idle_circuits_duration_values() {
+    fn evict_idle_circuits_returns_zero_for_any_duration() {
         let connector = SubRequestConnector::new(128, None);
         let client = SubRequestClient::new(connector);
 
-        // Test various duration values (all should return 0 since no circuit breaker)
         let durations = vec![
             Duration::from_secs(0),
             Duration::from_millis(1),
@@ -960,8 +951,7 @@ mod tests {
             let evicted = client.evict_idle_circuits(duration);
             assert_eq!(
                 evicted, 0,
-                "should always return 0 when no circuit breaker, duration: {:?}",
-                duration
+                "should always return 0 when no circuit breaker, duration: {duration:?}"
             );
         }
     }
