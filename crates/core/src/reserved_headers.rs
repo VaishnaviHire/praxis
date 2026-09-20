@@ -124,8 +124,62 @@ pub fn is_connection_token_protected(name: &str) -> bool {
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
+#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+#[allow(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
 mod tests {
-    use super::is_connection_token_protected;
+    use super::{is_connection_token_protected, is_reserved};
+
+    #[test]
+    fn x_praxis_prefix_is_reserved() {
+        assert!(is_reserved("x-praxis-foo"), "x-praxis-foo should be reserved");
+    }
+
+    #[test]
+    fn x_ext_protocol_prefix_is_reserved() {
+        assert!(
+            is_reserved("x-ext-protocol-session"),
+            "x-ext-protocol-session should be reserved"
+        );
+    }
+
+    #[test]
+    fn x_ext_agent_prefix_is_reserved() {
+        assert!(is_reserved("x-ext-agent-task"), "x-ext-agent-task should be reserved");
+    }
+
+    #[test]
+    fn x_custom_header_is_not_reserved() {
+        assert!(
+            !is_reserved("x-custom-header"),
+            "x-custom-header should not be reserved"
+        );
+    }
+
+    #[test]
+    fn authorization_is_not_reserved() {
+        assert!(!is_reserved("authorization"), "authorization should not be reserved");
+    }
+
+    #[test]
+    fn ext_session_id_without_x_prefix_is_not_reserved() {
+        assert!(
+            !is_reserved("ext-session-id"),
+            "ext-session-id (no x- prefix) should not be reserved"
+        );
+    }
+
+    #[test]
+    fn x_praxis_prefix_exactly_is_reserved() {
+        assert!(
+            is_reserved("x-praxis-"),
+            "x-praxis- (prefix with no suffix) should be reserved"
+        );
+    }
+
+    #[test]
+    fn content_type_is_not_reserved() {
+        assert!(!is_reserved("content-type"), "content-type should not be reserved");
+    }
 
     #[test]
     #[expect(
