@@ -27,6 +27,33 @@ use crate::{
     results::FilterResultSet,
 };
 
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+
+/// Maximum number of keys per namespace in structured metadata.
+///
+/// Prevents unbounded accumulation from streaming processors that
+/// send unique keys across many response messages. Existing keys
+/// can still be overwritten past this limit.
+const MAX_STRUCTURED_METADATA_KEYS: usize = 64;
+
+/// Maximum entries allowed in the general `filter_metadata` map.
+///
+/// Individual keys and values are already size-bounded (64 / 256
+/// bytes), but without an entry count cap a filter chain could
+/// insert thousands of unique keys per request.
+const MAX_METADATA_ENTRIES: usize = 128;
+
+/// Maximum number of distinct `structured_metadata` namespaces per request.
+///
+/// Each namespace holds its own key-bounded JSON object, but without a
+/// cap on the namespace count a processor that derives the namespace from
+/// a dynamic/streaming source could accumulate an unbounded number of
+/// objects over a single long-lived request. Mirrors the entry cap on
+/// `filter_metadata`.
+const MAX_STRUCTURED_METADATA_NAMESPACES: usize = 64;
+
 /// Bounded opaque chunks emitted by filters while IRR owns a logical stream.
 pub(crate) struct PendingStreamChunks {
     /// FIFO ordering of locally emitted opaque chunks.
@@ -58,33 +85,6 @@ impl PendingStreamChunks {
         std::mem::take(&mut self.chunks)
     }
 }
-
-// -----------------------------------------------------------------------------
-// Constants
-// -----------------------------------------------------------------------------
-
-/// Maximum number of keys per namespace in structured metadata.
-///
-/// Prevents unbounded accumulation from streaming processors that
-/// send unique keys across many response messages. Existing keys
-/// can still be overwritten past this limit.
-const MAX_STRUCTURED_METADATA_KEYS: usize = 64;
-
-/// Maximum entries allowed in the general `filter_metadata` map.
-///
-/// Individual keys and values are already size-bounded (64 / 256
-/// bytes), but without an entry count cap a filter chain could
-/// insert thousands of unique keys per request.
-const MAX_METADATA_ENTRIES: usize = 128;
-
-/// Maximum number of distinct `structured_metadata` namespaces per request.
-///
-/// Each namespace holds its own key-bounded JSON object, but without a
-/// cap on the namespace count a processor that derives the namespace from
-/// a dynamic/streaming source could accumulate an unbounded number of
-/// objects over a single long-lived request. Mirrors the entry cap on
-/// `filter_metadata`.
-const MAX_STRUCTURED_METADATA_NAMESPACES: usize = 64;
 
 /// Trusted header mutation recorded during pre-read body processing.
 ///
