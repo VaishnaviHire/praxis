@@ -65,27 +65,31 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_continue() {
-        let yaml = "continue";
-        let result: Result<OnInvalidBehavior, _> = serde_yaml::from_str(yaml);
-        assert!(result.is_ok());
-        assert_eq!(result.ok(), Some(OnInvalidBehavior::Continue));
+    fn deserialize_continue() -> Result<(), serde_yaml::Error> {
+        let parsed: OnInvalidBehavior = serde_yaml::from_str("continue")?;
+
+        assert_eq!(
+            parsed,
+            OnInvalidBehavior::Continue,
+            "\"continue\" should parse to Continue"
+        );
+        Ok(())
     }
 
     #[test]
-    fn deserialize_reject() {
-        let yaml = "reject";
-        let result: Result<OnInvalidBehavior, _> = serde_yaml::from_str(yaml);
-        assert!(result.is_ok());
-        assert_eq!(result.ok(), Some(OnInvalidBehavior::Reject));
+    fn deserialize_reject() -> Result<(), serde_yaml::Error> {
+        let parsed: OnInvalidBehavior = serde_yaml::from_str("reject")?;
+
+        assert_eq!(parsed, OnInvalidBehavior::Reject, "\"reject\" should parse to Reject");
+        Ok(())
     }
 
     #[test]
-    fn deserialize_error() {
-        let yaml = "error";
-        let result: Result<OnInvalidBehavior, _> = serde_yaml::from_str(yaml);
-        assert!(result.is_ok());
-        assert_eq!(result.ok(), Some(OnInvalidBehavior::Error));
+    fn deserialize_error() -> Result<(), serde_yaml::Error> {
+        let parsed: OnInvalidBehavior = serde_yaml::from_str("error")?;
+
+        assert_eq!(parsed, OnInvalidBehavior::Error, "\"error\" should parse to Error");
+        Ok(())
     }
 
     #[test]
