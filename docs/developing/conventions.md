@@ -30,8 +30,9 @@
 - **rustdoc**: Generate the API documentation
 - **cargo xtask**: Developer task runner for benchmarks,
   flamegraphs, and debug utilities
-- **benchmarks**: Scenario-based load tests
-  ([Fortio], [Vegeta])
+- **praxis-proxy-benchmarks**: Scenario-based load tests
+  ([Fortio], [Vegeta]), a published crate driven by
+  `cargo xtask benchmark`
 - **praxis-tests-benches**: Criterion microbenchmarks
   (`tests/benches`)
 
