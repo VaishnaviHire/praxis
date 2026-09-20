@@ -3,8 +3,12 @@
 
 //! URL-aware target preparation.
 
+use std::net::{IpAddr, SocketAddr};
+
+use pingora_core::upstreams::peer::HttpPeer;
+
 use super::peer::{AddressResolutionError, resolve_host_cached};
-use crate::connectivity::normalize_mapped_ipv4;
+use crate::{connectivity::normalize_mapped_ipv4, subrequest::SubRequest};
 
 /// Failure categories for URL target preparation.
 ///
@@ -55,8 +59,6 @@ pub enum InvalidTarget {
     #[error("invalid host literal: {0}")]
     InvalidHost(String),
 }
-
-use std::net::IpAddr;
 
 /// Resolve a bare host (no port, no IPv6 brackets) to its RAW address answers,
 /// BEFORE normalization/dedup. `SystemResolver` returns the complete cached
@@ -227,12 +229,6 @@ pub(crate) fn parse_target(url: &str) -> Result<ParsedTarget, InvalidTarget> {
 pub fn validate_url_target(url: &str) -> Result<(), InvalidTarget> {
     parse_target(url).map(|_target| ())
 }
-
-use std::net::SocketAddr;
-
-use pingora_core::upstreams::peer::HttpPeer;
-
-use crate::subrequest::SubRequest;
 
 /// A frozen, validated dial target. All addresses have already passed the
 /// caller's validation hook. Peers are reachable only AFTER the request is
