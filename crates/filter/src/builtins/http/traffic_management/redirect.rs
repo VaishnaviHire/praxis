@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use super::strip_port;
 use crate::{
     actions::{FilterAction, Rejection},
     factory::parse_filter_config,
@@ -342,8 +343,6 @@ fn is_valid_host_for_redirect(host: &str) -> bool {
             )
         })
 }
-
-use super::strip_port;
 
 /// Infer the request scheme from headers and connection state.
 ///
