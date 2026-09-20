@@ -180,93 +180,6 @@ mod tests {
 
     const EXPECTED: &str = "spiffe://grid.internal/signals";
 
-    // ---- Certificate builders --------------------------------------------------
-
-    /// A self-signed leaf with the given URI SANs, key usages, extended key usages,
-    /// and cA flag. Empty `key_usages` / `ekus` omit that extension entirely.
-    fn leaf(uris: &[&str], key_usages: &[KeyUsagePurpose], ekus: &[ExtendedKeyUsagePurpose], ca: bool) -> Vec<u8> {
-        let key = KeyPair::generate().expect("key");
-        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
-        p.distinguished_name.push(DnType::CommonName, "peer");
-        for uri in uris {
-            p.subject_alt_names
-                .push(SanType::URI((*uri).try_into().expect("uri san")));
-        }
-        if ca {
-            p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        }
-        p.key_usages = key_usages.to_vec();
-        p.extended_key_usages = ekus.to_vec();
-        p.self_signed(&key).expect("self signed").der().to_vec()
-    }
-
-    /// A conforming X.509-SVID leaf: critical keyUsage with digitalSignature, EKU
-    /// with serverAuth and clientAuth, no basicConstraints (cA false by default).
-    fn conforming(uri: &str) -> Vec<u8> {
-        leaf(
-            &[uri],
-            &[KeyUsagePurpose::DigitalSignature],
-            &[ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth],
-            false,
-        )
-    }
-
-    /// A conforming leaf carrying the given URI and DNS SANs, to exercise SAN-shape
-    /// cases (extra, missing, or duplicated names).
-    fn conforming_with_sans(uris: &[&str], dns: &[&str]) -> Vec<u8> {
-        let key = KeyPair::generate().expect("key");
-        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
-        p.distinguished_name.push(DnType::CommonName, "peer");
-        for uri in uris {
-            p.subject_alt_names
-                .push(SanType::URI((*uri).try_into().expect("uri san")));
-        }
-        for d in dns {
-            p.subject_alt_names
-                .push(SanType::DnsName((*d).try_into().expect("dns san")));
-        }
-        p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
-        p.self_signed(&key).expect("self signed").der().to_vec()
-    }
-
-    /// A leaf carrying a raw extension (OID 2.5.29.x content) plus a conforming
-    /// keyUsage, to exercise one malformed or non-standard extension in isolation.
-    fn leaf_with_custom_ext(uri: &str, ext: CustomExtension, with_key_usage: bool) -> Vec<u8> {
-        let key = KeyPair::generate().expect("key");
-        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
-        p.distinguished_name.push(DnType::CommonName, "peer");
-        p.subject_alt_names.push(SanType::URI(uri.try_into().expect("uri")));
-        if with_key_usage {
-            p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        }
-        p.custom_extensions.push(ext);
-        p.self_signed(&key).expect("self signed").der().to_vec()
-    }
-
-    /// A present-but-unparseable basicConstraints (a bare NULL where a SEQUENCE
-    /// belongs). rcgen cannot emit this, so it is hand-built.
-    fn malformed_basic_constraints(critical: bool) -> CustomExtension {
-        let mut bc = CustomExtension::from_oid_content(&[2, 5, 29, 19], vec![0x05, 0x00]);
-        bc.set_criticality(critical);
-        bc
-    }
-
-    /// A non-critical keyUsage with digitalSignature (BIT STRING 03 02 07 80). The
-    /// standard requires keyUsage be critical, so this must be rejected.
-    fn noncritical_key_usage() -> CustomExtension {
-        let mut ku = CustomExtension::from_oid_content(&[2, 5, 29, 15], vec![0x03, 0x02, 0x07, 0x80]);
-        ku.set_criticality(false);
-        ku
-    }
-
-    /// Test-only bool wrapper over [`authorize_peer`] for the leaf-validation cases.
-    fn svid_id_allowed(leaf_der: &[u8], allowed: &[Arc<str>]) -> bool {
-        matches!(authorize_peer(leaf_der, allowed), PeerAuth::Allowed)
-    }
-
-    // ---- Accepted leaves -------------------------------------------------------
-
     #[test]
     fn a_conforming_svid_is_accepted() {
         assert!(svid_id_allowed(&conforming(EXPECTED), &[Arc::from(EXPECTED)]));
@@ -302,8 +215,6 @@ mod tests {
         let der = leaf(&[EXPECTED], &[KeyUsagePurpose::DigitalSignature], &[], false);
         assert!(svid_id_allowed(&der, &[]));
     }
-
-    // ---- Rejected leaves: basicConstraints / keyUsage / EKU --------------------
 
     #[test]
     fn a_ca_flagged_leaf_is_rejected() {
@@ -395,8 +306,6 @@ mod tests {
             &[]
         ));
     }
-
-    // ---- Rejected leaves: SAN / SPIFFE ID --------------------------------------
 
     #[test]
     fn a_non_spiffe_uri_is_rejected() {
@@ -519,8 +428,6 @@ mod tests {
         );
     }
 
-    // ---- Allowlist + authorize_peer diagnostics --------------------------------
-
     #[test]
     fn allowed_accepts_a_listed_id() {
         let allow: [Arc<str>; 2] = [Arc::from("spiffe://grid.internal/other"), Arc::from(EXPECTED)];
@@ -575,5 +482,92 @@ mod tests {
             authorize_peer(b"not a certificate", &[]),
             PeerAuth::InvalidLeaf
         ));
+    }
+
+    // -------------------------------------------------------------------------
+    // Test Utilities
+    // -------------------------------------------------------------------------
+
+    /// A self-signed leaf with the given URI SANs, key usages, extended key usages,
+    /// and cA flag. Empty `key_usages` / `ekus` omit that extension entirely.
+    fn leaf(uris: &[&str], key_usages: &[KeyUsagePurpose], ekus: &[ExtendedKeyUsagePurpose], ca: bool) -> Vec<u8> {
+        let key = KeyPair::generate().expect("key");
+        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
+        p.distinguished_name.push(DnType::CommonName, "peer");
+        for uri in uris {
+            p.subject_alt_names
+                .push(SanType::URI((*uri).try_into().expect("uri san")));
+        }
+        if ca {
+            p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        }
+        p.key_usages = key_usages.to_vec();
+        p.extended_key_usages = ekus.to_vec();
+        p.self_signed(&key).expect("self signed").der().to_vec()
+    }
+
+    /// A conforming X.509-SVID leaf: critical keyUsage with digitalSignature, EKU
+    /// with serverAuth and clientAuth, no basicConstraints (cA false by default).
+    fn conforming(uri: &str) -> Vec<u8> {
+        leaf(
+            &[uri],
+            &[KeyUsagePurpose::DigitalSignature],
+            &[ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth],
+            false,
+        )
+    }
+
+    /// A conforming leaf carrying the given URI and DNS SANs, to exercise SAN-shape
+    /// cases (extra, missing, or duplicated names).
+    fn conforming_with_sans(uris: &[&str], dns: &[&str]) -> Vec<u8> {
+        let key = KeyPair::generate().expect("key");
+        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
+        p.distinguished_name.push(DnType::CommonName, "peer");
+        for uri in uris {
+            p.subject_alt_names
+                .push(SanType::URI((*uri).try_into().expect("uri san")));
+        }
+        for d in dns {
+            p.subject_alt_names
+                .push(SanType::DnsName((*d).try_into().expect("dns san")));
+        }
+        p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
+        p.self_signed(&key).expect("self signed").der().to_vec()
+    }
+
+    /// A leaf carrying a raw extension (OID 2.5.29.x content) plus a conforming
+    /// keyUsage, to exercise one malformed or non-standard extension in isolation.
+    fn leaf_with_custom_ext(uri: &str, ext: CustomExtension, with_key_usage: bool) -> Vec<u8> {
+        let key = KeyPair::generate().expect("key");
+        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
+        p.distinguished_name.push(DnType::CommonName, "peer");
+        p.subject_alt_names.push(SanType::URI(uri.try_into().expect("uri")));
+        if with_key_usage {
+            p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        }
+        p.custom_extensions.push(ext);
+        p.self_signed(&key).expect("self signed").der().to_vec()
+    }
+
+    /// A present-but-unparseable basicConstraints (a bare NULL where a SEQUENCE
+    /// belongs). rcgen cannot emit this, so it is hand-built.
+    fn malformed_basic_constraints(critical: bool) -> CustomExtension {
+        let mut bc = CustomExtension::from_oid_content(&[2, 5, 29, 19], vec![0x05, 0x00]);
+        bc.set_criticality(critical);
+        bc
+    }
+
+    /// A non-critical keyUsage with digitalSignature (BIT STRING 03 02 07 80). The
+    /// standard requires keyUsage be critical, so this must be rejected.
+    fn noncritical_key_usage() -> CustomExtension {
+        let mut ku = CustomExtension::from_oid_content(&[2, 5, 29, 15], vec![0x03, 0x02, 0x07, 0x80]);
+        ku.set_criticality(false);
+        ku
+    }
+
+    /// Test-only bool wrapper over [`authorize_peer`] for the leaf-validation cases.
+    fn svid_id_allowed(leaf_der: &[u8], allowed: &[Arc<str>]) -> bool {
+        matches!(authorize_peer(leaf_der, allowed), PeerAuth::Allowed)
     }
 }
