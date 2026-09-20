@@ -183,13 +183,11 @@ impl CompressionConfig {
             return false;
         }
 
-        let content_type = headers.get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok());
-
-        if let Some(ct) = content_type {
-            if !self.matches_content_type(ct) {
-                return false;
-            }
-        } else {
+        if !headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| self.matches_content_type(ct))
+        {
             return false;
         }
 
