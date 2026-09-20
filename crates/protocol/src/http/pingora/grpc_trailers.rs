@@ -123,16 +123,7 @@ fn build_header(
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::assertions_on_result_states,
-    clippy::str_to_string,
-    clippy::uninlined_format_args,
-    clippy::redundant_test_prefix,
-    clippy::string_add,
-    reason = "tests"
-)]
+#[allow(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
 mod tests {
     use praxis_core::grpc::GrpcKind;
 
@@ -147,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn test_grpc_error_mapping_include_message() {
+    fn grpc_error_mapping_include_message() {
         let mapping_with = make_test_mapping_with_message();
         assert!(mapping_with.include_message());
 
@@ -156,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn test_grpc_status_as_header_value() {
+    fn grpc_status_as_header_value() -> Result<(), Box<dyn std::error::Error>> {
         let codes = vec![
             GrpcStatusCode::Ok,
             GrpcStatusCode::Cancelled,
@@ -179,48 +170,55 @@ mod tests {
 
         for code in codes {
             let header_val = code.as_header_value();
-            assert!(header_val.to_str().is_ok());
+            let val_str = header_val.to_str()?;
+            let parsed = val_str.parse::<u32>()?;
+            assert_eq!(parsed, code.as_u32(), "Invalid gRPC status: {val_str}");
+        }
+        Ok(())
+    }
 
-            let val_str = header_val.to_str().unwrap();
-            assert!(val_str.parse::<u32>().is_ok(), "Invalid gRPC status: {}", val_str);
+    #[test]
+    fn edge_case_http_status_codes() {
+        for status in [0, 100, 301, 999] {
+            assert_eq!(
+                GrpcStatusCode::from_http_status(status),
+                GrpcStatusCode::Unknown,
+                "unmapped HTTP status {status} should fall back to UNKNOWN without panicking"
+            );
         }
     }
 
     #[test]
-    fn test_edge_case_http_status_codes() {
-        // These should all complete without panicking
-        let _grpc_status = GrpcStatusCode::from_http_status(0);
-        let _grpc_status = GrpcStatusCode::from_http_status(100);
-        let _grpc_status = GrpcStatusCode::from_http_status(301);
-        let _grpc_status = GrpcStatusCode::from_http_status(999);
-    }
-
-    #[test]
-    fn test_message_encoding_edge_cases() {
-        // Very long message
-        let long_message = "Error: ".to_string() + &"x".repeat(1000);
+    fn message_encoding_edge_cases() {
+        let long_message = format!("Error: {}", "x".repeat(1000));
         let encoded = encode_grpc_message(&long_message);
-        assert!(encoded.len() >= long_message.len());
+        assert!(
+            encoded.len() >= long_message.len(),
+            "encoding a very long message must not shrink it"
+        );
 
-        // Message with only special characters
         let special_only = "\n\r\t";
         let encoded = encode_grpc_message(special_only);
-        assert!(!encoded.is_empty());
-        assert!(encoded.starts_with('%'));
+        assert!(
+            !encoded.is_empty(),
+            "a message of only special characters must still encode"
+        );
+        assert!(encoded.starts_with('%'), "control characters must be percent-encoded");
 
-        // Message with null bytes
         let with_null = "Error\0Details";
         let encoded = encode_grpc_message(with_null);
-        assert!(encoded.contains("%00"));
+        assert!(encoded.contains("%00"), "a null byte must be percent-encoded to %00");
 
-        // Already percent-encoded message
         let already_encoded = "Error%20message";
         let encoded = encode_grpc_message(already_encoded);
-        assert!(encoded.contains("%25")); // % itself gets encoded
+        assert!(
+            encoded.contains("%25"),
+            "an already percent-encoded message has its own percent sign encoded"
+        );
     }
 
     #[test]
-    fn test_content_type_variations() {
+    fn content_type_variations() {
         let kinds = vec![
             (GrpcKind::Grpc, "application/grpc"),
             (GrpcKind::GrpcProto, "application/grpc+proto"),
