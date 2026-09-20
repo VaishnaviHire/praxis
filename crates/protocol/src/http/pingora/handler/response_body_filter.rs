@@ -19,8 +19,11 @@ use praxis_filter::{BodyMode, FilterAction, FilterPipeline};
 use tracing::{debug, error};
 
 use super::{
-    super::context::PingoraRequestCtx, BodyFilterOutput, accumulate_stream_buffer, check_body_size_limit,
-    release_stream_buffer, suppress_stream_buffer_chunk,
+    super::context::PingoraRequestCtx,
+    body_util::{
+        BodyFilterOutput, accumulate_stream_buffer, check_body_size_limit, release_stream_buffer,
+        suppress_stream_buffer_chunk,
+    },
 };
 
 // -----------------------------------------------------------------------------
@@ -167,6 +170,10 @@ pub(super) fn execute(
         },
     }
 }
+
+// -----------------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------------
 
 /// Record that the response was delivered to completion.
 ///

@@ -30,7 +30,6 @@ pub(super) fn execute(reused: bool, peer: &HttpPeer, digest: Option<&Digest>, ct
     let tls_version = digest
         .and_then(|d| d.ssl_digest.as_ref())
         .map(|ssl| ssl.version.as_ref());
-
     let exchange_span = tracing::info_span!(
         parent: &ctx.request_span,
         "upstream_exchange",

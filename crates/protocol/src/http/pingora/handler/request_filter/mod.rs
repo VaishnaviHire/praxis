@@ -15,9 +15,13 @@ use praxis_filter::{
 };
 use tracing::{Instrument as _, debug, error, warn};
 
-use super::super::{
-    context::PingoraRequestCtx,
-    convert::{request_header_from_session, send_rejection, send_rejection_for},
+use super::{
+    super::{
+        context::PingoraRequestCtx,
+        convert::{request_header_from_session, send_rejection, send_rejection_for},
+    },
+    body_util::clamp_body_mode_to_ceiling,
+    span_util::http_version_label,
 };
 
 /// StreamBuffer pre-read logic and TRACE response construction.
@@ -26,6 +30,13 @@ mod stream_buffer;
 mod validation;
 
 use stream_buffer::PreReadError;
+
+// TODO I want mod.rs files to pretty much only have use and mod statements, as much as is
+// feasible. This mod.rs file is huge. First: identify the different themes in here, and understand
+// their relationships. Then, based on your destructuring of the themes and relationships, create
+// new *.rs files to house those themes in the same directory, and adapt all usage for it until
+// fmt, lint and test (targeted, don't have to run entire suite) pass. Those new files should have
+// some decent rustdocs at the top explaining the theme therein.
 
 // -----------------------------------------------------------------------------
 // PipelineResult
@@ -45,6 +56,10 @@ struct PipelineResult {
     /// Headers to set (overwrite) on the upstream request.
     headers_to_set: Vec<(http::header::HeaderName, http::header::HeaderValue)>,
 }
+
+// -----------------------------------------------------------------------------
+// AdaptedRequestBody
+// -----------------------------------------------------------------------------
 
 /// Adapted selected-upstream request body captured for storage after a
 /// successful adaptation with a body writer (#1139).
@@ -302,6 +317,10 @@ fn store_adapted_request_body(ctx: &mut PingoraRequestCtx, body: Option<Bytes>) 
     ctx.adapted_request_body_len = Some(len);
 }
 
+// -----------------------------------------------------------------------------
+// Request-Phase Pipeline
+// -----------------------------------------------------------------------------
+
 /// Run the request-phase filter pipeline and snapshot the request for later phases.
 ///
 /// Returns the final action and any extra headers promoted by filters.
@@ -456,6 +475,7 @@ async fn run_pipeline(
     ctx.filter_state = filter_state;
     ctx.cached_executed_filter_indices = executed_indices;
     ctx.cached_body_done_indices = body_done;
+
     // Pre-read mutations were consumed by the request pipeline (e.g.
     // endpoint_selector). Clear them so later phases cannot reuse stale
     // routing authority from a previous request phase.
@@ -463,11 +483,12 @@ async fn run_pipeline(
     ctx.structured_metadata = structured_metadata;
     ctx.metrics_cluster_shared = cluster.as_ref().map(|c| ::metrics::SharedString::from(Arc::clone(c)));
     ctx.metrics_cluster.clone_from(&cluster);
+
     // Templating runs here, at the single point where the route label is
     // set, so the OTel `http.route` attribute read from the same field
     // later cannot disagree with the metric.
     ctx.metrics_route = templated_route(pipeline, ctx, metrics_route);
-    ctx.response_body_mode = super::clamp_body_mode_to_ceiling(response_body_mode, baseline_response_body_mode);
+    ctx.response_body_mode = clamp_body_mode_to_ceiling(response_body_mode, baseline_response_body_mode);
 
     // Write back the request-scoped upstream and retry lifecycle on EVERY
     // outcome, not just Continue. A filter ordered after the load_balancer
@@ -485,7 +506,7 @@ async fn run_pipeline(
     match action {
         Ok(FilterAction::Continue | FilterAction::Release | FilterAction::BodyDone) => {
             ctx.rewritten_path = rewritten_path;
-            ctx.request_body_mode = super::clamp_body_mode_to_ceiling(request_body_mode, baseline_request_body_mode);
+            ctx.request_body_mode = clamp_body_mode_to_ceiling(request_body_mode, baseline_request_body_mode);
             ctx.attempted_endpoints = attempted_endpoints;
             ctx.retry_policy = retry_policy;
             ctx.route_retry_policy = route_retry_policy;
@@ -653,7 +674,7 @@ async fn prepare_terminal_response(
     ctx.structured_metadata = structured_metadata;
     ctx.cached_executed_filter_indices = executed_indices;
     ctx.cached_body_done_indices = body_done;
-    ctx.response_body_mode = super::clamp_body_mode_to_ceiling(response_body_mode, baseline_response_body_mode);
+    ctx.response_body_mode = clamp_body_mode_to_ceiling(response_body_mode, baseline_response_body_mode);
 
     match result {
         Ok(FilterAction::Reject(rejection)) => {
@@ -910,6 +931,10 @@ async fn suppress_streaming_terminal_response(
     }
 }
 
+// -----------------------------------------------------------------------------
+// Streaming Headers
+// -----------------------------------------------------------------------------
+
 /// Remove transport framing and hop-by-hop headers before commitment.
 ///
 /// For HTTP/1.1 body streams, adds `Transfer-Encoding: chunked` so
@@ -982,6 +1007,10 @@ fn streaming_size_limit_exceeded(ctx: &PingoraRequestCtx, pipeline: &FilterPipel
     );
     true
 }
+
+// -----------------------------------------------------------------------------
+//
+// -----------------------------------------------------------------------------
 
 /// Build a Pingora response header from filter-modified state.
 ///
@@ -1177,7 +1206,7 @@ fn apply_pre_read_mutations_to_session(session: &mut Session, mutations: &[Trust
 /// [`info_span!`]: tracing::info_span
 /// [OTel span name]: https://opentelemetry.io/docs/specs/semconv/http/http-spans/
 /// [`Empty`]: tracing::field::Empty
-/// [`record_response_span_attributes`]: super::record_response_span_attributes
+/// [`record_response_span_attributes`]: super::span_util::record_response_span_attributes
 #[expect(
     clippy::too_many_lines,
     reason = "OTel semantic convention attributes require many span fields"
@@ -1186,7 +1215,7 @@ fn create_request_span(session: &Session, ctx: &PingoraRequestCtx) -> tracing::S
     let method = session.req_header().method.as_str();
     let path = session.req_header().uri.path();
     let path = if path.is_empty() { "/" } else { path };
-    let protocol_version = super::http_version_label(ctx.client_http_version.unwrap_or(http::Version::HTTP_11));
+    let protocol_version = http_version_label(ctx.client_http_version.unwrap_or(http::Version::HTTP_11));
     let host = session.req_header().headers.get("host").and_then(|v| v.to_str().ok());
     let server_address = host.map(|h| h.split(':').next().unwrap_or(h));
     let server_port = host.and_then(|h| h.split_once(':').and_then(|(_, p)| p.parse::<u16>().ok()));
@@ -1430,7 +1459,7 @@ mod tests {
 
     #[test]
     fn clamp_body_mode_to_ceiling_caps_stream_buffer_limit() {
-        let clamped = super::super::clamp_body_mode_to_ceiling(
+        let clamped = clamp_body_mode_to_ceiling(
             BodyMode::StreamBuffer { max_bytes: Some(4096) },
             BodyMode::StreamBuffer { max_bytes: Some(1024) },
         );
@@ -1443,7 +1472,7 @@ mod tests {
 
     #[test]
     fn clamp_body_mode_to_ceiling_caps_unbounded_stream_buffer() {
-        let clamped = super::super::clamp_body_mode_to_ceiling(
+        let clamped = clamp_body_mode_to_ceiling(
             BodyMode::StreamBuffer { max_bytes: None },
             BodyMode::SizeLimit { max_bytes: 512 },
         );
@@ -1456,10 +1485,7 @@ mod tests {
 
     #[test]
     fn clamp_body_mode_to_ceiling_stream_passes_through_with_ceiling() {
-        let clamped = super::super::clamp_body_mode_to_ceiling(
-            BodyMode::Stream,
-            BodyMode::StreamBuffer { max_bytes: Some(1024) },
-        );
+        let clamped = clamp_body_mode_to_ceiling(BodyMode::Stream, BodyMode::StreamBuffer { max_bytes: Some(1024) });
         assert_eq!(
             clamped,
             BodyMode::Stream,
@@ -1469,7 +1495,7 @@ mod tests {
 
     #[test]
     fn clamp_body_mode_to_ceiling_stream_passes_through_without_ceiling() {
-        let clamped = super::super::clamp_body_mode_to_ceiling(BodyMode::Stream, BodyMode::Stream);
+        let clamped = clamp_body_mode_to_ceiling(BodyMode::Stream, BodyMode::Stream);
         assert_eq!(
             clamped,
             BodyMode::Stream,
@@ -1479,7 +1505,7 @@ mod tests {
 
     #[test]
     fn clamp_body_mode_to_ceiling_size_limit_clamped_to_baseline() {
-        let clamped = super::super::clamp_body_mode_to_ceiling(
+        let clamped = clamp_body_mode_to_ceiling(
             BodyMode::SizeLimit { max_bytes: 8192 },
             BodyMode::SizeLimit { max_bytes: 2048 },
         );
@@ -1492,7 +1518,7 @@ mod tests {
 
     #[test]
     fn clamp_body_mode_to_ceiling_no_ceiling_passes_through() {
-        let clamped = super::super::clamp_body_mode_to_ceiling(
+        let clamped = clamp_body_mode_to_ceiling(
             BodyMode::StreamBuffer { max_bytes: Some(4096) },
             BodyMode::StreamBuffer { max_bytes: None },
         );
@@ -1505,7 +1531,7 @@ mod tests {
 
     #[test]
     fn clamp_body_mode_to_ceiling_within_limit_unchanged() {
-        let clamped = super::super::clamp_body_mode_to_ceiling(
+        let clamped = clamp_body_mode_to_ceiling(
             BodyMode::StreamBuffer { max_bytes: Some(512) },
             BodyMode::StreamBuffer { max_bytes: Some(1024) },
         );

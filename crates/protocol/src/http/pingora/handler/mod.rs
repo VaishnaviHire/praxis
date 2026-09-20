@@ -13,21 +13,16 @@
 //! Each submodule implements one Pingora hook. The pipeline is held
 //! behind `Arc<ArcSwap<FilterPipeline>>` for lock-free hot reload.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
-use bytes::Bytes;
-use pingora_core::{
-    Result, apps::HttpServerOptions, protocols::http::v2::server::H2Options, server::Server,
-    services::listening::Service,
-};
-use pingora_proxy::{Session, http_proxy};
-use praxis_core::{config::ABSOLUTE_MAX_BODY_BYTES, connectivity::Upstream};
-use praxis_filter::{BodyBuffer, BodyMode, FilterPipeline, HttpFilterContext, RequestExtensions};
+use pingora_core::{Result, server::Server, services::listening::Service};
+use pingora_proxy::http_proxy;
+use praxis_filter::FilterPipeline;
 use tokio::sync::Semaphore;
-use tracing::{debug, warn};
+use tracing::debug;
 
-use super::{context::PingoraRequestCtx, metrics};
+use super::metrics;
 
 /// Safe per-request compression configuration.
 mod compression;
@@ -65,6 +60,21 @@ mod upstream_response;
 mod via;
 /// HTTP handler with body filter hooks.
 mod with_body;
+
+/// Body mode clamping and stream buffer utilities.
+mod body_util;
+/// Passive health checking utilities.
+mod health_util;
+/// Fallback access log emission and response filter cleanup.
+mod logging_util;
+/// Request metrics emission utilities.
+mod metrics_util;
+/// Retry decision logic and state management.
+mod retry_util;
+/// Pingora HTTP/2 server option builders.
+mod server_options;
+/// Span attribute recording for request tracing.
+mod span_util;
 
 pub use upstream_peer::{UpstreamRetryGateRelease, arm_upstream_retry_gate, lock_upstream_retry_gate_tests};
 pub use with_body::PingoraHttpHandler;
@@ -154,8 +164,8 @@ where
 {
     let service_name = format!("http-proxy:{name}", name = listener.name);
     let mut proxy = http_proxy(&server.configuration, handler);
-    proxy.server_options = Some(h2c_server_options());
-    proxy.h2_options = Some(h2_server_options());
+    proxy.server_options = Some(server_options::h2c_server_options());
+    proxy.h2_options = Some(server_options::h2_server_options());
     let mut service = Service::new(service_name, proxy);
     if let Some(tx) = super::listener::add_listener(&mut service, listener)? {
         cert_watcher_shutdowns.push(tx);
@@ -164,669 +174,6 @@ where
     Ok(())
 }
 
-// -----------------------------------------------------------------------------
-// Shared Utilities
-// -----------------------------------------------------------------------------
-
-/// Clamp a runtime-selected body mode to the byte ceiling implied by `baseline`.
-///
-/// `baseline` is the mode established before request/response-phase filter hooks
-/// run (typically from pipeline capabilities + global body limits). Runtime
-/// `set_*_body_mode` calls may widen limits; this utility preserves the original
-/// ceiling while still allowing upgrades between body mode variants.
-///
-/// `Stream` mode passes through unconditionally: it delivers chunks as they
-/// arrive, with no buffer to cap. A runtime downgrade from `StreamBuffer` to
-/// `Stream` opts out of buffering entirely. The pipeline-level body size
-/// limit (enforced separately via `SizeLimit`) remains the backstop for
-/// oversized payloads.
-fn clamp_body_mode_to_ceiling(mode: BodyMode, baseline: BodyMode) -> BodyMode {
-    let ceiling = match baseline {
-        BodyMode::StreamBuffer { max_bytes: Some(v) } | BodyMode::SizeLimit { max_bytes: v } => Some(v),
-        _ => None,
-    };
-
-    match (mode, ceiling) {
-        (BodyMode::StreamBuffer { max_bytes }, Some(limit)) => BodyMode::StreamBuffer {
-            max_bytes: Some(max_bytes.map_or(limit, |v| v.min(limit))),
-        },
-        (BodyMode::SizeLimit { max_bytes }, Some(limit)) => BodyMode::SizeLimit {
-            max_bytes: max_bytes.min(limit),
-        },
-        // Stream has no buffer to clamp; other modes pass through when the
-        // baseline imposes no ceiling (e.g. unbounded StreamBuffer).
-        (m, None | Some(_)) => m,
-    }
-}
-
-/// Shared legacy-default retry policy for requests that carry none.
-fn legacy_default_policy() -> Arc<praxis_core::config::RetryPolicy> {
-    static LEGACY_DEFAULT: std::sync::LazyLock<Arc<praxis_core::config::RetryPolicy>> =
-        std::sync::LazyLock::new(|| Arc::new(praxis_core::config::RetryPolicy::legacy_default()));
-    Arc::clone(&LEGACY_DEFAULT)
-}
-
-/// Handle upstream connect failures with the policy-aware retry engine.
-///
-/// Retries are skipped when the effective forwarded body size exceeds
-/// the configured replay limit, the method is non-idempotent without
-/// opt-in, the budget is exhausted, or the overall deadline has passed.
-#[expect(clippy::too_many_lines, reason = "sequential guard checks")]
-fn handle_connect_failure(ctx: &mut PingoraRequestCtx, e: Box<pingora_core::Error>) -> Box<pingora_core::Error> {
-    let cluster = ctx.metrics_cluster_shared.clone().unwrap_or_else(metrics::cluster_none);
-    if let Some(start) = ctx.upstream_connect_start.take() {
-        metrics::record_upstream_connect_duration(cluster.clone(), start.elapsed().as_secs_f64());
-    }
-    metrics::record_upstream_connect_failure(cluster.clone());
-
-    let policy = ctx.retry_policy.clone().unwrap_or_else(legacy_default_policy);
-    let outcome = retry::classify_error(&e);
-    let decision = retry::should_retry(ctx, &policy, outcome, ctx.cluster_retry_state.as_deref());
-
-    match decision {
-        retry::RetryDecision::Retry { backoff } => {
-            ctx.retries += 1;
-            ctx.pending_backoff = Some(backoff);
-            // Legacy (unconfigured) policies keep the historical
-            // retry-same-endpoint behavior; only operator-configured
-            // policies opt into endpoint reselection.
-            ctx.reselect_on_retry = policy.configured;
-            if let Some(upstream) = ctx.upstream_for_retry.as_ref() {
-                let addr = Arc::clone(&upstream.address);
-                if !ctx.attempted_endpoints.iter().any(|e| e.as_ref() == addr.as_ref()) {
-                    ctx.attempted_endpoints.push(addr);
-                }
-            }
-            // Under reselection, release the failed endpoint's in-flight
-            // counter and clear the saved upstream so upstream_peer picks an
-            // alternate host. Legacy same-endpoint retries keep the saved
-            // upstream (and its counter) for the next attempt.
-            if policy.configured {
-                if let Some(upstream) = ctx.upstream_for_retry.as_ref()
-                    && let Some(reselector) = ctx.endpoint_reselector.as_ref()
-                {
-                    reselector.release(&upstream.address);
-                }
-                ctx.upstream_for_retry = None;
-            }
-            let upstream_address = ctx
-                .upstream_for_retry
-                .as_ref()
-                .map_or("unknown", |u| u.address.as_ref());
-            debug!(
-                retries = ctx.retries,
-                max = policy.effective_max_retries(),
-                ?backoff,
-                upstream_address,
-                "retrying after connect failure"
-            );
-            let mut e = e;
-            e.set_retry(true);
-            e
-        },
-        retry::RetryDecision::DoNotRetry => {
-            if ctx.retries > 0 {
-                warn!(
-                    retries = ctx.retries,
-                    max = policy.effective_max_retries(),
-                    upstream_address = ctx
-                        .upstream_for_retry
-                        .as_ref()
-                        .map_or("unknown", |u| u.address.as_ref()),
-                    "retry limit exhausted"
-                );
-            }
-            record_retry_exhausted_if_attempted(ctx, cluster);
-            // Pingora may mark some errors retriable by default; clear the
-            // flag so the policy decision is authoritative.
-            let mut e = e;
-            e.set_retry(false);
-            e
-        },
-    }
-}
-
-/// Decide whether an HTTP response status should trigger a retry.
-///
-/// Returns `Some(error)` marked retriable when the status is retriable
-/// and all guards pass; `None` when the response should be forwarded.
-#[expect(clippy::too_many_lines, reason = "sequential guard checks")]
-fn maybe_retry_response(ctx: &mut PingoraRequestCtx, status: u16) -> Option<Box<pingora_core::Error>> {
-    let policy = ctx.retry_policy.clone().unwrap_or_else(legacy_default_policy);
-    let outcome = retry::RetryOutcome::StatusCode(status);
-    let decision = retry::should_retry(ctx, &policy, outcome, ctx.cluster_retry_state.as_deref());
-    match decision {
-        retry::RetryDecision::Retry { backoff } => {
-            ctx.retries += 1;
-            ctx.pending_backoff = Some(backoff);
-            // Legacy (unconfigured) policies keep the historical
-            // retry-same-endpoint behavior; only operator-configured
-            // policies opt into endpoint reselection.
-            ctx.reselect_on_retry = policy.configured;
-            if let Some(upstream) = ctx.upstream_for_retry.as_ref() {
-                let addr = Arc::clone(&upstream.address);
-                if !ctx.attempted_endpoints.iter().any(|e| e.as_ref() == addr.as_ref()) {
-                    ctx.attempted_endpoints.push(addr);
-                }
-            }
-            // Under reselection, release the failed endpoint's in-flight
-            // counter and clear the saved upstream so upstream_peer picks an
-            // alternate host. Legacy same-endpoint retries keep the saved
-            // upstream (and its counter) for the next attempt.
-            if policy.configured {
-                if let Some(upstream) = ctx.upstream_for_retry.as_ref()
-                    && let Some(reselector) = ctx.endpoint_reselector.as_ref()
-                {
-                    reselector.release(&upstream.address);
-                }
-                ctx.upstream_for_retry = None;
-            }
-            debug!(
-                status,
-                retries = ctx.retries,
-                max = policy.effective_max_retries(),
-                ?backoff,
-                "retrying after retriable response status"
-            );
-            let mut e =
-                pingora_core::Error::explain(pingora_core::ErrorType::HTTPStatus(status), "retriable upstream status");
-            e.set_retry(true);
-            Some(e)
-        },
-        retry::RetryDecision::DoNotRetry => None,
-    }
-}
-
-/// Release the active-request counter if it has not already been released.
-fn release_retry_state(ctx: &mut PingoraRequestCtx) {
-    if !ctx.cluster_retry_state_released
-        && let Some(state) = ctx.cluster_retry_state.take()
-    {
-        state.leave();
-        ctx.cluster_retry_state_released = true;
-    }
-}
-
-/// Record `result=exhausted` only when at least one retry was already attempted.
-fn record_retry_exhausted_if_attempted(ctx: &PingoraRequestCtx, cluster: ::metrics::SharedString) {
-    if ctx.retries > 0 {
-        metrics::record_upstream_retry(cluster, metrics::RETRY_RESULT_EXHAUSTED);
-    }
-}
-
-/// Emit a fallback access record for requests whose lifecycle ended
-/// before the access log filter's completion hooks could run.
-///
-/// Covers pre-upstream rejections, upstream connect and read failures,
-/// and streamed responses aborted mid-body: none of these reach the
-/// bodyless response phase or body end-of-stream where the filter
-/// emits. Only fires when the pipeline configures an `access_log`
-/// filter; these records bypass the filter's sampling because
-/// incomplete requests are always worth a record.
-fn maybe_emit_fallback_access_log(pipeline: &FilterPipeline, status: u16, ctx: &mut PingoraRequestCtx) {
-    if ctx.response_delivery_complete || ctx.connection_upgraded || !pipeline.contains_filter("access_log") {
-        return;
-    }
-    if let Some(filter_ctx) = ctx.filter_context_for(pipeline, None) {
-        // The access_log filter already logged this request (e.g. a bodyless
-        // response whose on_response emitted before a later filter rejected):
-        // no fallback record, or it would duplicate.
-        if praxis_filter::access_record_already_emitted(&filter_ctx) {
-            return;
-        }
-        // Honor the entry's request conditions: a scoped access_log (e.g.
-        // only /api paths) must not gain fallback records for requests the
-        // operator excluded. Sampling is still deliberately bypassed.
-        if !pipeline.filter_request_conditions_match("access_log", filter_ctx.request) {
-            return;
-        }
-        // Route through the pipeline so the record honours the filter's
-        // configured `fields`, and so late facts — the gRPC completion
-        // status captured from the response trailers — reach it. Only
-        // fall back to the fixed shape if no filter claimed the record.
-        if !pipeline.emit_deferred_records(&filter_ctx, status) {
-            praxis_filter::emit_access_record(&filter_ctx, status);
-        }
-    }
-}
-
-/// Run response filters during the logging phase if the
-/// response phase never executed (upstream error, filter
-/// rejection, etc.).
-async fn logging_cleanup(pipeline: &FilterPipeline, ctx: &mut PingoraRequestCtx) {
-    if !ctx.response_phase_done
-        && let Some(mut filter_ctx) = ctx.filter_context_for(pipeline, None)
-    {
-        let _result = pipeline.execute_http_response(&mut filter_ctx).await;
-        let extensions = filter_ctx.extensions;
-        let metadata = filter_ctx.filter_metadata;
-        let state = filter_ctx.filter_state;
-        let exec_idx = filter_ctx.executed_filter_indices;
-        let body_idx = filter_ctx.body_done_indices;
-        // The context macro takes cluster/upstream out of ctx; restore them
-        // so the fallback access record that follows can attribute the
-        // failure to the routed cluster and selected endpoint.
-        let cluster = filter_ctx.cluster;
-        let upstream = filter_ctx.upstream;
-        ctx.extensions = extensions;
-        ctx.filter_metadata = metadata;
-        ctx.filter_state = state;
-        ctx.cached_executed_filter_indices = exec_idx;
-        ctx.cached_body_done_indices = body_idx;
-        ctx.cluster = cluster;
-        ctx.upstream = upstream;
-    }
-}
-
-/// Emit Prometheus metrics for a completed HTTP request.
-///
-/// No-op when the Prometheus recorder has not been installed.
-fn emit_request_metrics(session: &Session, ctx: &PingoraRequestCtx) {
-    if !metrics::is_recorder_installed() {
-        return;
-    }
-
-    let status_code = session.response_written().map_or(0, |resp| resp.status.as_u16());
-    let status_class = metrics::status_class(status_code);
-
-    let method = request_method_label(session, ctx);
-
-    let cluster = ctx.metrics_cluster_shared.clone().unwrap_or_else(metrics::cluster_none);
-
-    let route = ctx.metrics_route.clone().unwrap_or_else(metrics::route_unknown);
-
-    let labels = metrics::RequestMetricLabels {
-        cluster: cluster.clone(),
-        method,
-        route,
-        status_class,
-    };
-
-    emit_upstream_request_metric(ctx, &cluster);
-
-    if let Some(error_type) = ctx.error_type {
-        metrics::record_error(error_type);
-    }
-
-    let duration_secs = ctx.request_start.elapsed().as_secs_f64();
-    metrics::record_request_metrics(labels, duration_secs);
-    metrics::record_body_size_metrics(
-        method,
-        status_class,
-        cluster,
-        ctx.request_body_bytes,
-        ctx.response_body_bytes,
-    );
-}
-
-/// Resolve the bounded `method` label for a request.
-///
-/// Falls back to the request snapshot when the session header has already
-/// been consumed, and to `"UNKNOWN"` when neither carries a method.
-fn request_method_label(session: &Session, ctx: &PingoraRequestCtx) -> &'static str {
-    let request_method = session.req_header().method.as_str();
-    let raw_method = if request_method.is_empty() {
-        ctx.request_snapshot.as_ref().map_or("UNKNOWN", |r| r.method.as_str())
-    } else {
-        request_method
-    };
-    metrics::method_label(raw_method)
-}
-
-/// Count a request that reached an upstream endpoint.
-///
-/// Only requests that actually reached an upstream carry an upstream
-/// response status; filter rejections and connect failures never do, and
-/// must not inflate the upstream denominator.
-fn emit_upstream_request_metric(ctx: &PingoraRequestCtx, cluster: &::metrics::SharedString) {
-    if let Some(upstream_status) = ctx.upstream_response_status
-        && let Some(upstream) = ctx.upstream_for_retry.as_ref()
-    {
-        metrics::record_upstream_request(
-            cluster.clone(),
-            ::metrics::SharedString::from(Arc::clone(&upstream.address)),
-            metrics::status_class(upstream_status),
-        );
-    }
-}
-
-/// Record a passive health observation for the selected upstream endpoint.
-///
-/// Called from the `logging` hook on every completed request. Determines
-/// success/failure from the error argument and the stashed upstream
-/// response status code.
-///
-/// No-op when no upstream was selected, no health registry is available,
-/// or passive checking is not configured for the cluster.
-fn record_passive_health(pipeline: &FilterPipeline, error: Option<&pingora_core::Error>, ctx: &PingoraRequestCtx) {
-    let cluster_name = ctx.cluster.as_ref().or(ctx.metrics_cluster.as_ref());
-    let Some(cluster_name) = cluster_name else {
-        return;
-    };
-    let Some(idx) = ctx.selected_endpoint_index else {
-        return;
-    };
-    let Some(registry) = pipeline.health_registry() else {
-        return;
-    };
-    let Some(health) = registry.get(cluster_name) else {
-        return;
-    };
-
-    // A request that never contacted the upstream carries no signal about the
-    // endpoint, so skip it. upstream_contacted is set once a peer is resolved
-    // and stays set across retries (unlike upstream_for_retry, which a retry
-    // clears to force reselection), so it distinguishes a genuine connect or
-    // read failure from a filter reject or a proxy-generated terminal response
-    // after endpoint selection, which would otherwise record a spurious
-    // observation against the untouched endpoint and skew a real failure
-    // streak.
-    if !ctx.upstream_contacted {
-        return;
-    }
-
-    // Classify the observation by the error's origin. A client-sourced
-    // (Downstream) error carries no signal about the endpoint, so when it
-    // arrives without an upstream response we skip the observation
-    // entirely: recording a failure would eject a healthy upstream, and
-    // recording a success would clear a real failure streak and mask a
-    // failing one. Upstream/Internal/Unset errors and 5xx responses count
-    // as failures (Internal/Unset are kept because a real endpoint failure
-    // is not always tagged Upstream, and missing one is worse here than an
-    // occasional false positive).
-    let is_downstream_error = error.is_some_and(|e| matches!(e.esource(), pingora_core::ErrorSource::Downstream));
-    if is_downstream_error && ctx.upstream_response_status.is_none() {
-        return;
-    }
-    let is_failure =
-        ctx.upstream_response_status.is_some_and(|s| s >= 500) || (error.is_some() && !is_downstream_error);
-    apply_passive_threshold(health, idx, cluster_name, is_failure);
-}
-
-/// Apply passive health threshold for a single endpoint observation.
-fn apply_passive_threshold(
-    health: &praxis_core::health::ClusterHealthEntry,
-    idx: usize,
-    cluster_name: &Arc<str>,
-    is_failure: bool,
-) {
-    if is_failure {
-        if let Some(threshold) = health.passive_unhealthy_threshold()
-            && health
-                .endpoints()
-                .get(idx)
-                .is_some_and(|ep| ep.record_failure(threshold))
-        {
-            tracing::warn!(
-                cluster = %cluster_name,
-                endpoint_index = idx,
-                threshold,
-                "passive health: endpoint marked unhealthy"
-            );
-            emit_passive_health_transition(health, cluster_name, metrics::HEALTH_RESULT_UNHEALTHY);
-        }
-    } else if let Some(threshold) = health.passive_healthy_threshold()
-        && health
-            .endpoints()
-            .get(idx)
-            .is_some_and(|ep| ep.record_success(threshold))
-    {
-        tracing::info!(
-            cluster = %cluster_name,
-            endpoint_index = idx,
-            threshold,
-            "passive health: endpoint recovered"
-        );
-        emit_passive_health_transition(health, cluster_name, metrics::HEALTH_RESULT_HEALTHY);
-    }
-}
-
-/// Refresh health gauges and increment the transition counter after a passive flip.
-fn emit_passive_health_transition(
-    health: &praxis_core::health::ClusterHealthEntry,
-    cluster_name: &Arc<str>,
-    result: &'static str,
-) {
-    let (healthy, total) = metrics::count_healthy_endpoints(health);
-    metrics::record_health_transition(
-        ::metrics::SharedString::from(Arc::clone(cluster_name)),
-        result,
-        healthy,
-        total,
-    );
-}
-
-/// Map an [`http::Version`] to the [OTel `network.protocol.version`] value.
-///
-/// [OTel `network.protocol.version`]: https://opentelemetry.io/docs/specs/semconv/attributes-registry/network/
-pub(super) fn http_version_label(version: http::Version) -> &'static str {
-    match version {
-        http::Version::HTTP_09 => "0.9",
-        http::Version::HTTP_10 => "1.0",
-        http::Version::HTTP_11 => "1.1",
-        http::Version::HTTP_2 => "2",
-        http::Version::HTTP_3 => "3",
-        _ => "unknown",
-    }
-}
-
-/// Record response-phase span attributes that are only available after
-/// the upstream exchange.
-///
-/// Called from the `logging` hook to fill in `http.response.status_code`,
-/// `otel.status_code` and `error.type` (5xx only), `http.route` and the
-/// `otel.name` upgrade to `{method} {route}` (when a route matched),
-/// `upstream.address`, and `upstream.cluster` on the root request span,
-/// and response attributes on the upstream exchange span.
-fn record_response_span_attributes(session: &Session, ctx: &PingoraRequestCtx) {
-    if ctx.request_span.is_disabled() {
-        return;
-    }
-    let response = session.response_written();
-    let status = response.map(|resp| resp.status);
-    let method = session.req_header().method.as_str();
-    record_response_span_fields(status, method, response, ctx);
-}
-
-/// Record the response-phase fields once the status and method have been extracted.
-///
-/// Split from [`record_response_span_attributes`] so the recording logic is
-/// unit-testable without constructing a live Pingora session.
-fn record_response_span_fields(
-    status: Option<http::StatusCode>,
-    method: &str,
-    response: Option<&pingora_http::ResponseHeader>,
-    ctx: &PingoraRequestCtx,
-) {
-    if let Some(status) = status {
-        let code = status.as_u16();
-        if code > 0 {
-            ctx.request_span.record("http.response.status_code", code);
-        }
-        if status.is_server_error() {
-            ctx.request_span.record("otel.status_code", "ERROR");
-            // OTel semconv: error.type for an HTTP status is the numeric code
-            // as a string, not StatusCode's "{code} {reason}" Display form.
-            ctx.request_span.record("error.type", code.to_string().as_str());
-        }
-    }
-
-    if let Some(route) = &ctx.metrics_route {
-        ctx.request_span.record("http.route", route.as_ref());
-        ctx.request_span
-            .record("otel.name", format!("{method} {route}").as_str());
-    }
-
-    if let Some(upstream) = &ctx.upstream_for_retry {
-        ctx.request_span.record("upstream.address", upstream.address.as_ref());
-    }
-
-    if let Some(cluster) = &ctx.metrics_cluster {
-        ctx.request_span.record("upstream.cluster", cluster.as_ref());
-    }
-
-    record_upstream_exchange_span(ctx, response);
-}
-
-/// Record the upstream-exchange child span's response fields.
-fn record_upstream_exchange_span(ctx: &PingoraRequestCtx, response: Option<&pingora_http::ResponseHeader>) {
-    if ctx.upstream_exchange_span.is_disabled() {
-        return;
-    }
-    // Prefer the upstream's own status (captured before any response-phase
-    // rewrite); fall back to the written response when it was not captured.
-    if let Some(status) = ctx
-        .upstream_response_status
-        .or_else(|| response.map(|resp| resp.status.as_u16()))
-    {
-        ctx.upstream_exchange_span.record("http.response.status_code", status);
-    }
-    ctx.upstream_exchange_span
-        .record("http.response.body.size", ctx.response_body_bytes);
-}
-
-/// Build [`HttpServerOptions`] with h2c enabled.
-///
-/// [`HttpServerOptions`]: pingora_core::apps::HttpServerOptions
-fn h2c_server_options() -> HttpServerOptions {
-    let mut opts = HttpServerOptions::default();
-    opts.h2c = true;
-    opts
-}
-
-/// Build [`H2Options`] with limits to mitigate HPACK amplification attacks
-/// (CWE-409).
-///
-/// Without explicit limits the `h2` crate defaults allow unbounded header
-/// list sizes and concurrent streams, enabling a small compressed request
-/// to allocate hundreds of megabytes on the server.
-///
-/// [`H2Options`]: pingora_core::protocols::http::v2::server::H2Options
-fn h2_server_options() -> H2Options {
-    let mut opts = H2Options::new();
-    opts.max_header_list_size(65_536); // 64 KiB
-    opts.max_concurrent_streams(128);
-    opts
-}
-
-/// Accumulate `chunk.len()` into `accumulated_bytes` and return `true` when
-/// the total exceeds `max_bytes`. Returns `false` when the body is `None`.
-fn check_body_size_limit(body: Option<&Bytes>, accumulated_bytes: &mut u64, max_bytes: usize) -> bool {
-    if let Some(chunk) = body {
-        let chunk_len = chunk.len() as u64;
-        *accumulated_bytes += chunk_len;
-
-        let limit = max_bytes as u64;
-        return *accumulated_bytes > limit;
-    }
-    false
-}
-
-/// Push `chunk` into the stream buffer, creating it if absent. At end-of-stream
-/// the buffer is frozen into `body`. Returns `true` when the push overflows.
-fn accumulate_stream_buffer(
-    body: &mut Option<Bytes>,
-    body_buffer: &mut Option<BodyBuffer>,
-    end_of_stream: bool,
-    max_bytes: Option<usize>,
-) -> bool {
-    if let Some(chunk) = &*body {
-        let limit = max_bytes.unwrap_or(ABSOLUTE_MAX_BODY_BYTES);
-        let buf = body_buffer.get_or_insert_with(|| BodyBuffer::new(limit));
-
-        if buf.push(chunk.clone()).is_err() {
-            return true;
-        }
-    }
-
-    if end_of_stream {
-        tracing::trace!("stream buffer: freezing accumulated body before pipeline at EOS");
-        *body = body_buffer.take().map(BodyBuffer::freeze);
-    } else {
-        tracing::trace!("stream buffer: filters see the original chunk");
-    }
-    false
-}
-
-/// Suppress the body chunk while the stream buffer is still accumulating
-/// (i.e. `Continue`/`BodyDone` before release).
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "mirrors the caller's existing condition flags"
-)]
-fn suppress_stream_buffer_chunk(body: &mut Option<Bytes>, is_stream_buffer: bool, released: bool, end_of_stream: bool) {
-    if is_stream_buffer && !released && !end_of_stream {
-        *body = None;
-    }
-}
-
-/// Release the accumulated stream buffer on `FilterAction::Release`.
-fn release_stream_buffer(
-    body: &mut Option<Bytes>,
-    is_stream_buffer: bool,
-    released: &mut bool,
-    body_buffer: &mut Option<BodyBuffer>,
-    end_of_stream: bool,
-) {
-    if is_stream_buffer && !*released {
-        *released = true;
-        if !end_of_stream {
-            *body = body_buffer.take().map(BodyBuffer::freeze);
-        }
-    }
-}
-
-/// Shared fields extracted from an `HttpFilterContext` after body filter
-/// execution. Written back to `PingoraRequestCtx` via [`write_back`].
-///
-/// [`write_back`]: BodyFilterOutput::write_back
-struct BodyFilterOutput {
-    /// Cluster selected by the filter pipeline.
-    cluster: Option<Arc<str>>,
-    /// Upstream endpoint selected by the load balancer.
-    upstream: Option<Upstream>,
-    /// Type-safe request-scoped extension container.
-    extensions: RequestExtensions,
-    /// Durable per-request metadata that persists across phases.
-    filter_metadata: HashMap<String, String>,
-    /// Typed per-filter state keyed by stable filter invocation ID.
-    filter_state: HashMap<usize, Box<dyn std::any::Any + Send + Sync>>,
-    /// Per-filter execution tracking indices.
-    executed_filter_indices: Vec<bool>,
-    /// Per-filter body-done tracking indices.
-    body_done_indices: Vec<bool>,
-    /// Endpoints already attempted for this request (retry exclusion set).
-    attempted_endpoints: Vec<Arc<str>>,
-}
-
-impl BodyFilterOutput {
-    /// Move the shared fields out of the filter context, replacing each
-    /// with its `Default` value.
-    fn take_from(fctx: &mut HttpFilterContext<'_>) -> Self {
-        Self {
-            cluster: fctx.cluster.take(),
-            upstream: fctx.upstream.take(),
-            extensions: std::mem::take(&mut fctx.extensions),
-            filter_metadata: std::mem::take(&mut fctx.filter_metadata),
-            filter_state: std::mem::take(&mut fctx.filter_state),
-            executed_filter_indices: std::mem::take(&mut fctx.executed_filter_indices),
-            body_done_indices: std::mem::take(&mut fctx.body_done_indices),
-            attempted_endpoints: std::mem::take(&mut fctx.attempted_endpoints),
-        }
-    }
-
-    /// Write the shared fields back to the protocol context.
-    fn write_back(self, ctx: &mut PingoraRequestCtx) {
-        ctx.cluster = self.cluster;
-        ctx.upstream = self.upstream;
-        ctx.extensions = self.extensions;
-        ctx.filter_metadata = self.filter_metadata;
-        ctx.filter_state = self.filter_state;
-        ctx.cached_executed_filter_indices = self.executed_filter_indices;
-        ctx.cached_body_done_indices = self.body_done_indices;
-        ctx.attempted_endpoints = self.attempted_endpoints;
-    }
-}
 
 // -----------------------------------------------------------------------------
 // Tests
@@ -845,9 +192,17 @@ impl BodyFilterOutput {
     reason = "tests"
 )]
 mod tests {
-    use praxis_core::connectivity::ConnectionOptions;
+    use std::collections::HashMap;
+
+    use bytes::Bytes;
+    use praxis_core::{
+        connectivity::{ConnectionOptions, Upstream},
+        health::{ClusterHealthEntry, EndpointHealth},
+    };
+    use praxis_filter::{BodyBuffer, BodyMode, RequestExtensions};
 
     use super::*;
+    use crate::http::pingora::context::PingoraRequestCtx;
 
     /// Maximum number of upstream connection retries for the legacy default policy.
     const MAX_RETRIES: usize = praxis_core::config::DEFAULT_MAX_RETRIES as usize;
@@ -859,7 +214,7 @@ mod tests {
     fn first_failure_idempotent_sets_retry() {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(e.retry(), "first failure should set retry flag");
         assert_eq!(ctx.retries, 1);
     }
@@ -869,7 +224,7 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
         ctx.request_body_bytes = RETRY_BODY_LIMIT + 1;
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(!e.retry(), "should not retry when body exceeds retry buffer limit");
         assert_eq!(ctx.retries, 0, "retry counter should not increment");
     }
@@ -880,7 +235,7 @@ mod tests {
         ctx.request_is_idempotent = true;
         ctx.request_body_bytes = 1024;
         ctx.mutated_request_body_len = Some((RETRY_BODY_LIMIT + 1) as usize);
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(
             !e.retry(),
             "should not retry when mutated body exceeds retry buffer limit"
@@ -893,7 +248,7 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
         ctx.request_body_bytes = RETRY_BODY_LIMIT;
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(e.retry(), "body exactly at limit should allow retry");
         assert_eq!(ctx.retries, 1);
     }
@@ -903,7 +258,7 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
         ctx.request_body_bytes = 0;
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(e.retry(), "zero-length body should allow retry");
         assert_eq!(ctx.retries, 1);
     }
@@ -913,7 +268,7 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
         ctx.retries = MAX_RETRIES as u32;
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(!e.retry(), "should not retry after MAX_RETRIES");
         assert_eq!(ctx.retries as usize, MAX_RETRIES);
     }
@@ -923,10 +278,10 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
         for expected in 1..=MAX_RETRIES {
-            let _result = handle_connect_failure(&mut ctx, make_error());
+            let _result = retry_util::handle_connect_failure(&mut ctx, make_error());
             assert_eq!(ctx.retries as usize, expected);
         }
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(!e.retry(), "should not retry after reaching MAX_RETRIES");
         assert_eq!(ctx.retries as usize, MAX_RETRIES);
     }
@@ -935,7 +290,7 @@ mod tests {
     fn non_idempotent_request_never_retries() {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = false;
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(!e.retry(), "non-idempotent request should never retry");
         assert_eq!(ctx.retries, 0);
     }
@@ -944,7 +299,7 @@ mod tests {
     fn connect_failure_clears_upstream_connect_start() {
         let mut ctx = PingoraRequestCtx::default();
         ctx.upstream_connect_start = Some(std::time::Instant::now());
-        let _e = handle_connect_failure(&mut ctx, make_error());
+        let _e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(
             ctx.upstream_connect_start.is_none(),
             "failed connect should consume upstream_connect_start for duration recording"
@@ -960,7 +315,7 @@ mod tests {
             retriable_conditions: vec![praxis_core::config::RetriableCondition::Status5xx],
             ..praxis_core::config::RetryPolicy::legacy_default()
         }));
-        let e = maybe_retry_response(&mut ctx, 503).expect("503 should be retriable");
+        let e = retry_util::maybe_retry_response(&mut ctx, 503).expect("503 should be retriable");
         assert!(e.retry(), "503 under Status5xx should set retry");
         assert_eq!(ctx.retries, 1);
         assert!(ctx.reselect_on_retry);
@@ -976,7 +331,7 @@ mod tests {
             ..praxis_core::config::RetryPolicy::legacy_default()
         }));
         assert!(
-            maybe_retry_response(&mut ctx, 404).is_none(),
+            retry_util::maybe_retry_response(&mut ctx, 404).is_none(),
             "404 must never trigger status-based retry"
         );
         assert_eq!(ctx.retries, 0);
@@ -987,7 +342,7 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
         assert!(
-            maybe_retry_response(&mut ctx, 502).is_none(),
+            retry_util::maybe_retry_response(&mut ctx, 502).is_none(),
             "legacy default must forward 5xx without retry"
         );
     }
@@ -1000,7 +355,7 @@ mod tests {
             max_retries: Some(0),
             ..praxis_core::config::RetryPolicy::legacy_default()
         }));
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(!e.retry(), "max_retries: 0 must disable retries");
         assert_eq!(ctx.retries, 0);
     }
@@ -1011,7 +366,7 @@ mod tests {
         ctx.request_is_idempotent = false;
         let mut e = make_error();
         e.set_retry(true);
-        let e = handle_connect_failure(&mut ctx, e);
+        let e = retry_util::handle_connect_failure(&mut ctx, e);
         assert!(!e.retry(), "policy denial must clear Pingora's default retry flag");
         assert_eq!(ctx.retries, 0);
     }
@@ -1027,7 +382,7 @@ mod tests {
             uri: "/".parse().unwrap(),
             headers: http::HeaderMap::new(),
         });
-        logging_cleanup(&pipeline, &mut ctx).await;
+        logging_util::logging_cleanup(&pipeline, &mut ctx).await;
     }
 
     #[tokio::test]
@@ -1037,7 +392,7 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.response_phase_done = false;
         ctx.request_snapshot = None;
-        logging_cleanup(&pipeline, &mut ctx).await;
+        logging_util::logging_cleanup(&pipeline, &mut ctx).await;
     }
 
     #[tokio::test]
@@ -1052,7 +407,7 @@ mod tests {
             uri: "/test".parse().unwrap(),
             headers: http::HeaderMap::new(),
         });
-        logging_cleanup(&pipeline, &mut ctx).await;
+        logging_util::logging_cleanup(&pipeline, &mut ctx).await;
         assert_eq!(
             ctx.cluster.as_deref(),
             Some("test-cluster"),
@@ -1073,7 +428,7 @@ mod tests {
             uri: "/api".parse().unwrap(),
             headers: http::HeaderMap::new(),
         });
-        logging_cleanup(&pipeline, &mut ctx).await;
+        logging_util::logging_cleanup(&pipeline, &mut ctx).await;
         assert_eq!(
             ctx.filter_metadata.get("json_rpc.method").map(String::as_str),
             Some("service/invoke"),
@@ -1093,7 +448,7 @@ mod tests {
             uri: "/test".parse().unwrap(),
             headers: http::HeaderMap::new(),
         });
-        logging_cleanup(&pipeline, &mut ctx).await;
+        logging_util::logging_cleanup(&pipeline, &mut ctx).await;
         assert_eq!(
             ctx.extensions.get::<u32>(),
             Some(&42),
@@ -1105,7 +460,7 @@ mod tests {
     fn passive_health_error_is_failure() {
         let (pipeline, ctx) = make_passive_scenario(Some(3), Some(2));
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1119,7 +474,7 @@ mod tests {
     fn passive_health_downstream_error_is_not_failure() {
         let (pipeline, ctx) = make_passive_scenario(Some(1), Some(1));
         let error = make_error().into_down();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1134,7 +489,7 @@ mod tests {
         let (pipeline, mut ctx) = make_passive_scenario(Some(1), Some(1));
         ctx.upstream_response_status = Some(503);
         let error = make_error().into_down();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1151,9 +506,9 @@ mod tests {
         upstream_err.as_up();
         let downstream_err = make_error().into_down();
 
-        record_passive_health(&pipeline, Some(&upstream_err), &ctx);
-        record_passive_health(&pipeline, Some(&downstream_err), &ctx);
-        record_passive_health(&pipeline, Some(&upstream_err), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&upstream_err), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&downstream_err), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&upstream_err), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1168,7 +523,7 @@ mod tests {
         let (pipeline, ctx) = make_passive_scenario(Some(1), Some(1));
         let mut error = make_error();
         error.as_up();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1184,17 +539,17 @@ mod tests {
         let mut upstream_err = make_error();
         upstream_err.as_up();
 
-        record_passive_health(&pipeline, Some(&upstream_err), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&upstream_err), &ctx);
 
         ctx.upstream_contacted = false;
-        record_passive_health(&pipeline, None, &ctx);
+        health_util::record_passive_health(&pipeline, None, &ctx);
 
         ctx.upstream_response_status = Some(200);
-        record_passive_health(&pipeline, None, &ctx);
+        health_util::record_passive_health(&pipeline, None, &ctx);
         ctx.upstream_response_status = None;
 
         ctx.upstream_contacted = true;
-        record_passive_health(&pipeline, Some(&upstream_err), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&upstream_err), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1211,7 +566,7 @@ mod tests {
         ctx.upstream_contacted = true;
         let mut error = make_error();
         error.as_up();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1225,7 +580,7 @@ mod tests {
     fn passive_health_status_500_is_failure() {
         let (pipeline, mut ctx) = make_passive_scenario(Some(3), Some(2));
         ctx.upstream_response_status = Some(500);
-        record_passive_health(&pipeline, None, &ctx);
+        health_util::record_passive_health(&pipeline, None, &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1239,7 +594,7 @@ mod tests {
     fn passive_health_status_below_500_is_success() {
         let (pipeline, mut ctx) = make_passive_scenario(Some(2), Some(1));
         ctx.upstream_response_status = Some(499);
-        record_passive_health(&pipeline, None, &ctx);
+        health_util::record_passive_health(&pipeline, None, &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1250,8 +605,8 @@ mod tests {
     fn passive_unhealthy_threshold_transition() {
         let (pipeline, ctx) = make_passive_scenario(Some(2), Some(1));
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1265,7 +620,7 @@ mod tests {
     fn passive_healthy_threshold_recovery() {
         let (pipeline, ctx) = make_passive_scenario(Some(1), Some(2));
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1275,13 +630,13 @@ mod tests {
         );
 
         let ctx_ok = make_passive_ctx("test-cluster", 0, Some(200));
-        record_passive_health(&pipeline, None, &ctx_ok);
+        health_util::record_passive_health(&pipeline, None, &ctx_ok);
         assert!(
             !entry.endpoints()[0].is_healthy(),
             "one success should not recover (threshold=2)"
         );
 
-        record_passive_health(&pipeline, None, &ctx_ok);
+        health_util::record_passive_health(&pipeline, None, &ctx_ok);
         assert!(
             entry.endpoints()[0].is_healthy(),
             "2 consecutive successes should recover (threshold=2)"
@@ -1292,7 +647,7 @@ mod tests {
     fn passive_health_no_thresholds_is_noop() {
         let (pipeline, ctx) = make_passive_scenario(None, None);
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1307,7 +662,7 @@ mod tests {
         let (pipeline, mut ctx) = make_passive_scenario(Some(1), Some(1));
         ctx.selected_endpoint_index = Some(999);
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1320,7 +675,7 @@ mod tests {
         ctx.cluster = None;
         ctx.metrics_cluster = None;
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
     }
 
     #[test]
@@ -1329,8 +684,8 @@ mod tests {
         ctx.cluster = None;
         ctx.metrics_cluster = Some(Arc::from("test-cluster"));
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
 
         let registry = pipeline.health_registry().unwrap();
         let entry = registry.get("test-cluster").unwrap();
@@ -1345,7 +700,7 @@ mod tests {
         let (pipeline, mut ctx) = make_passive_scenario(Some(1), Some(1));
         ctx.selected_endpoint_index = None;
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
     }
 
     #[test]
@@ -1356,7 +711,7 @@ mod tests {
         ctx.cluster = Some(Arc::from("test-cluster"));
         ctx.selected_endpoint_index = Some(0);
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
     }
 
     #[test]
@@ -1364,13 +719,13 @@ mod tests {
         let (pipeline, mut ctx) = make_passive_scenario(Some(1), Some(1));
         ctx.cluster = Some(Arc::from("nonexistent"));
         let error = make_error();
-        record_passive_health(&pipeline, Some(&error), &ctx);
+        health_util::record_passive_health(&pipeline, Some(&error), &ctx);
     }
 
     #[test]
     fn size_limit_none_body_returns_false() {
         let mut bytes = 0_u64;
-        assert!(!check_body_size_limit(None, &mut bytes, 100));
+        assert!(!body_util::check_body_size_limit(None, &mut bytes, 100));
         assert_eq!(bytes, 0, "accumulated bytes unchanged for None body");
     }
 
@@ -1378,7 +733,7 @@ mod tests {
     fn size_limit_within_limit() {
         let mut bytes = 0_u64;
         let body = Some(Bytes::from_static(b"hello"));
-        assert!(!check_body_size_limit(body.as_ref(), &mut bytes, 10));
+        assert!(!body_util::check_body_size_limit(body.as_ref(), &mut bytes, 10));
         assert_eq!(bytes, 5);
     }
 
@@ -1386,7 +741,7 @@ mod tests {
     fn size_limit_at_exact_limit() {
         let mut bytes = 0_u64;
         let body = Some(Bytes::from_static(b"exact"));
-        assert!(!check_body_size_limit(body.as_ref(), &mut bytes, 5));
+        assert!(!body_util::check_body_size_limit(body.as_ref(), &mut bytes, 5));
         assert_eq!(bytes, 5);
     }
 
@@ -1394,17 +749,17 @@ mod tests {
     fn size_limit_exceeds_limit() {
         let mut bytes = 0_u64;
         let body = Some(Bytes::from_static(b"toolong"));
-        assert!(check_body_size_limit(body.as_ref(), &mut bytes, 3));
+        assert!(body_util::check_body_size_limit(body.as_ref(), &mut bytes, 3));
     }
 
     #[test]
     fn size_limit_cumulative_overflow() {
         let mut bytes = 0_u64;
         let first = Some(Bytes::from_static(b"aaa"));
-        assert!(!check_body_size_limit(first.as_ref(), &mut bytes, 5));
+        assert!(!body_util::check_body_size_limit(first.as_ref(), &mut bytes, 5));
 
         let second = Some(Bytes::from_static(b"bbb"));
-        assert!(check_body_size_limit(second.as_ref(), &mut bytes, 5));
+        assert!(body_util::check_body_size_limit(second.as_ref(), &mut bytes, 5));
         assert_eq!(bytes, 6);
     }
 
@@ -1412,11 +767,21 @@ mod tests {
     fn stream_buffer_accumulates_chunks() {
         let mut body = Some(Bytes::from_static(b"hello "));
         let mut buf: Option<BodyBuffer> = None;
-        assert!(!accumulate_stream_buffer(&mut body, &mut buf, false, Some(100)));
+        assert!(!body_util::accumulate_stream_buffer(
+            &mut body,
+            &mut buf,
+            false,
+            Some(100)
+        ));
         assert!(buf.is_some());
 
         body = Some(Bytes::from_static(b"world"));
-        assert!(!accumulate_stream_buffer(&mut body, &mut buf, false, Some(100)));
+        assert!(!body_util::accumulate_stream_buffer(
+            &mut body,
+            &mut buf,
+            false,
+            Some(100)
+        ));
 
         let frozen = buf.take().unwrap().freeze();
         assert_eq!(frozen, Bytes::from_static(b"hello world"));
@@ -1426,10 +791,20 @@ mod tests {
     fn stream_buffer_freezes_at_eos() {
         let mut body = Some(Bytes::from_static(b"data"));
         let mut buf: Option<BodyBuffer> = None;
-        assert!(!accumulate_stream_buffer(&mut body, &mut buf, false, Some(100)));
+        assert!(!body_util::accumulate_stream_buffer(
+            &mut body,
+            &mut buf,
+            false,
+            Some(100)
+        ));
 
         body = Some(Bytes::from_static(b" end"));
-        assert!(!accumulate_stream_buffer(&mut body, &mut buf, true, Some(100)));
+        assert!(!body_util::accumulate_stream_buffer(
+            &mut body,
+            &mut buf,
+            true,
+            Some(100)
+        ));
         assert!(buf.is_none(), "buffer should be taken at EOS");
         assert_eq!(body.unwrap(), Bytes::from_static(b"data end"));
     }
@@ -1438,14 +813,19 @@ mod tests {
     fn stream_buffer_overflow() {
         let mut body = Some(Bytes::from_static(b"too long"));
         let mut buf: Option<BodyBuffer> = None;
-        assert!(accumulate_stream_buffer(&mut body, &mut buf, false, Some(5)));
+        assert!(body_util::accumulate_stream_buffer(&mut body, &mut buf, false, Some(5)));
     }
 
     #[test]
     fn stream_buffer_none_body() {
         let mut body: Option<Bytes> = None;
         let mut buf: Option<BodyBuffer> = None;
-        assert!(!accumulate_stream_buffer(&mut body, &mut buf, false, Some(100)));
+        assert!(!body_util::accumulate_stream_buffer(
+            &mut body,
+            &mut buf,
+            false,
+            Some(100)
+        ));
         assert!(buf.is_none());
     }
 
@@ -1453,35 +833,35 @@ mod tests {
     fn stream_buffer_uses_absolute_max_when_none() {
         let mut body = Some(Bytes::from_static(b"data"));
         let mut buf: Option<BodyBuffer> = None;
-        assert!(!accumulate_stream_buffer(&mut body, &mut buf, false, None));
+        assert!(!body_util::accumulate_stream_buffer(&mut body, &mut buf, false, None));
         assert!(buf.is_some(), "should create buffer with absolute max");
     }
 
     #[test]
     fn suppress_clears_body_when_buffering() {
         let mut body = Some(Bytes::from_static(b"data"));
-        suppress_stream_buffer_chunk(&mut body, true, false, false);
+        body_util::suppress_stream_buffer_chunk(&mut body, true, false, false);
         assert!(body.is_none());
     }
 
     #[test]
     fn suppress_noop_when_not_stream_buffer() {
         let mut body = Some(Bytes::from_static(b"data"));
-        suppress_stream_buffer_chunk(&mut body, false, false, false);
+        body_util::suppress_stream_buffer_chunk(&mut body, false, false, false);
         assert!(body.is_some());
     }
 
     #[test]
     fn suppress_noop_when_released() {
         let mut body = Some(Bytes::from_static(b"data"));
-        suppress_stream_buffer_chunk(&mut body, true, true, false);
+        body_util::suppress_stream_buffer_chunk(&mut body, true, true, false);
         assert!(body.is_some());
     }
 
     #[test]
     fn suppress_noop_at_eos() {
         let mut body = Some(Bytes::from_static(b"data"));
-        suppress_stream_buffer_chunk(&mut body, true, false, true);
+        body_util::suppress_stream_buffer_chunk(&mut body, true, false, true);
         assert!(body.is_some());
     }
 
@@ -1492,7 +872,7 @@ mod tests {
         let mut buf = Some(BodyBuffer::new(100));
         buf.as_mut().unwrap().push(Bytes::from_static(b"buffered")).unwrap();
 
-        release_stream_buffer(&mut body, true, &mut released, &mut buf, false);
+        body_util::release_stream_buffer(&mut body, true, &mut released, &mut buf, false);
         assert!(released);
         assert_eq!(body.unwrap(), Bytes::from_static(b"buffered"));
         assert!(buf.is_none());
@@ -1504,7 +884,7 @@ mod tests {
         let mut released = true;
         let mut buf: Option<BodyBuffer> = None;
 
-        release_stream_buffer(&mut body, true, &mut released, &mut buf, false);
+        body_util::release_stream_buffer(&mut body, true, &mut released, &mut buf, false);
         assert!(body.is_none(), "body should be unchanged when already released");
     }
 
@@ -1514,7 +894,7 @@ mod tests {
         let mut released = false;
         let mut buf: Option<BodyBuffer> = None;
 
-        release_stream_buffer(&mut body, false, &mut released, &mut buf, false);
+        body_util::release_stream_buffer(&mut body, false, &mut released, &mut buf, false);
         assert!(!released, "released flag should be unchanged for non-stream-buffer");
     }
 
@@ -1525,7 +905,7 @@ mod tests {
         let mut buf = Some(BodyBuffer::new(100));
         buf.as_mut().unwrap().push(Bytes::from_static(b"data")).unwrap();
 
-        release_stream_buffer(&mut body, true, &mut released, &mut buf, true);
+        body_util::release_stream_buffer(&mut body, true, &mut released, &mut buf, true);
         assert!(released);
         assert!(body.is_none(), "body should not be overwritten at EOS");
         assert!(buf.is_some(), "buffer should not be taken at EOS");
@@ -1541,7 +921,7 @@ mod tests {
         let state_val: Box<dyn std::any::Any + Send + Sync> = Box::new(99_i32);
         let filter_state = HashMap::from([(0_usize, state_val)]);
 
-        let output = BodyFilterOutput {
+        let output = body_util::BodyFilterOutput {
             cluster: Some(Arc::from("test-cluster")),
             upstream: Some(Upstream {
                 address: Arc::from("10.0.0.1:80"),
@@ -1581,7 +961,7 @@ mod tests {
         let pipeline = access_log_pipeline();
         let mut ctx = make_fallback_ctx();
 
-        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut ctx));
+        let events = capture_access_events(|| logging_util::maybe_emit_fallback_access_log(&pipeline, 502, &mut ctx));
         assert_eq!(
             events.len(),
             1,
@@ -1595,7 +975,7 @@ mod tests {
         let mut ctx = make_fallback_ctx();
         ctx.response_delivery_complete = true;
 
-        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 200, &mut ctx));
+        let events = capture_access_events(|| logging_util::maybe_emit_fallback_access_log(&pipeline, 200, &mut ctx));
         assert!(events.is_empty(), "completed delivery already logged via the filter");
     }
 
@@ -1605,7 +985,7 @@ mod tests {
         let mut ctx = make_fallback_ctx();
         ctx.connection_upgraded = true;
 
-        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 101, &mut ctx));
+        let events = capture_access_events(|| logging_util::maybe_emit_fallback_access_log(&pipeline, 101, &mut ctx));
         assert!(events.is_empty(), "upgraded connections have no body completion");
     }
 
@@ -1615,7 +995,7 @@ mod tests {
         let pipeline = FilterPipeline::build(&mut [], &registry).unwrap();
         let mut ctx = make_fallback_ctx();
 
-        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut ctx));
+        let events = capture_access_events(|| logging_util::maybe_emit_fallback_access_log(&pipeline, 502, &mut ctx));
         assert!(events.is_empty(), "no access_log filter means no fallback record");
     }
 
@@ -1634,7 +1014,8 @@ mod tests {
         let pipeline = FilterPipeline::build(&mut entries, &registry).unwrap();
 
         let mut excluded = make_fallback_ctx();
-        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut excluded));
+        let events =
+            capture_access_events(|| logging_util::maybe_emit_fallback_access_log(&pipeline, 502, &mut excluded));
         assert!(
             events.is_empty(),
             "requests the operator scoped out must not gain fallback records"
@@ -1644,7 +1025,8 @@ mod tests {
         if let Some(snapshot) = included.request_snapshot.as_mut() {
             snapshot.uri = "/api/users".parse().unwrap();
         }
-        let events = capture_access_events(|| maybe_emit_fallback_access_log(&pipeline, 502, &mut included));
+        let events =
+            capture_access_events(|| logging_util::maybe_emit_fallback_access_log(&pipeline, 502, &mut included));
         assert_eq!(events.len(), 1, "in-scope incomplete requests still get a record");
     }
 
@@ -1687,7 +1069,7 @@ mod tests {
     #[test]
     fn http_version_label_http_09() {
         assert_eq!(
-            http_version_label(http::Version::HTTP_09),
+            span_util::http_version_label(http::Version::HTTP_09),
             "0.9",
             "HTTP/0.9 should map to '0.9'"
         );
@@ -1696,7 +1078,7 @@ mod tests {
     #[test]
     fn http_version_label_http_10() {
         assert_eq!(
-            http_version_label(http::Version::HTTP_10),
+            span_util::http_version_label(http::Version::HTTP_10),
             "1.0",
             "HTTP/1.0 should map to '1.0'"
         );
@@ -1705,7 +1087,7 @@ mod tests {
     #[test]
     fn http_version_label_http_11() {
         assert_eq!(
-            http_version_label(http::Version::HTTP_11),
+            span_util::http_version_label(http::Version::HTTP_11),
             "1.1",
             "HTTP/1.1 should map to '1.1'"
         );
@@ -1714,7 +1096,7 @@ mod tests {
     #[test]
     fn http_version_label_http_2() {
         assert_eq!(
-            http_version_label(http::Version::HTTP_2),
+            span_util::http_version_label(http::Version::HTTP_2),
             "2",
             "HTTP/2 should map to '2'"
         );
@@ -1723,7 +1105,7 @@ mod tests {
     #[test]
     fn http_version_label_http_3() {
         assert_eq!(
-            http_version_label(http::Version::HTTP_3),
+            span_util::http_version_label(http::Version::HTTP_3),
             "3",
             "HTTP/3 should map to '3'"
         );
@@ -1784,7 +1166,7 @@ mod tests {
             "upstream.cluster" = tracing::field::Empty,
         );
 
-        record_response_span_fields(Some(http::StatusCode::SERVICE_UNAVAILABLE), "GET", None, &ctx);
+        span_util::record_response_span_fields(Some(http::StatusCode::SERVICE_UNAVAILABLE), "GET", None, &ctx);
 
         let captured = capture.0.lock().expect("capture lock");
         let get = |name: &str| {
@@ -1813,7 +1195,7 @@ mod tests {
             "otel.status_code" = tracing::field::Empty,
         );
 
-        record_response_span_fields(Some(http::StatusCode::OK), "GET", None, &ctx);
+        span_util::record_response_span_fields(Some(http::StatusCode::OK), "GET", None, &ctx);
 
         let captured = capture.0.lock().expect("capture lock");
         assert!(
@@ -1878,7 +1260,7 @@ mod tests {
             tls: None,
             authority: None,
         });
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(e.retry(), "should retry with upstream address present");
         assert_eq!(ctx.retries, 1, "retry counter should increment to 1");
     }
@@ -1888,7 +1270,7 @@ mod tests {
         let mut ctx = PingoraRequestCtx::default();
         ctx.request_is_idempotent = true;
         ctx.upstream_for_retry = None;
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(
             e.retry(),
             "should retry even when upstream_for_retry is None (address defaults to unknown)"
@@ -1907,7 +1289,7 @@ mod tests {
             tls: None,
             authority: None,
         });
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(
             !e.retry(),
             "should not retry after MAX_RETRIES even with upstream address"
@@ -1925,7 +1307,7 @@ mod tests {
             tls: None,
             authority: None,
         });
-        let e = handle_connect_failure(&mut ctx, make_error());
+        let e = retry_util::handle_connect_failure(&mut ctx, make_error());
         assert!(!e.retry(), "should not retry large body even with upstream address");
         assert_eq!(ctx.retries, 0, "retry counter should not increment");
     }
@@ -2018,8 +1400,6 @@ mod tests {
         passive_unhealthy: Option<u32>,
         passive_healthy: Option<u32>,
     ) -> (FilterPipeline, PingoraRequestCtx) {
-        use praxis_core::health::{ClusterHealthEntry, EndpointHealth};
-
         let entry = ClusterHealthEntry::new(
             vec![EndpointHealth::new()],
             vec![Arc::from("10.0.0.1:80")],

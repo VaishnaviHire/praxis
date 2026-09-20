@@ -17,7 +17,9 @@ use tracing::{debug, error, warn};
 
 use super::{
     super::{context::PingoraRequestCtx, convert::response_header_from_pingora},
+    body_util::clamp_body_mode_to_ceiling,
     hop_by_hop::{self, RemoveHeader as _},
+    retry_util::maybe_retry_response,
 };
 
 // -----------------------------------------------------------------------------
@@ -70,7 +72,7 @@ pub(super) async fn execute(
 
     // Evaluate HTTP-status retry before running response filters / committing
     // the response phase, so a retriable 5xx does not leak to the client.
-    if let Some(err) = super::maybe_retry_response(ctx, upstream_response.status.as_u16()) {
+    if let Some(err) = maybe_retry_response(ctx, upstream_response.status.as_u16()) {
         return Err(err);
     }
 
@@ -152,7 +154,7 @@ async fn run_response_pipeline(
     };
     ctx.cluster = cluster;
     ctx.cluster_retry_state_released = cluster_retry_state_released;
-    ctx.response_body_mode = super::clamp_body_mode_to_ceiling(response_body_mode, baseline_response_body_mode);
+    ctx.response_body_mode = clamp_body_mode_to_ceiling(response_body_mode, baseline_response_body_mode);
     ctx.extensions = extensions;
     ctx.filter_metadata = filter_metadata;
     ctx.filter_state = filter_state;
@@ -312,7 +314,7 @@ fn header_name_fingerprint(headers: &http::HeaderMap) -> u64 {
 }
 
 // -----------------------------------------------------------------------------
-// Private Utilities
+// Utilities
 // -----------------------------------------------------------------------------
 
 /// Whether the original client request included an `Upgrade` header.
