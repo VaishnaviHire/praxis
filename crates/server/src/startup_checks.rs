@@ -4,56 +4,69 @@
 //! Startup security checks: root privilege enforcement, insecure option
 //! warnings, and TLS key permission validation.
 
-use praxis_core::config::Config;
+use praxis_core::config::{Config, InsecureOptions};
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+
+/// An insecure option accessor paired with the warning it emits when active.
+type InsecureWarning = (fn(&InsecureOptions) -> bool, &'static str);
+
+/// Each insecure option and the warning it emits when active.
+const INSECURE_WARNINGS: &[InsecureWarning] = &[
+    (
+        |options| options.allow_unbounded_body,
+        "allow_unbounded_body: body size ceiling relaxed",
+    ),
+    (
+        |options| options.allow_open_security_filters,
+        "allow_open_security_filters: open failure_mode allowed",
+    ),
+    (
+        |options| options.allow_private_endpoints,
+        "allow_private_endpoints: SSRF-sensitive endpoint addresses allowed",
+    ),
+    (
+        |options| options.allow_private_health_checks,
+        "allow_private_health_checks: loopback health checks allowed",
+    ),
+    (
+        |options| options.allow_private_upstreams,
+        "allow_private_upstreams: runtime SSRF protection disabled for upstream connections",
+    ),
+    (
+        |options| options.allow_public_admin,
+        "allow_public_admin: admin may bind non-loopback addresses",
+    ),
+    (
+        |options| options.allow_tls_no_verify,
+        "allow_tls_no_verify: upstream TLS certificate verification disabled",
+    ),
+    (
+        |options| options.allow_tls_without_sni,
+        "allow_tls_without_sni: TLS hostname verification weakened",
+    ),
+    (
+        |options| options.csrf_log_only,
+        "csrf_log_only: CSRF violations logged, not rejected",
+    ),
+    (
+        |options| options.skip_pipeline_validation,
+        "skip_pipeline_validation: pipeline errors demoted to warnings",
+    ),
+];
 
 // -----------------------------------------------------------------------------
 // Insecure Options Warnings
 // -----------------------------------------------------------------------------
 
 /// Emit startup warnings for every active insecure option.
-#[expect(clippy::too_many_lines, reason = "one line per insecure flag")]
 pub(crate) fn warn_insecure_options(config: &Config) {
     let opts = &config.insecure_options;
-    insecure_warn(
-        opts.allow_unbounded_body,
-        "allow_unbounded_body: body size ceiling relaxed",
-    );
-    insecure_warn(
-        opts.allow_open_security_filters,
-        "allow_open_security_filters: open failure_mode allowed",
-    );
-    insecure_warn(
-        opts.allow_private_endpoints,
-        "allow_private_endpoints: SSRF-sensitive endpoint addresses allowed",
-    );
-    insecure_warn(
-        opts.allow_private_health_checks,
-        "allow_private_health_checks: loopback health checks allowed",
-    );
-    insecure_warn(
-        opts.allow_private_upstreams,
-        "allow_private_upstreams: runtime SSRF protection disabled for upstream connections",
-    );
-    insecure_warn(
-        opts.allow_public_admin,
-        "allow_public_admin: admin may bind non-loopback addresses",
-    );
-    insecure_warn(
-        opts.allow_tls_no_verify,
-        "allow_tls_no_verify: upstream TLS certificate verification disabled",
-    );
-    insecure_warn(
-        opts.allow_tls_without_sni,
-        "allow_tls_without_sni: TLS hostname verification weakened",
-    );
-    insecure_warn(
-        opts.csrf_log_only,
-        "csrf_log_only: CSRF violations logged, not rejected",
-    );
-    insecure_warn(
-        opts.skip_pipeline_validation,
-        "skip_pipeline_validation: pipeline errors demoted to warnings",
-    );
+    for &(is_active, message) in INSECURE_WARNINGS {
+        insecure_warn(is_active(opts), message);
+    }
     warn_pipeline_check_skips(&opts.skip_pipeline_checks);
 }
 
