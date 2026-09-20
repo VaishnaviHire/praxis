@@ -125,8 +125,6 @@ fn parse_workload(name: &str, args: &Args) -> Workload {
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
-#[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
 
