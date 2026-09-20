@@ -69,29 +69,15 @@ mod imp {
     }
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
 mod tests {
     use super::*;
-
-    /// Verify the public function and the generic fallback agree.
-    fn assert_both(haystack: &[u8], expected: Option<usize>) {
-        assert_eq!(
-            find_json_string_delim(haystack),
-            expected,
-            "public fn mismatch for {haystack:?}"
-        );
-        assert_eq!(
-            generic::find(haystack),
-            expected,
-            "generic fallback mismatch for {haystack:?}"
-        );
-    }
 
     #[test]
     fn empty_slice() {
@@ -216,9 +202,6 @@ mod tests {
         assert_both(b"ab\"\\cd", Some(2));
     }
 
-    /// Scan sub-slices whose base pointer sits at every offset `0..=17` into
-    /// one heap buffer, so the 16-byte SIMD loads run at every misalignment
-    /// relative to the vector width. Exercises the unaligned-load contract.
     #[test]
     fn unaligned_base_pointers() {
         let mut buf = [b'a'; 200];
@@ -237,9 +220,6 @@ mod tests {
         }
     }
 
-    /// Place every byte value in a lane covered by the SIMD path and compare
-    /// against the scalar definition, pinning the vector classification for
-    /// all 256 inputs.
     #[test]
     fn every_byte_value_in_simd_lane() {
         for byte in 0..=u8::MAX {
@@ -248,5 +228,23 @@ mod tests {
             let expected = (byte == b'"' || byte == b'\\' || byte < 0x20).then_some(7);
             assert_both(&buf, expected);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Test Utilities
+    // -------------------------------------------------------------------------
+
+    /// Test utility: assert the public fn and generic fallback agree.
+    fn assert_both(haystack: &[u8], expected: Option<usize>) {
+        assert_eq!(
+            find_json_string_delim(haystack),
+            expected,
+            "public fn mismatch for {haystack:?}"
+        );
+        assert_eq!(
+            generic::find(haystack),
+            expected,
+            "generic fallback mismatch for {haystack:?}"
+        );
     }
 }
