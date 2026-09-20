@@ -62,48 +62,15 @@ use tokio::sync::watch;
 /// [`build_server_config`]: praxis_tls::setup::build_server_config
 /// [`ReloadableCertResolver`]: praxis_tls::reload::ReloadableCertResolver
 /// [`CertWatcher`]: praxis_tls::watcher::CertWatcher
-#[expect(clippy::too_many_lines, reason = "hot-reload vs static TLS branching")]
 pub(crate) fn build_tls_settings(
     tls: &ListenerTls,
     address: &str,
     context_label: &str,
     advertise_http_alpn: bool,
 ) -> Result<(TlsSettings, Option<watch::Sender<bool>>), ProxyError> {
-    macro_rules! tls_err {
-        ($e:expr) => {{
-            let err = $e;
-            ProxyError::Config(format!("TLS for {address}: {err}"))
-        }};
-    }
-
     #[cfg(feature = "config-reload")]
     if tls.is_hot_reload() {
-        tracing::debug!(address, context_label, "building TLS ServerConfig with hot-reload");
-        let result = praxis_tls::setup::build_reloadable_server_config(tls, advertise_http_alpn)
-            .map_err(|e| ProxyError::Config(format!("TLS hot-reload for {address}: {e}")))?;
-
-        let pair =
-            tls.certificates.first().cloned().ok_or_else(|| {
-                ProxyError::Config(format!("TLS hot-reload for {address}: no certificate configured"))
-            })?;
-
-        let verifier_reload = result.verifier_handle.and_then(|handle| {
-            tls.client_ca
-                .as_ref()
-                .map(|ca_cfg| praxis_tls::watcher::ClientVerifierReload {
-                    ca_path: ca_cfg.ca_path.clone(),
-                    crl_paths: ca_cfg.crl_paths.clone(),
-                    mode: tls.client_cert_mode,
-                    trusted_spiffe_ids: tls.trusted_spiffe_ids.clone(),
-                    swap_handle: handle,
-                })
-        });
-
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        praxis_tls::watcher::CertWatcher::spawn(result.cert_handle, pair, verifier_reload, shutdown_rx);
-
-        let settings = TlsSettings::with_server_config(result.config).map_err(|e| tls_err!(e))?;
-        return Ok((settings, Some(shutdown_tx)));
+        return build_reloadable_tls_settings(tls, address, context_label, advertise_http_alpn);
     }
 
     // Built without the `config-reload` feature: honor the static cert but warn
@@ -119,9 +86,53 @@ pub(crate) fn build_tls_settings(
     }
 
     tracing::debug!(address, context_label, "building TLS ServerConfig");
-    let server_config = praxis_tls::setup::build_server_config(tls, advertise_http_alpn).map_err(|e| tls_err!(e))?;
-    let settings = TlsSettings::with_server_config(server_config).map_err(|e| tls_err!(e))?;
+    let server_config = praxis_tls::setup::build_server_config(tls, advertise_http_alpn)
+        .map_err(|e| ProxyError::Config(format!("TLS for {address}: {e}")))?;
+    let settings = TlsSettings::with_server_config(server_config)
+        .map_err(|e| ProxyError::Config(format!("TLS for {address}: {e}")))?;
     Ok((settings, None))
+}
+
+/// Build reloadable [`TlsSettings`] and spawn a [`CertWatcher`] to swap
+/// certificates atomically as they change on disk.
+///
+/// [`TlsSettings`]: pingora_core::listeners::tls::TlsSettings
+/// [`CertWatcher`]: praxis_tls::watcher::CertWatcher
+#[cfg(feature = "config-reload")]
+fn build_reloadable_tls_settings(
+    tls: &ListenerTls,
+    address: &str,
+    context_label: &str,
+    advertise_http_alpn: bool,
+) -> Result<(TlsSettings, Option<watch::Sender<bool>>), ProxyError> {
+    tracing::debug!(address, context_label, "building TLS ServerConfig with hot-reload");
+    let result = praxis_tls::setup::build_reloadable_server_config(tls, advertise_http_alpn)
+        .map_err(|e| ProxyError::Config(format!("TLS hot-reload for {address}: {e}")))?;
+
+    let pair = tls
+        .certificates
+        .first()
+        .cloned()
+        .ok_or_else(|| ProxyError::Config(format!("TLS hot-reload for {address}: no certificate configured")))?;
+
+    let verifier_reload = result.verifier_handle.and_then(|handle| {
+        tls.client_ca
+            .as_ref()
+            .map(|ca_cfg| praxis_tls::watcher::ClientVerifierReload {
+                ca_path: ca_cfg.ca_path.clone(),
+                crl_paths: ca_cfg.crl_paths.clone(),
+                mode: tls.client_cert_mode,
+                trusted_spiffe_ids: tls.trusted_spiffe_ids.clone(),
+                swap_handle: handle,
+            })
+    });
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    praxis_tls::watcher::CertWatcher::spawn(result.cert_handle, pair, verifier_reload, shutdown_rx);
+
+    let settings = TlsSettings::with_server_config(result.config)
+        .map_err(|e| ProxyError::Config(format!("TLS for {address}: {e}")))?;
+    Ok((settings, Some(shutdown_tx)))
 }
 
 // -----------------------------------------------------------------------------
@@ -133,11 +144,8 @@ pub(crate) fn build_tls_settings(
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::assertions_on_result_states,
     clippy::significant_drop_tightening,
-    clippy::must_use_candidate,
     clippy::semicolon_if_nothing_returned,
-    clippy::must_use_unit,
     clippy::let_underscore_must_use,
     clippy::too_many_lines,
     reason = "tests"
@@ -194,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn static_config_single_cert() {
+    fn static_config_single_cert() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, _ca, cert, key) = gen_test_certs();
 
@@ -209,22 +217,22 @@ mod tests {
             client_ca: None,
             client_cert_mode: ClientCertMode::None,
             trusted_spiffe_ids: vec![],
-            hot_reload: Some(false), // Explicitly disabled
+            hot_reload: Some(false),
             min_version: None,
         };
 
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "TEST", false);
-        assert!(result.is_ok(), "should build static config");
+        let (settings, shutdown_tx) = build_tls_settings(&tls, "127.0.0.1:8443", "TEST", false)?;
+        assert!(
+            shutdown_tx.is_none(),
+            "static config should not return a cert-watcher shutdown sender"
+        );
 
-        let (settings, shutdown_tx) = result.unwrap();
-        assert!(shutdown_tx.is_none(), "static config should not return shutdown sender");
-
-        // Verify settings are valid (non-null)
         drop(settings);
+        Ok(())
     }
 
     #[test]
-    fn static_config_with_alpn() {
+    fn static_config_with_alpn() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, _ca, cert, key) = gen_test_certs();
 
@@ -243,19 +251,19 @@ mod tests {
             min_version: None,
         };
 
-        // With HTTP ALPN
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true);
-        assert!(result.is_ok(), "should build with HTTP ALPN: ");
-        let (_, shutdown_tx) = result.unwrap();
-        assert!(shutdown_tx.is_none());
+        let (_settings, shutdown_tx) = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true)?;
+        assert!(
+            shutdown_tx.is_none(),
+            "static config with HTTP ALPN should not return a cert-watcher shutdown sender"
+        );
+        Ok(())
     }
 
     #[test]
-    fn static_config_multi_cert_disables_hot_reload() {
+    fn static_config_multi_cert_disables_hot_reload() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, _ca, cert, key) = gen_test_certs();
 
-        // Multi-cert config (>1 certificate)
         let tls = ListenerTls {
             certificates: vec![
                 CertKeyPair {
@@ -275,22 +283,22 @@ mod tests {
             client_ca: None,
             client_cert_mode: ClientCertMode::None,
             trusted_spiffe_ids: vec![],
-            hot_reload: None, // Default, but multi-cert disables it
+            hot_reload: None,
             min_version: None,
         };
 
-        // Multi-cert configs return is_hot_reload() == false
-        assert!(!tls.is_hot_reload(), "multi-cert should disable hot-reload");
+        assert!(!tls.is_hot_reload(), "a multi-cert config must disable hot-reload");
 
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true);
-        assert!(result.is_ok(), "should build multi-cert config: ");
-
-        let (_, shutdown_tx) = result.unwrap();
-        assert!(shutdown_tx.is_none(), "multi-cert should use static path");
+        let (_settings, shutdown_tx) = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true)?;
+        assert!(
+            shutdown_tx.is_none(),
+            "a multi-cert config should use the static path and not return a shutdown sender"
+        );
+        Ok(())
     }
 
     #[test]
-    fn static_config_with_client_ca() {
+    fn static_config_with_client_ca() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, ca, cert, key) = gen_test_certs();
 
@@ -312,11 +320,12 @@ mod tests {
             min_version: None,
         };
 
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "mTLS", false);
-        assert!(result.is_ok(), "should build with client CA: ");
-
-        let (_, shutdown_tx) = result.unwrap();
-        assert!(shutdown_tx.is_none());
+        let (_settings, shutdown_tx) = build_tls_settings(&tls, "127.0.0.1:8443", "mTLS", false)?;
+        assert!(
+            shutdown_tx.is_none(),
+            "static mTLS config should not return a cert-watcher shutdown sender"
+        );
+        Ok(())
     }
 
     #[test]
@@ -338,18 +347,18 @@ mod tests {
             min_version: None,
         };
 
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "TEST", false);
-        assert!(result.is_err(), "should fail with invalid cert path");
-
-        if let Err(err) = result {
-            let err_msg = err.to_string();
-            assert!(err_msg.contains("127.0.0.1:8443"), "error should include address");
-        }
+        assert!(
+            matches!(
+                build_tls_settings(&tls, "127.0.0.1:8443", "TEST", false),
+                Err(ProxyError::Config(msg)) if msg.contains("127.0.0.1:8443")
+            ),
+            "an invalid cert path should fail with a config error naming the listener address 127.0.0.1:8443"
+        );
     }
 
     #[test]
     #[cfg(not(feature = "config-reload"))]
-    fn hot_reload_without_feature_warns_and_uses_static() {
+    fn hot_reload_without_feature_warns_and_uses_static() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, _ca, cert, key) = gen_test_certs();
 
@@ -364,29 +373,26 @@ mod tests {
             client_ca: None,
             client_cert_mode: ClientCertMode::None,
             trusted_spiffe_ids: vec![],
-            hot_reload: None, // Default (treated as true for single cert)
+            hot_reload: None,
             min_version: None,
         };
 
         assert!(
             tls.is_hot_reload(),
-            "single cert with hot_reload=None should be hot-reload"
+            "a single cert with hot_reload=None should default to hot-reload"
         );
 
-        // Without config-reload feature, this should warn and use static config
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true);
-        assert!(result.is_ok(), "should succeed with static fallback: ");
-
-        let (_, shutdown_tx) = result.unwrap();
+        let (_settings, shutdown_tx) = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true)?;
         assert!(
             shutdown_tx.is_none(),
-            "without config-reload feature, should not return watcher"
+            "without the config-reload feature the builder should fall back to a static config and not return a watcher"
         );
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "config-reload")]
-    fn hot_reload_with_feature_spawns_watcher() {
+    fn hot_reload_with_feature_spawns_watcher() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, _ca, cert, key) = gen_test_certs();
 
@@ -401,30 +407,27 @@ mod tests {
             client_ca: None,
             client_cert_mode: ClientCertMode::None,
             trusted_spiffe_ids: vec![],
-            hot_reload: None, // Default enables hot-reload
+            hot_reload: None,
             min_version: None,
         };
 
-        assert!(tls.is_hot_reload(), "single cert should enable hot-reload by default");
+        assert!(tls.is_hot_reload(), "a single cert should enable hot-reload by default");
 
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true);
-        assert!(result.is_ok(), "should build hot-reload config: ");
-
-        let (_, shutdown_tx) = result.unwrap();
+        let (_settings, shutdown_tx) = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true)?;
         assert!(
             shutdown_tx.is_some(),
-            "with config-reload feature, should return shutdown sender"
+            "with the config-reload feature the builder should return a cert-watcher shutdown sender"
         );
 
-        // Send shutdown signal to cleanup watcher
         if let Some(tx) = shutdown_tx {
             let _ = tx.send(true);
         }
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "config-reload")]
-    fn hot_reload_with_client_ca() {
+    fn hot_reload_with_client_ca() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, ca, cert, key) = gen_test_certs();
 
@@ -446,21 +449,21 @@ mod tests {
             min_version: None,
         };
 
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "mTLS", false);
-        assert!(result.is_ok(), "should build hot-reload with client CA: ");
+        let (_settings, shutdown_tx) = build_tls_settings(&tls, "127.0.0.1:8443", "mTLS", false)?;
+        assert!(
+            shutdown_tx.is_some(),
+            "hot-reload with a client CA should spawn a watcher and return a shutdown sender"
+        );
 
-        let (_, shutdown_tx) = result.unwrap();
-        assert!(shutdown_tx.is_some(), "should spawn watcher for client CA");
-
-        // Cleanup
         if let Some(tx) = shutdown_tx {
             let _ = tx.send(true);
         }
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "config-reload")]
-    fn hot_reload_without_client_ca() {
+    fn hot_reload_without_client_ca() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, _ca, cert, key) = gen_test_certs();
 
@@ -472,28 +475,27 @@ mod tests {
                 server_names: vec![],
             }],
             cipher_suites: None,
-            client_ca: None, // No client CA
+            client_ca: None,
             client_cert_mode: ClientCertMode::None,
             trusted_spiffe_ids: vec![],
             hot_reload: None,
             min_version: None,
         };
 
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true);
-        assert!(result.is_ok(), "should build hot-reload without client CA: ");
+        let (_settings, shutdown_tx) = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true)?;
+        assert!(
+            shutdown_tx.is_some(),
+            "hot-reload without a client CA should still spawn a watcher and return a shutdown sender"
+        );
 
-        let (_, shutdown_tx) = result.unwrap();
-        assert!(shutdown_tx.is_some());
-
-        // Cleanup
         if let Some(tx) = shutdown_tx {
             let _ = tx.send(true);
         }
+        Ok(())
     }
 
     #[test]
-    fn context_label_used_in_logging() {
-        // This test verifies that different context labels can be passed
+    fn context_label_used_in_logging() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, _ca, cert, key) = gen_test_certs();
 
@@ -512,17 +514,10 @@ mod tests {
             min_version: None,
         };
 
-        // HTTP context
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true);
-        assert!(result.is_ok());
-
-        // TCP context
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "TCP", false);
-        assert!(result.is_ok());
-
-        // Custom context
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "CUSTOM", false);
-        assert!(result.is_ok());
+        build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true)?;
+        build_tls_settings(&tls, "127.0.0.1:8443", "TCP", false)?;
+        build_tls_settings(&tls, "127.0.0.1:8443", "CUSTOM", false)?;
+        Ok(())
     }
 
     #[test]
@@ -544,22 +539,25 @@ mod tests {
             min_version: None,
         };
 
-        // Test with different addresses
-        let result = build_tls_settings(&tls, "192.168.1.1:443", "HTTP", false);
-        assert!(result.is_err());
-        if let Err(err) = result {
-            assert!(err.to_string().contains("192.168.1.1:443"));
-        }
+        assert!(
+            matches!(
+                build_tls_settings(&tls, "192.168.1.1:443", "HTTP", false),
+                Err(ProxyError::Config(msg)) if msg.contains("192.168.1.1:443")
+            ),
+            "the config error should name the failing listener address 192.168.1.1:443"
+        );
 
-        let result = build_tls_settings(&tls, "[::1]:8443", "TCP", false);
-        assert!(result.is_err());
-        if let Err(err) = result {
-            assert!(err.to_string().contains("[::1]:8443"));
-        }
+        assert!(
+            matches!(
+                build_tls_settings(&tls, "[::1]:8443", "TCP", false),
+                Err(ProxyError::Config(msg)) if msg.contains("[::1]:8443")
+            ),
+            "the config error should name the failing IPv6 listener address [::1]:8443"
+        );
     }
 
     #[test]
-    fn alpn_variation_coverage() {
+    fn alpn_variation_coverage() -> Result<(), ProxyError> {
         ensure_crypto_provider();
         let (_temp, _ca, cert, key) = gen_test_certs();
 
@@ -578,12 +576,8 @@ mod tests {
             min_version: None,
         };
 
-        // advertise_http_alpn = true
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true);
-        assert!(result.is_ok(), "should succeed with ALPN enabled");
-
-        // advertise_http_alpn = false
-        let result = build_tls_settings(&tls, "127.0.0.1:8443", "TCP", false);
-        assert!(result.is_ok(), "should succeed with ALPN disabled");
+        build_tls_settings(&tls, "127.0.0.1:8443", "HTTP", true)?;
+        build_tls_settings(&tls, "127.0.0.1:8443", "TCP", false)?;
+        Ok(())
     }
 }
