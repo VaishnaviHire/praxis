@@ -531,14 +531,6 @@ mod tests {
 
     use super::*;
 
-    struct AlwaysFailsToSerialize;
-
-    impl serde::Serialize for AlwaysFailsToSerialize {
-        fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
-            Err(serde::ser::Error::custom("intentional serialization failure"))
-        }
-    }
-
     #[test]
     fn config_value_changed_treats_serialization_failure_as_changed() {
         assert!(
@@ -551,46 +543,6 @@ mod tests {
     fn config_value_changed_detects_equal_and_differing_values() {
         assert!(!config_value_changed(&1_u32, &1_u32), "equal values are unchanged");
         assert!(config_value_changed(&1_u32, &2_u32), "differing values are changed");
-    }
-
-    fn config_with_subrequest_max(max: Option<usize>) -> Config {
-        let runtime = max.map_or_else(String::new, |n| format!("runtime:\n  subrequest_max_connections: {n}"));
-        Config::from_yaml(&format!(
-            "listeners:\n  - name: web\n    address: \"127.0.0.1:8080\"\n    \
-             filter_chains: [main]\n{runtime}\nfilter_chains:\n  - name: main\n    \
-             filters:\n      - filter: static_response\n        status: 200\n"
-        ))
-        .unwrap()
-    }
-
-    fn capture_warnings<F: FnOnce()>(run: F) -> Vec<String> {
-        let messages = Arc::new(Mutex::new(Vec::<String>::new()));
-        let capture = WarningCapture(Arc::clone(&messages));
-        let subscriber = tracing_subscriber::registry().with(capture);
-        tracing::subscriber::with_default(subscriber, run);
-        std::mem::take(&mut *messages.lock().unwrap())
-    }
-
-    struct WarningCapture(Arc<Mutex<Vec<String>>>);
-
-    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for WarningCapture {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-            if *event.metadata().level() == tracing::Level::WARN {
-                let mut visitor = MessageVisitor(String::new());
-                event.record(&mut visitor);
-                self.0.lock().unwrap().push(visitor.0);
-            }
-        }
-    }
-
-    struct MessageVisitor(String);
-
-    impl tracing::field::Visit for MessageVisitor {
-        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-            if field.name() == "message" {
-                self.0 = format!("{value:?}");
-            }
-        }
     }
 
     #[test]
@@ -620,16 +572,6 @@ mod tests {
         assert!(warnings.is_empty(), "both-default should produce no warnings");
     }
 
-    fn config_with_tls_cert(cert: &str) -> Config {
-        Config::from_yaml(&format!(
-            "listeners:\n  - name: web\n    address: \"127.0.0.1:8443\"\n    \
-             filter_chains: [main]\n    tls:\n      certificates:\n        - cert_path: \"{cert}\"\n          \
-             key_path: \"certs/key.pem\"\nfilter_chains:\n  - name: main\n    \
-             filters:\n      - filter: static_response\n        status: 200\n"
-        ))
-        .unwrap()
-    }
-
     #[test]
     fn tls_in_block_change_warns() {
         let old = config_with_tls_cert("certs/old.pem");
@@ -648,15 +590,6 @@ mod tests {
         let config = config_with_tls_cert("certs/same.pem");
         let warnings = capture_warnings(|| detect_tls_toggles(&config, &config));
         assert!(warnings.is_empty(), "identical TLS blocks should produce no warnings");
-    }
-
-    fn config_with_runtime(runtime: &str) -> Config {
-        Config::from_yaml(&format!(
-            "listeners:\n  - name: web\n    address: \"127.0.0.1:8080\"\n    \
-             filter_chains: [main]\n{runtime}filter_chains:\n  - name: main\n    \
-             filters:\n      - filter: static_response\n        status: 200\n"
-        ))
-        .unwrap()
     }
 
     #[test]
@@ -713,21 +646,6 @@ mod tests {
     // -------------------------------------------------------------------------
     // Circuit Breaker Reload Detection
     // -------------------------------------------------------------------------
-
-    fn config_with_circuit_breaker(failures: Option<u32>) -> Config {
-        let cb = failures.map_or_else(String::new, |n| {
-            format!(
-                "runtime:\n  subrequest_circuit_breaker:\n    \
-                 consecutive_failures: {n}\n    recovery_window_secs: 30\n"
-            )
-        });
-        Config::from_yaml(&format!(
-            "listeners:\n  - name: web\n    address: \"127.0.0.1:8080\"\n    \
-             filter_chains: [main]\n{cb}filter_chains:\n  - name: main\n    \
-             filters:\n      - filter: static_response\n        status: 200\n"
-        ))
-        .unwrap()
-    }
 
     #[test]
     fn circuit_breaker_added_warns() {
@@ -810,5 +728,91 @@ mod tests {
             warnings.is_empty(),
             "a mere reorder of disabled dimensions must not warn"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Test Utilities
+    // -------------------------------------------------------------------------
+
+    struct AlwaysFailsToSerialize;
+
+    impl serde::Serialize for AlwaysFailsToSerialize {
+        fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("intentional serialization failure"))
+        }
+    }
+
+    fn config_with_subrequest_max(max: Option<usize>) -> Config {
+        let runtime = max.map_or_else(String::new, |n| format!("runtime:\n  subrequest_max_connections: {n}"));
+        Config::from_yaml(&format!(
+            "listeners:\n  - name: web\n    address: \"127.0.0.1:8080\"\n    \
+             filter_chains: [main]\n{runtime}\nfilter_chains:\n  - name: main\n    \
+             filters:\n      - filter: static_response\n        status: 200\n"
+        ))
+        .unwrap()
+    }
+
+    fn capture_warnings<F: FnOnce()>(run: F) -> Vec<String> {
+        let messages = Arc::new(Mutex::new(Vec::<String>::new()));
+        let capture = WarningCapture(Arc::clone(&messages));
+        let subscriber = tracing_subscriber::registry().with(capture);
+        tracing::subscriber::with_default(subscriber, run);
+        std::mem::take(&mut *messages.lock().unwrap())
+    }
+
+    struct WarningCapture(Arc<Mutex<Vec<String>>>);
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for WarningCapture {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                let mut visitor = MessageVisitor(String::new());
+                event.record(&mut visitor);
+                self.0.lock().unwrap().push(visitor.0);
+            }
+        }
+    }
+
+    struct MessageVisitor(String);
+
+    impl tracing::field::Visit for MessageVisitor {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0 = format!("{value:?}");
+            }
+        }
+    }
+
+    fn config_with_tls_cert(cert: &str) -> Config {
+        Config::from_yaml(&format!(
+            "listeners:\n  - name: web\n    address: \"127.0.0.1:8443\"\n    \
+             filter_chains: [main]\n    tls:\n      certificates:\n        - cert_path: \"{cert}\"\n          \
+             key_path: \"certs/key.pem\"\nfilter_chains:\n  - name: main\n    \
+             filters:\n      - filter: static_response\n        status: 200\n"
+        ))
+        .unwrap()
+    }
+
+    fn config_with_runtime(runtime: &str) -> Config {
+        Config::from_yaml(&format!(
+            "listeners:\n  - name: web\n    address: \"127.0.0.1:8080\"\n    \
+             filter_chains: [main]\n{runtime}filter_chains:\n  - name: main\n    \
+             filters:\n      - filter: static_response\n        status: 200\n"
+        ))
+        .unwrap()
+    }
+
+    fn config_with_circuit_breaker(failures: Option<u32>) -> Config {
+        let cb = failures.map_or_else(String::new, |n| {
+            format!(
+                "runtime:\n  subrequest_circuit_breaker:\n    \
+                 consecutive_failures: {n}\n    recovery_window_secs: 30\n"
+            )
+        });
+        Config::from_yaml(&format!(
+            "listeners:\n  - name: web\n    address: \"127.0.0.1:8080\"\n    \
+             filter_chains: [main]\n{cb}filter_chains:\n  - name: main\n    \
+             filters:\n      - filter: static_response\n        status: 200\n"
+        ))
+        .unwrap()
     }
 }
