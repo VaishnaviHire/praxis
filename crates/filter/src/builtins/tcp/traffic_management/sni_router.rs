@@ -101,7 +101,7 @@ impl SniRouterFilter {
 
     /// Resolve a hostname to an upstream address.
     fn resolve(&self, hostname: &str) -> Option<&str> {
-        let lower = hostname.trim_end_matches('.').to_lowercase();
+        let lower = hostname.trim_end_matches('.').to_ascii_lowercase();
 
         if let Some(upstream) = self.exact.get(&lower) {
             return Some(upstream.as_str());
@@ -234,7 +234,7 @@ fn validate_route_entry(entry: &SniRouteEntry, tables: &mut RouteTables) -> Resu
         let name = raw_name.trim_end_matches('.');
 
         if let Some(suffix) = name.strip_prefix('*') {
-            let lower = suffix.to_lowercase();
+            let lower = suffix.to_ascii_lowercase();
             if !tables.seen_wildcards.insert(lower.clone()) {
                 return Err(format!("sni_router: duplicate wildcard pattern '*{lower}'").into());
             }
@@ -243,7 +243,7 @@ fn validate_route_entry(entry: &SniRouteEntry, tables: &mut RouteTables) -> Resu
                 upstream: entry.upstream.clone(),
             });
         } else {
-            let lower = name.to_lowercase();
+            let lower = name.to_ascii_lowercase();
             if tables.exact.contains_key(&lower) {
                 return Err(format!("sni_router: duplicate server name '{lower}'").into());
             }
@@ -425,6 +425,27 @@ mod tests {
             ctx.upstream_addr.as_deref(),
             Some("10.0.0.1:443"),
             "SNI input should be lowercased for comparison"
+        );
+    }
+
+    #[tokio::test]
+    async fn unicode_lookalike_sni_does_not_match_ascii_route() {
+        // U+212A KELVIN SIGN folds to ASCII 'k' under Unicode lowercasing but is
+        // left untouched by ASCII folding. SNI case-insensitivity is ASCII-only
+        // (RFC 4343), so a Kelvin-sign SNI must NOT match a route configured for
+        // 'k'. Unicode lowercasing (the pre-fix behavior) would spuriously match.
+        let filter = make_filter(&[("k.example.com", "10.0.0.1:443")], &[], None);
+        let mut ctx = make_ctx(Some("\u{212A}.example.com"));
+
+        let action = filter.on_connect(&mut ctx).await.expect("on_connect should succeed");
+        assert!(
+            matches!(action, FilterAction::Reject(r) if r.status == 421),
+            "a Unicode-lookalike SNI must not spuriously match an ASCII route"
+        );
+        assert_eq!(
+            ctx.upstream_addr.as_deref(),
+            None,
+            "no upstream should be selected for a non-matching Unicode-lookalike SNI"
         );
     }
 
@@ -682,14 +703,14 @@ default_upstream: "10.0.0.1:443"
         let mut wildcards = Vec::new();
 
         for (name, upstream) in exact_entries {
-            exact.insert(name.to_lowercase(), (*upstream).to_owned());
+            exact.insert(name.to_ascii_lowercase(), (*upstream).to_owned());
         }
 
         for (pattern, upstream) in wildcard_entries {
             let suffix = pattern
                 .strip_prefix('*')
                 .expect("wildcard should start with *")
-                .to_lowercase();
+                .to_ascii_lowercase();
             wildcards.push(WildcardRoute {
                 suffix,
                 upstream: (*upstream).to_owned(),
