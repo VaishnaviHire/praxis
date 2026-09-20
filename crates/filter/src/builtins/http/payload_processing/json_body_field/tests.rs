@@ -5,8 +5,8 @@
 
 use bytes::Bytes;
 
-use super::{JsonBodyFieldFilter, extract::contains_control_chars};
-use crate::{FilterAction, filter::HttpFilter as _};
+use super::JsonBodyFieldFilter;
+use crate::{FilterAction, builtins::http::value_safety::contains_control_chars, filter::HttpFilter as _};
 
 // -----------------------------------------------------------------------------
 // Tests

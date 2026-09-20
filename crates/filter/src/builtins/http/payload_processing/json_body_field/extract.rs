@@ -21,6 +21,7 @@ use serde_json::value::RawValue;
 use tracing::{debug, trace, warn};
 
 use super::super::MAX_DYNAMIC_VALUE_LEN;
+use crate::builtins::http::value_safety::contains_control_chars;
 
 // -----------------------------------------------------------------------------
 // Field Extraction
@@ -227,12 +228,6 @@ fn is_safe_header_value(text: &str, field: &str, header: &str) -> bool {
     }
     true
 }
-
-// -----------------------------------------------------------------------------
-// Header Value Validation
-// -----------------------------------------------------------------------------
-
-pub(super) use crate::builtins::http::value_safety::contains_control_chars;
 
 // -----------------------------------------------------------------------------
 // Tests
