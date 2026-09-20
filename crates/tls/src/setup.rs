@@ -164,15 +164,11 @@ pub fn build_reloadable_server_config(
 // Shared Builder Setup
 // -----------------------------------------------------------------------------
 
-/// Build the protocol-version and cipher-suite portion of a
-/// `ServerConfig`, returning a builder before client auth is
-/// configured.
+/// Select TLS protocol versions and install the crypto provider,
+/// returning a `ServerConfig` builder positioned before client-auth
+/// configuration.
 ///
-/// Used by [`build_reloadable_server_config`] which installs its
-/// own reloadable verifier.
-///
-/// [`build_reloadable_server_config`]: crate::setup::build_reloadable_server_config
-#[cfg(feature = "config-reload")]
+/// Shared by the static and reloadable server-config paths.
 fn build_config_builder(
     tls: &ListenerTls,
 ) -> Result<rustls::ConfigBuilder<ServerConfig, rustls::WantsVerifier>, TlsError> {
@@ -195,16 +191,7 @@ fn build_config_builder(
 fn build_server_config_base(
     tls: &ListenerTls,
 ) -> Result<rustls::ConfigBuilder<ServerConfig, WantsServerCert>, TlsError> {
-    let versions = match tls.min_version {
-        Some(TlsVersion::Tls13) => vec![&version::TLS13],
-        Some(TlsVersion::Tls12) | None => vec![&version::TLS12, &version::TLS13],
-    };
-    let provider = maybe_filter_provider(default_crypto_provider(), tls.cipher_suites.as_deref())?;
-    let builder = ServerConfig::builder_with_provider(provider)
-        .with_protocol_versions(&versions)
-        .map_err(|e| TlsError::ServerConfigError {
-            detail: format!("failed to set TLS protocol versions: {e}"),
-        })?;
+    let builder = build_config_builder(tls)?;
 
     if tls.client_cert_mode == ClientCertMode::None {
         Ok(builder.with_no_client_auth())
