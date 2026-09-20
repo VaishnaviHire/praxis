@@ -404,35 +404,6 @@ mod tests {
         );
     }
 
-    /// Generate a CA PEM and an empty CRL PEM signed by that CA.
-    fn gen_ca_and_crl(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
-        let ca_key = rcgen::KeyPair::generate().expect("CA key generation");
-        let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).expect("CA params");
-        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        ca_params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, "CRL Test CA");
-        let ca_cert = ca_params.self_signed(&ca_key).expect("CA self-sign");
-        let issuer = rcgen::Issuer::from_params(&ca_params, &ca_key);
-
-        let crl = rcgen::CertificateRevocationListParams {
-            this_update: rcgen::date_time_ymd(2026, 1, 1),
-            next_update: rcgen::date_time_ymd(2036, 1, 1),
-            crl_number: rcgen::SerialNumber::from_slice(&[1]),
-            issuing_distribution_point: None,
-            revoked_certs: Vec::new(),
-            key_identifier_method: rcgen::KeyIdMethod::Sha256,
-        }
-        .signed_by(&issuer)
-        .expect("CRL signing");
-
-        let ca_path = dir.join("ca.pem");
-        let crl_path = dir.join("crl.pem");
-        std::fs::write(&ca_path, ca_cert.pem()).expect("write CA PEM");
-        std::fs::write(&crl_path, crl.pem().expect("CRL PEM encoding")).expect("write CRL PEM");
-        (ca_path, crl_path)
-    }
-
     #[test]
     fn build_client_verifier_with_valid_crl() {
         ensure_crypto_provider();
@@ -480,8 +451,6 @@ mod tests {
         );
     }
 
-    // ---- NamedPeerVerifier ----
-
     #[cfg(feature = "spiffe")]
     #[test]
     fn require_named_mode_mandates_client_auth() {
@@ -515,71 +484,6 @@ mod tests {
             verifier.client_auth_mandatory(),
             "require-named mode with an allowlist should mandate client auth"
         );
-    }
-
-    // ---- NamedPeerVerifier authorization decision ----
-
-    /// Mint a CA (written to a temp PEM) and a client leaf it signs carrying
-    /// `leaf_uris` as URI SANs with a clientAuth EKU. Returns the temp dir (kept
-    /// alive so the CA file outlives the call), the CA path, and the leaf DER.
-    #[cfg(feature = "spiffe")]
-    fn mint_client(leaf_uris: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, CertificateDer<'static>) {
-        use rcgen::{
-            BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
-            KeyUsagePurpose, SanType,
-        };
-
-        let ca_key = KeyPair::generate().expect("ca key");
-        let mut ca_params = CertificateParams::new(Vec::<String>::new()).expect("ca params");
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        ca_params.distinguished_name.push(DnType::CommonName, "Grid CA");
-        let ca_cert = ca_params.self_signed(&ca_key).expect("ca cert");
-        let issuer = Issuer::new(ca_params, ca_key);
-
-        let leaf_key = KeyPair::generate().expect("leaf key");
-        let mut leaf_params = CertificateParams::new(Vec::<String>::new()).expect("leaf params");
-        leaf_params.distinguished_name.push(DnType::CommonName, "peer");
-        for uri in leaf_uris {
-            leaf_params
-                .subject_alt_names
-                .push(SanType::URI((*uri).try_into().expect("uri san")));
-        }
-        // A conforming X.509-SVID leaf: critical keyUsage with digitalSignature and
-        // an EKU with both serverAuth and clientAuth.
-        leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        leaf_params.extended_key_usages =
-            vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
-        let leaf_der = leaf_params
-            .signed_by(&leaf_key, &issuer)
-            .expect("leaf cert")
-            .der()
-            .clone();
-
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let ca_path = dir.path().join("ca.pem");
-        std::fs::write(&ca_path, ca_cert.pem()).expect("write ca pem");
-        (dir, ca_path, leaf_der)
-    }
-
-    /// Build a `RequireNamed` verifier over `ca_path` + `allowlist` and run the
-    /// leaf through `verify_client_cert` (chain, then X509-SVID §5.2, then allowlist).
-    #[cfg(feature = "spiffe")]
-    fn named_verify(
-        ca_path: &std::path::Path,
-        allowlist: &[String],
-        leaf: &CertificateDer<'_>,
-    ) -> Result<(), rustls::Error> {
-        ensure_crypto_provider();
-        let verifier = build_client_verifier(
-            ca_path.to_str().expect("ca path utf-8"),
-            ClientCertMode::RequireNamed,
-            &[],
-            allowlist,
-        )
-        .expect("build require-named verifier");
-        verifier
-            .verify_client_cert(leaf, &[], UnixTime::now())
-            .map(|_verified| ())
     }
 
     #[cfg(feature = "spiffe")]
@@ -647,5 +551,101 @@ mod tests {
             matches!(err, rustls::Error::InvalidCertificate(_)),
             "an off-CA leaf should be a certificate error, got: {err}"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Test Utilities
+    // -------------------------------------------------------------------------
+
+    /// Generate a CA PEM and an empty CRL PEM signed by that CA.
+    fn gen_ca_and_crl(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let ca_key = rcgen::KeyPair::generate().expect("CA key generation");
+        let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).expect("CA params");
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "CRL Test CA");
+        let ca_cert = ca_params.self_signed(&ca_key).expect("CA self-sign");
+        let issuer = rcgen::Issuer::from_params(&ca_params, &ca_key);
+
+        let crl = rcgen::CertificateRevocationListParams {
+            this_update: rcgen::date_time_ymd(2026, 1, 1),
+            next_update: rcgen::date_time_ymd(2036, 1, 1),
+            crl_number: rcgen::SerialNumber::from_slice(&[1]),
+            issuing_distribution_point: None,
+            revoked_certs: Vec::new(),
+            key_identifier_method: rcgen::KeyIdMethod::Sha256,
+        }
+        .signed_by(&issuer)
+        .expect("CRL signing");
+
+        let ca_path = dir.join("ca.pem");
+        let crl_path = dir.join("crl.pem");
+        std::fs::write(&ca_path, ca_cert.pem()).expect("write CA PEM");
+        std::fs::write(&crl_path, crl.pem().expect("CRL PEM encoding")).expect("write CRL PEM");
+        (ca_path, crl_path)
+    }
+
+    /// Mint a CA (written to a temp PEM) and a client leaf it signs carrying
+    /// `leaf_uris` as URI SANs with a clientAuth EKU. Returns the temp dir (kept
+    /// alive so the CA file outlives the call), the CA path, and the leaf DER.
+    #[cfg(feature = "spiffe")]
+    fn mint_client(leaf_uris: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, CertificateDer<'static>) {
+        use rcgen::{
+            BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+            KeyUsagePurpose, SanType,
+        };
+
+        let ca_key = KeyPair::generate().expect("ca key");
+        let mut ca_params = CertificateParams::new(Vec::<String>::new()).expect("ca params");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.distinguished_name.push(DnType::CommonName, "Grid CA");
+        let ca_cert = ca_params.self_signed(&ca_key).expect("ca cert");
+        let issuer = Issuer::new(ca_params, ca_key);
+
+        let leaf_key = KeyPair::generate().expect("leaf key");
+        let mut leaf_params = CertificateParams::new(Vec::<String>::new()).expect("leaf params");
+        leaf_params.distinguished_name.push(DnType::CommonName, "peer");
+        for uri in leaf_uris {
+            leaf_params
+                .subject_alt_names
+                .push(SanType::URI((*uri).try_into().expect("uri san")));
+        }
+        // A conforming X.509-SVID leaf: critical keyUsage with digitalSignature and
+        // an EKU with both serverAuth and clientAuth.
+        leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        leaf_params.extended_key_usages =
+            vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
+        let leaf_der = leaf_params
+            .signed_by(&leaf_key, &issuer)
+            .expect("leaf cert")
+            .der()
+            .clone();
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let ca_path = dir.path().join("ca.pem");
+        std::fs::write(&ca_path, ca_cert.pem()).expect("write ca pem");
+        (dir, ca_path, leaf_der)
+    }
+
+    /// Build a `RequireNamed` verifier over `ca_path` + `allowlist` and run the
+    /// leaf through `verify_client_cert` (chain, then X509-SVID §5.2, then allowlist).
+    #[cfg(feature = "spiffe")]
+    fn named_verify(
+        ca_path: &std::path::Path,
+        allowlist: &[String],
+        leaf: &CertificateDer<'_>,
+    ) -> Result<(), rustls::Error> {
+        ensure_crypto_provider();
+        let verifier = build_client_verifier(
+            ca_path.to_str().expect("ca path utf-8"),
+            ClientCertMode::RequireNamed,
+            &[],
+            allowlist,
+        )
+        .expect("build require-named verifier");
+        verifier
+            .verify_client_cert(leaf, &[], UnixTime::now())
+            .map(|_verified| ())
     }
 }
