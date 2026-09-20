@@ -120,7 +120,7 @@ impl RequestIdFilter {
             Err(value_err) => {
                 debug!(
                     header = %self.header_name,
-                    value_err = ?Some(value_err),
+                    value_err = ?value_err,
                     "failed to set request ID on response header"
                 );
                 None
@@ -137,7 +137,7 @@ impl RequestIdFilter {
             Err(name_err) => {
                 debug!(
                     header = %self.header_name,
-                    name_err = ?Some(name_err),
+                    name_err = ?name_err,
                     "failed to set request ID on response header"
                 );
             },
