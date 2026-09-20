@@ -140,11 +140,9 @@ impl Endpoint {
     /// let simple: Endpoint = "10.0.0.1:8080".into();
     /// assert_eq!(simple.address(), "10.0.0.1:8080");
     /// ```
-    #[expect(clippy::match_same_arms, reason = "arms differ in pattern, not body")]
     pub fn address(&self) -> &str {
         match self {
-            Self::Simple(address) => address,
-            Self::Weighted { address, .. } => address,
+            Self::Simple(address) | Self::Weighted { address, .. } => address,
         }
     }
 
