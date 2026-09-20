@@ -161,23 +161,10 @@ impl PingoraTcpProxy {
     /// Run bidirectional forwarding, returning the close reason.
     ///
     /// The reason lets the `connection_close` log distinguish a force-close
-    /// from a genuine completion.
+    /// from a genuine completion. The copy is optionally wrapped in a
+    /// max-duration timeout.
     #[expect(clippy::too_many_arguments, reason = "per-connection forwarding state")]
     async fn forward(
-        &self,
-        session: &mut Stream,
-        upstream: &mut TcpStream,
-        shutdown_rx: &mut watch::Receiver<bool>,
-        upstream_addr: &str,
-        counters: &ByteCounters,
-    ) -> TcpCloseReason {
-        self.forward_inner(session, upstream, shutdown_rx, upstream_addr, counters)
-            .await
-    }
-
-    /// Inner forwarding logic, optionally wrapped in a max-duration timeout.
-    #[expect(clippy::too_many_arguments, reason = "per-connection forwarding state")]
-    async fn forward_inner(
         &self,
         session: &mut Stream,
         upstream: &mut TcpStream,
