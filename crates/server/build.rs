@@ -98,7 +98,6 @@ fn load_metadata() -> Option<Metadata> {
 fn active_features() -> Option<ActiveFeatures> {
     let metadata = cargo_metadata::MetadataCommand::new().no_deps().exec().ok()?;
     let package = metadata.packages.iter().find(|pkg| pkg.name == "praxis-proxy")?;
-
     let feature_names_by_env: HashMap<String, String> = package
         .features
         .keys()
@@ -193,7 +192,7 @@ fn generate_registration_code(crates: &[String]) -> String {
         );
     }
 
-    code.push_str("fn register_external_filters(registry: &mut praxis_filter::FilterRegistry) {\n");
+    code.push_str("fn register_external_filters(registry: &mut FilterRegistry) {\n");
 
     for crate_name in crates {
         writeln!(code, "    {crate_name}::register_filters(registry);").expect("writing to String should not fail");

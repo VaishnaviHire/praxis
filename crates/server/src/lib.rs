@@ -34,7 +34,7 @@ mod version;
 #[cfg(feature = "config-reload")]
 pub(crate) mod watcher;
 pub use composition::{CompositionError, ExtensionContext, RegistryContext, ServerComposition, ValidatorContext};
-pub use pipelines::{build_subrequest_client, resolve_pipelines};
+pub use pipelines::{build_full_registry, build_subrequest_client, resolve_pipelines};
 pub use praxis_core::{
     config::load_config,
     logging::{TracingGuard, init_tracing},
@@ -45,27 +45,3 @@ pub use server::{
 };
 #[cfg(feature = "admin-api")]
 pub use version::process_version_info;
-
-// -----------------------------------------------------------------------------
-// External Filter Discovery
-// -----------------------------------------------------------------------------
-
-// Provides: fn register_external_filters(&mut FilterRegistry)
-include!(concat!(env!("OUT_DIR"), "/external_filters.rs"));
-
-/// Build a [`FilterRegistry`] with built-in and auto-discovered external
-/// filters.
-///
-/// External filter crates are discovered at build time via
-/// `[package.metadata.praxis-filters]` markers in their `Cargo.toml`.
-/// This is the standard registry used by the `praxis` binary; callers
-/// that need a custom registry should use [`run_server_with_registry`]
-/// instead.
-///
-/// [`FilterRegistry`]: praxis_filter::FilterRegistry
-#[must_use]
-pub fn build_full_registry() -> praxis_filter::FilterRegistry {
-    let mut registry = praxis_filter::FilterRegistry::with_builtins();
-    register_external_filters(&mut registry);
-    registry
-}

@@ -33,6 +33,31 @@ use praxis_protocol::ListenerPipelines;
 use crate::composition::{ExtensionContext, PipelineComposition, ValidatorContext};
 
 // -----------------------------------------------------------------------------
+// FilterRegistry
+// -----------------------------------------------------------------------------
+
+// Provides: fn register_external_filters(&mut FilterRegistry)
+include!(concat!(env!("OUT_DIR"), "/external_filters.rs"));
+
+/// Build a [`FilterRegistry`] with built-in and auto-discovered external
+/// filters.
+///
+/// External filter crates are discovered at build time via
+/// `[package.metadata.praxis-filters]` markers in their `Cargo.toml`.
+/// This is the standard registry used by the `praxis` binary; callers
+/// that need a custom registry should use [`run_server_with_registry`]
+/// instead.
+///
+/// [`FilterRegistry`]: praxis_filter::FilterRegistry
+/// [`run_server_with_registry`]: crate::run_server_with_registry
+#[must_use]
+pub fn build_full_registry() -> FilterRegistry {
+    let mut registry = FilterRegistry::with_builtins();
+    register_external_filters(&mut registry);
+    registry
+}
+
+// -----------------------------------------------------------------------------
 // Sub-request client construction
 // -----------------------------------------------------------------------------
 
