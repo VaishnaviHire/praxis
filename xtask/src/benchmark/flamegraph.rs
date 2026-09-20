@@ -19,6 +19,9 @@ use clap::Parser;
 /// Backend port (Fortio echo server).
 const BACKEND_PORT: u16 = 18080;
 
+/// Praxis listen port.
+const PRAXIS_PORT: u16 = 18090;
+
 /// Praxis listen address.
 const PRAXIS_ADDR: &str = "127.0.0.1:18090";
 
@@ -134,7 +137,7 @@ async fn run_profiling(args: &Args, binary: PathBuf) {
 
     let mut praxis = start_praxis(&binary, &config_path);
     let praxis_pid = praxis.id();
-    wait_for_tcp(18090).await;
+    wait_for_tcp(PRAXIS_PORT).await;
 
     println!("Warmup: 2s...");
     run_vegeta_load(args, &tmpdir, 2);
