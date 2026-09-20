@@ -28,7 +28,7 @@ pub(crate) async fn run_benchmarks(args: Args) {
 
     let bench_report = build_report(all_results, &proxy_names, &scenarios, args.threshold);
     let output_path = resolve_output_path(args.output);
-    report::write_report(&bench_report, &output_path, &args.format);
+    report::write_report(&bench_report, &output_path, args.format);
     println!("Report written to {output_path}");
 }
 

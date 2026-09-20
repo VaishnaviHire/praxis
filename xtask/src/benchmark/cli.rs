@@ -97,9 +97,9 @@ pub(crate) struct Args {
     #[arg(long)]
     pub output: Option<String>,
 
-    /// Output format: yaml or json.
-    #[arg(long, default_value = "yaml")]
-    pub format: String,
+    /// Output format.
+    #[arg(long, value_enum, default_value = "yaml")]
+    pub format: OutputFormat,
 
     /// Include raw tool reports (Vegeta/Fortio JSON) in output.
     #[arg(long, default_value_t = false)]
@@ -131,4 +131,18 @@ pub(crate) enum BenchmarkCommand {
 
     /// Profile Praxis under load and generate a CPU flamegraph.
     Flamegraph(flamegraph::Args),
+}
+
+// -----------------------------------------------------------------------------
+// OutputFormat
+// -----------------------------------------------------------------------------
+
+/// Output serialization format for benchmark reports.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub(crate) enum OutputFormat {
+    /// JSON output.
+    Json,
+
+    /// YAML output.
+    Yaml,
 }

@@ -5,6 +5,8 @@
 
 use praxis_proxy_benchmarks::report::BenchmarkReport;
 
+use super::cli::OutputFormat;
+
 // -----------------------------------------------------------------------------
 // Load
 // -----------------------------------------------------------------------------
@@ -35,11 +37,11 @@ pub(crate) fn load_report(path: &str) -> BenchmarkReport {
 // Write
 // -----------------------------------------------------------------------------
 
-/// Serialize and write the report to `path` in the given format (`yaml` or `json`).
-pub(crate) fn write_report(report: &BenchmarkReport, path: &str, format: &str) {
+/// Serialize and write the report to `path` in the given format.
+pub(crate) fn write_report(report: &BenchmarkReport, path: &str, format: OutputFormat) {
     let content = match format {
-        "json" => serde_json::to_string_pretty(report).expect("failed to serialize report to JSON"),
-        _ => serde_yaml::to_string(report).expect("failed to serialize report to YAML"),
+        OutputFormat::Json => serde_json::to_string_pretty(report).expect("failed to serialize report to JSON"),
+        OutputFormat::Yaml => serde_yaml::to_string(report).expect("failed to serialize report to YAML"),
     };
     std::fs::write(path, content).unwrap_or_else(|e| {
         eprintln!("failed to write report: {e}");
