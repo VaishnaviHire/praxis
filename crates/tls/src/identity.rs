@@ -63,8 +63,8 @@ impl TlsPeerIdentity {
 /// Convert a four-bit value to its lowercase hexadecimal character.
 fn hex_digit(nibble: u8) -> char {
     match nibble {
-        0..=9 => (b'0' + nibble) as char,
-        _ => (b'a' + nibble - 10) as char,
+        0..=9 => char::from(b'0' + nibble),
+        _ => char::from(b'a' + nibble - 10),
     }
 }
 

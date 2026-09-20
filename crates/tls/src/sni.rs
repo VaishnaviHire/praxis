@@ -200,7 +200,7 @@ fn reassemble_handshake(buf: &[u8]) -> Result<Vec<u8>, SniParseError> {
             if *header.first().ok_or(SniParseError::NeedMoreData)? != HANDSHAKE_TYPE_CLIENT_HELLO {
                 return Err(SniParseError::NotClientHello);
             }
-            let hs_len = read_u24(&header, 1)? as usize;
+            let hs_len = usize::try_from(read_u24(&header, 1)?).map_err(|_err| SniParseError::MalformedExtension)?;
             if body.len() >= hs_len {
                 body.truncate(hs_len);
                 return Ok(body);
@@ -281,7 +281,8 @@ impl SniReassembler {
                 if *self.header.first().ok_or(SniParseError::NeedMoreData)? != HANDSHAKE_TYPE_CLIENT_HELLO {
                     return Err(SniParseError::NotClientHello);
                 }
-                let hs_len = read_u24(&self.header, 1)? as usize;
+                let hs_len =
+                    usize::try_from(read_u24(&self.header, 1)?).map_err(|_err| SniParseError::MalformedExtension)?;
                 if self.body.len() >= hs_len {
                     self.body.truncate(hs_len);
                     let body = std::mem::take(&mut self.body);
@@ -314,7 +315,7 @@ fn handshake_record_fragment(buf: &[u8], pos: usize) -> Result<(&[u8], usize), S
     if *record_header.first().ok_or(SniParseError::NeedMoreData)? != CONTENT_TYPE_HANDSHAKE {
         return Err(SniParseError::NotHandshake);
     }
-    let record_len = read_u16(record_header, 3)? as usize;
+    let record_len = usize::from(read_u16(record_header, 3)?);
     let frag_start = pos + TLS_RECORD_HEADER_LEN;
     let fragment = buf
         .get(frag_start..frag_start + record_len)
@@ -352,7 +353,7 @@ fn parse_record_header(buf: &[u8]) -> Result<&[u8], SniParseError> {
         return Err(SniParseError::NotHandshake);
     }
 
-    let record_len = read_u16(buf, 3)? as usize;
+    let record_len = usize::from(read_u16(buf, 3)?);
     let total = TLS_RECORD_HEADER_LEN + record_len;
 
     buf.get(TLS_RECORD_HEADER_LEN..total).ok_or(SniParseError::NeedMoreData)
@@ -368,7 +369,7 @@ fn parse_handshake_header(fragment: &[u8]) -> Result<&[u8], SniParseError> {
         return Err(SniParseError::NotClientHello);
     }
 
-    let hs_len = read_u24(fragment, 1)? as usize;
+    let hs_len = usize::try_from(read_u24(fragment, 1)?).map_err(|_err| SniParseError::MalformedExtension)?;
     let end = HANDSHAKE_HEADER_LEN + hs_len;
 
     fragment
@@ -403,7 +404,7 @@ fn parse_client_hello(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
 /// Skip a variable-length field preceded by a 1-byte length.
 fn skip_variable_u8(data: &[u8], pos: usize) -> Result<usize, SniParseError> {
     let len_byte = *data.get(pos).ok_or(SniParseError::MalformedExtension)?;
-    let len = len_byte as usize;
+    let len = usize::from(len_byte);
     let end = pos + 1 + len;
     if end > data.len() {
         return Err(SniParseError::MalformedExtension);
@@ -413,7 +414,7 @@ fn skip_variable_u8(data: &[u8], pos: usize) -> Result<usize, SniParseError> {
 
 /// Skip a variable-length field preceded by a 2-byte length.
 fn skip_variable_u16(data: &[u8], pos: usize) -> Result<usize, SniParseError> {
-    let len = read_u16(data, pos)? as usize;
+    let len = usize::from(read_u16(data, pos)?);
     let end = pos + 2 + len;
     if end > data.len() {
         return Err(SniParseError::MalformedExtension);
@@ -423,7 +424,7 @@ fn skip_variable_u16(data: &[u8], pos: usize) -> Result<usize, SniParseError> {
 
 /// Read a variable-length sub-slice preceded by a 2-byte length.
 fn read_variable_u16(data: &[u8], pos: usize) -> Result<&[u8], SniParseError> {
-    let len = read_u16(data, pos)? as usize;
+    let len = usize::from(read_u16(data, pos)?);
     let start = pos + 2;
     let end = start + len;
     if end > data.len() {
@@ -440,7 +441,7 @@ fn read_variable_u16(data: &[u8], pos: usize) -> Result<&[u8], SniParseError> {
 fn parse_extensions(mut ext: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
     while ext.len() >= 4 {
         let ext_type = read_u16(ext, 0)?;
-        let ext_len = read_u16(ext, 2)? as usize;
+        let ext_len = usize::from(read_u16(ext, 2)?);
 
         if ext.len() < 4 + ext_len {
             return Err(SniParseError::MalformedExtension);
@@ -460,7 +461,7 @@ fn parse_extensions(mut ext: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
 
 /// Parse the SNI extension payload and extract the hostname.
 fn parse_sni_extension(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
-    let list_len = read_u16(data, 0)? as usize;
+    let list_len = usize::from(read_u16(data, 0)?);
     if data.len() < 2 + list_len {
         return Err(SniParseError::MalformedExtension);
     }
@@ -471,7 +472,7 @@ fn parse_sni_extension(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
 
     while list.len() >= 3 {
         let name_type = *list.first().ok_or(SniParseError::MalformedExtension)?;
-        let name_len = read_u16(list, 1)? as usize;
+        let name_len = usize::from(read_u16(list, 1)?);
 
         if list.len() < 3 + name_len {
             return Err(SniParseError::MalformedExtension);
@@ -555,6 +556,7 @@ fn reject_ip_literal(hostname: &str) -> Result<(), SniParseError> {
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(
+    clippy::as_conversions,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,

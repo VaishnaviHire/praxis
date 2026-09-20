@@ -220,7 +220,13 @@ fn register_server_names(
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
+#[allow(
+    clippy::as_conversions,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "tests"
+)]
 mod tests {
     use super::*;
     use crate::test_utils::{gen_test_certs, gen_test_certs_with_sans};
