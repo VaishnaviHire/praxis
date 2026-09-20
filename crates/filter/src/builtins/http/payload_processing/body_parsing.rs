@@ -199,10 +199,11 @@ mod tests {
     fn parse_body_valid_json_rpc_returns_envelope() {
         let body = Some(Bytes::from(r#"{"jsonrpc":"2.0","method":"eth_call","id":1}"#));
         let result = parse_json_rpc_body(body.as_ref(), true, &default_config(), OnInvalidBehavior::Continue);
-        assert!(result.is_ok(), "valid JSON-RPC should return Ok");
-        let parsed = result.unwrap();
-        assert!(parsed.is_some(), "valid JSON-RPC should return Some");
-        assert_eq!(parsed.unwrap().method, "eth_call", "method should be extracted");
+        let parsed = result
+            .ok()
+            .flatten()
+            .expect("valid JSON-RPC should parse to an envelope");
+        assert_eq!(parsed.method, "eth_call", "method should be extracted");
     }
 
     #[test]
