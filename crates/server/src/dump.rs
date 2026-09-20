@@ -9,6 +9,43 @@ use praxis_core::config::{ChainRef, Config, FailureMode, FilterEntry};
 use serde::Serialize;
 
 // -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+
+/// Substrings that mark a header name as credential-bearing (case-insensitive).
+const SENSITIVE_HEADER_SUBSTRINGS: &[&str] = &["token", "secret", "key", "auth", "password", "credential"];
+
+/// Field names that should be redacted in config dumps.
+const SENSITIVE_FIELD_NAMES: &[&str] = &[
+    "access_key",
+    "api_key",
+    "apikey",
+    "auth_token",
+    "bearer_token",
+    "client_secret",
+    "credential",
+    "database_url",
+    "key_path",
+    "password",
+    "private_key",
+    "secret",
+    "signing_key",
+    "token",
+];
+
+/// Header names whose injected `value` carries a credential and must be
+/// redacted (compared case-insensitively).
+const CREDENTIAL_HEADER_NAMES: &[&str] = &[
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "set-cookie",
+    "x-amz-security-token",
+    "x-api-key",
+    "x-auth-token",
+];
+
+// -----------------------------------------------------------------------------
 // Dump Model
 // -----------------------------------------------------------------------------
 
@@ -225,39 +262,6 @@ fn redact_credential_header_value(mapping: &mut serde_yaml::Mapping, redacted: &
         mapping.insert(serde_yaml::Value::String("value".to_owned()), redacted.clone());
     }
 }
-
-/// Substrings that mark a header name as credential-bearing (case-insensitive).
-const SENSITIVE_HEADER_SUBSTRINGS: &[&str] = &["token", "secret", "key", "auth", "password", "credential"];
-
-/// Field names that should be redacted in config dumps.
-const SENSITIVE_FIELD_NAMES: &[&str] = &[
-    "access_key",
-    "api_key",
-    "apikey",
-    "auth_token",
-    "bearer_token",
-    "client_secret",
-    "credential",
-    "database_url",
-    "key_path",
-    "password",
-    "private_key",
-    "secret",
-    "signing_key",
-    "token",
-];
-
-/// Header names whose injected `value` carries a credential and must be
-/// redacted (compared case-insensitively).
-const CREDENTIAL_HEADER_NAMES: &[&str] = &[
-    "authorization",
-    "cookie",
-    "proxy-authorization",
-    "set-cookie",
-    "x-amz-security-token",
-    "x-api-key",
-    "x-auth-token",
-];
 
 /// Resolve all listeners into their dump representations by flattening each
 /// listener's chain references into an ordered filter list.
@@ -666,11 +670,7 @@ filter_chains:
         );
     }
 
-    #[test]
-    #[expect(clippy::too_many_lines, reason = "test YAML is intentionally explicit")]
-    fn branch_chain_database_url_redacted_in_dump() {
-        let config = Config::from_yaml(
-            r#"
+    const BRANCH_CHAIN_DATABASE_URL_YAML: &str = r#"
 listeners:
   - name: web
     address: "127.0.0.1:8080"
@@ -689,9 +689,11 @@ filter_chains:
                     backend: postgres
                     database_url: "postgres://user:super-secret-db-pass@localhost:5432/praxis"
             rejoin: next
-"#,
-        )
-        .unwrap();
+"#;
+
+    #[test]
+    fn branch_chain_database_url_redacted_in_dump() {
+        let config = Config::from_yaml(BRANCH_CHAIN_DATABASE_URL_YAML).unwrap();
         let dump = build_dump(&config, "test.yaml").unwrap();
         let yaml = serde_yaml::to_string(&dump).unwrap();
         assert!(
