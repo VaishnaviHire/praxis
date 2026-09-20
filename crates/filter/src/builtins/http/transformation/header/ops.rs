@@ -80,14 +80,9 @@ pub(super) fn parse_header_name_with_raw_value(
     let mut out = Vec::with_capacity(pairs.len());
     for p in pairs {
         let pname = &p.name;
-        let name = http::header::HeaderName::from_bytes(p.name.as_bytes()).map_err(|_e| {
-            let msg: FilterError = format!("headers filter: invalid header name '{pname}' in {section}").into();
-            msg
-        })?;
-        http::header::HeaderValue::from_str(&p.value).map_err(|_e| {
-            let msg: FilterError = format!("headers filter: invalid header value for '{pname}' in {section}").into();
-            msg
-        })?;
+        let name = http::header::HeaderName::from_bytes(p.name.as_bytes())
+            .map_err(|_e| invalid_header_name(pname, section))?;
+        http::header::HeaderValue::from_str(&p.value).map_err(|_e| invalid_header_value(pname, section))?;
         out.push((name, p.value));
     }
     Ok(out)
@@ -105,14 +100,9 @@ pub(super) fn parse_header_pairs(
     let mut out = Vec::with_capacity(pairs.len());
     for p in pairs {
         let pname = &p.name;
-        let name = http::header::HeaderName::from_bytes(p.name.as_bytes()).map_err(|_e| {
-            let msg: FilterError = format!("headers filter: invalid header name '{pname}' in {section}").into();
-            msg
-        })?;
-        let value = http::header::HeaderValue::from_str(&p.value).map_err(|_e| {
-            let msg: FilterError = format!("headers filter: invalid header value for '{pname}' in {section}").into();
-            msg
-        })?;
+        let name = http::header::HeaderName::from_bytes(p.name.as_bytes())
+            .map_err(|_e| invalid_header_name(pname, section))?;
+        let value = http::header::HeaderValue::from_str(&p.value).map_err(|_e| invalid_header_value(pname, section))?;
         out.push((name, value));
     }
     Ok(out)
@@ -159,10 +149,21 @@ pub(super) fn parse_header_names(
     names
         .into_iter()
         .map(|name| {
-            http::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_e| {
-                let msg: FilterError = format!("headers filter: invalid header name '{name}' in {section}").into();
-                msg
-            })
+            http::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_e| invalid_header_name(&name, section))
         })
         .collect()
+}
+
+// -----------------------------------------------------------------------------
+// Validation Errors
+// -----------------------------------------------------------------------------
+
+/// Build the error for an invalid header name in the given section.
+fn invalid_header_name(name: &str, section: &str) -> FilterError {
+    format!("headers filter: invalid header name '{name}' in {section}").into()
+}
+
+/// Build the error for an invalid header value in the given section.
+fn invalid_header_value(name: &str, section: &str) -> FilterError {
+    format!("headers filter: invalid header value for '{name}' in {section}").into()
 }
