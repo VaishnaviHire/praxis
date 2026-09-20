@@ -26,7 +26,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.6"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Shane Utt <shaneutt@linux.com>"]
@@ -70,10 +70,10 @@ portable-atomic = "1.15.0"
 proptest = "1.11.0"
 quote = "1.0.47"
 praxis = { path = "crates/server", package = "praxis-proxy" }
-praxis-core = { version = "0.5.6", path = "crates/core", package = "praxis-proxy-core" }
-praxis-filter = { version = "0.5.6", path = "crates/filter", package = "praxis-proxy-filter" }
-praxis-protocol = { version = "0.5.6", path = "crates/protocol", package = "praxis-proxy-protocol" }
-praxis-tls = { version = "0.5.6", path = "crates/tls", package = "praxis-proxy-tls" }
+praxis-core = { version = "0.6.0", path = "crates/core", package = "praxis-proxy-core" }
+praxis-filter = { version = "0.6.0", path = "crates/filter", package = "praxis-proxy-filter" }
+praxis-protocol = { version = "0.6.0", path = "crates/protocol", package = "praxis-proxy-protocol" }
+praxis-tls = { version = "0.6.0", path = "crates/tls", package = "praxis-proxy-tls" }
 praxis-test-utils = { path = "tests/utils" }
 praxis-proxy-benchmarks = "0.2.1"
 secrecy = { version = "0.10.3", features = ["serde"] }
