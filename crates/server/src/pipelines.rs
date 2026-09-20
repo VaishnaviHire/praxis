@@ -972,6 +972,36 @@ filter_chains:
         );
     }
 
+    #[test]
+    fn build_subrequest_client_wires_circuit_breaker_from_config() {
+        let client = build_subrequest_client(&config_with_circuit_breaker());
+        assert!(
+            client.connector().has_circuit_breaker(),
+            "a configured runtime.subrequest_circuit_breaker must be wired into the connector; \
+             build_subrequest_client is the single path shared by server startup and the CLI \
+             validate/dump path, which must not silently drop it (issue #994)"
+        );
+    }
+
+    #[test]
+    fn build_subrequest_client_omits_circuit_breaker_when_unset() {
+        let client = build_subrequest_client(&valid_config());
+        assert!(
+            !client.connector().has_circuit_breaker(),
+            "no circuit breaker should be wired when none is configured"
+        );
+    }
+
+    #[test]
+    fn build_subrequest_client_threads_max_connections_from_config() {
+        let client = build_subrequest_client(&config_with_circuit_breaker());
+        assert_eq!(
+            client.connector().configured_max_connections(),
+            Some(7),
+            "runtime.subrequest_max_connections must reach the connector, not be hardcoded to None"
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Server composition (issue #1085)
     // -------------------------------------------------------------------------
@@ -1307,43 +1337,5 @@ filter_chains:
 "#,
         )
         .unwrap()
-    }
-
-    // -------------------------------------------------------------------------
-    // build_subrequest_client is the single construction path used by BOTH the
-    // server startup path (server.rs) and the CLI --validate/--dump path
-    // (commands.rs::validate_config_for_startup). A configured
-    // runtime.subrequest_circuit_breaker (and max-connections) must therefore
-    // reach the connector on both paths, so config-validate faithfully
-    // exercises the same circuit-breaker-gated code the live server does.
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn build_subrequest_client_wires_circuit_breaker_from_config() {
-        let client = build_subrequest_client(&config_with_circuit_breaker());
-        assert!(
-            client.connector().has_circuit_breaker(),
-            "a configured runtime.subrequest_circuit_breaker must be wired into the connector; \
-             the CLI validate/dump path must not silently drop it (issue #994)"
-        );
-    }
-
-    #[test]
-    fn build_subrequest_client_omits_circuit_breaker_when_unset() {
-        let client = build_subrequest_client(&valid_config());
-        assert!(
-            !client.connector().has_circuit_breaker(),
-            "no circuit breaker should be wired when none is configured"
-        );
-    }
-
-    #[test]
-    fn build_subrequest_client_threads_max_connections_from_config() {
-        let client = build_subrequest_client(&config_with_circuit_breaker());
-        assert_eq!(
-            client.connector().configured_max_connections(),
-            Some(7),
-            "runtime.subrequest_max_connections must reach the connector, not be hardcoded to None"
-        );
     }
 }
