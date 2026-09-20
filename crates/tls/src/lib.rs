@@ -2,11 +2,11 @@
 // Copyright (c) 2024 Praxis Contributors
 
 #![deny(unreachable_pub)]
-#![expect(
-    clippy::min_ident_chars,
-    reason = "TODO(conventions-sync): fix violations and remove"
-)]
-// TODO we need to remove these clippy overrides completely, and force the code to be correct
+// TODO(conventions-sync): rename the remaining single-char identifiers
+// (closure params and byte accumulators) to meaningful names, then drop
+// this. The as_conversions and arithmetic_side_effects overrides have
+// already been cleared.
+#![expect(clippy::min_ident_chars, reason = "single-char bindings not yet renamed")]
 
 //! TLS configuration types for the Praxis proxy.
 //!
