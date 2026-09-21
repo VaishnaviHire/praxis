@@ -12,14 +12,6 @@ use crate::Rejection;
 // Constants
 // -----------------------------------------------------------------------------
 
-/// JSON-RPC error code for gateway-side denials. Lives in the
-/// implementation-defined `-32000` to `-32099` range carved out by the
-/// JSON-RPC 2.0 spec for server errors. One code covers all of
-/// `apl.policy`, `cedar.*`, `pii.*`, `delegation.*`, etc. — the
-/// specific violation goes in `data.violation` so clients can switch
-/// on a single code while still seeing the underlying reason.
-const GATEWAY_DENIED_CODE: i64 = -32001;
-
 /// **Public response-header contract.** Echoes the originating
 /// `PluginViolation.code` (e.g. `auth.invalid_token`, `apl.policy`,
 /// `pii.detected`) on every policy-engine rejection so audit pipelines,
@@ -36,6 +28,14 @@ const GATEWAY_DENIED_CODE: i64 = -32001;
 /// disclosure — they name the rule that fired but never carry user
 /// data or claims; acceptable on the deny path.
 pub(super) const VIOLATION_HEADER: &str = "X-Policy-Violation";
+
+/// JSON-RPC error code for gateway-side denials. Lives in the
+/// implementation-defined `-32000` to `-32099` range carved out by the
+/// JSON-RPC 2.0 spec for server errors. One code covers all of
+/// `apl.policy`, `cedar.*`, `pii.*`, `delegation.*`, etc. — the
+/// specific violation goes in `data.violation` so clients can switch
+/// on a single code while still seeing the underlying reason.
+const GATEWAY_DENIED_CODE: i64 = -32001;
 
 /// Static, always-valid JSON-RPC deny envelope used only if
 /// serializing the dynamic envelope in
@@ -394,6 +394,10 @@ fn deny_with_rejection(
 fn header_is_safe(s: &str) -> bool {
     !s.chars().any(char::is_control)
 }
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
