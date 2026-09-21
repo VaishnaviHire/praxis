@@ -185,8 +185,8 @@ impl CaConfig {
 
 /// Validate a `server_names` entry as a DNS hostname or wildcard.
 fn validate_server_name(name: &str) -> Result<(), TlsError> {
-    crate::sni_name::validate(name).map_err(|e| TlsError::ServerConfigError {
-        detail: format!("server_names '{name}': {e}"),
+    crate::sni_name::validate(name).map_err(|err| TlsError::ServerConfigError {
+        detail: format!("server_names '{name}': {err}"),
     })?;
 
     if name.starts_with("*.") && name.split('.').count() < 3 {

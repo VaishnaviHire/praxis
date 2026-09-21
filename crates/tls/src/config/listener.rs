@@ -535,7 +535,7 @@ mod tests {
                 crl_paths: Vec::new(),
             }),
             client_cert_mode: mode,
-            trusted_spiffe_ids: ids.iter().map(|s| (*s).to_owned()).collect(),
+            trusted_spiffe_ids: ids.iter().map(|id| (*id).to_owned()).collect(),
             ..ListenerTls::new_validated(&tmp.cert, &tmp.key).unwrap()
         };
         tls.validate()

@@ -60,7 +60,7 @@ pub(crate) fn authorize_peer(leaf_der: &[u8], allowed: &[Arc<str>]) -> PeerAuth 
     let Some(id) = validated_svid_id_from_der(leaf_der) else {
         return PeerAuth::InvalidLeaf;
     };
-    if allowed.is_empty() || allowed.iter().any(|a| a.as_ref() == id) {
+    if allowed.is_empty() || allowed.iter().any(|allowed_id| allowed_id.as_ref() == id) {
         PeerAuth::Allowed
     } else {
         PeerAuth::NotAllowed(id)
@@ -492,18 +492,19 @@ mod tests {
     /// and cA flag. Empty `key_usages` / `ekus` omit that extension entirely.
     fn leaf(uris: &[&str], key_usages: &[KeyUsagePurpose], ekus: &[ExtendedKeyUsagePurpose], ca: bool) -> Vec<u8> {
         let key = KeyPair::generate().expect("key");
-        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
-        p.distinguished_name.push(DnType::CommonName, "peer");
+        let mut params = CertificateParams::new(Vec::<String>::new()).expect("params");
+        params.distinguished_name.push(DnType::CommonName, "peer");
         for uri in uris {
-            p.subject_alt_names
+            params
+                .subject_alt_names
                 .push(SanType::URI((*uri).try_into().expect("uri san")));
         }
         if ca {
-            p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+            params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         }
-        p.key_usages = key_usages.to_vec();
-        p.extended_key_usages = ekus.to_vec();
-        p.self_signed(&key).expect("self signed").der().to_vec()
+        params.key_usages = key_usages.to_vec();
+        params.extended_key_usages = ekus.to_vec();
+        params.self_signed(&key).expect("self signed").der().to_vec()
     }
 
     /// A conforming X.509-SVID leaf: critical keyUsage with digitalSignature, EKU
@@ -521,33 +522,37 @@ mod tests {
     /// cases (extra, missing, or duplicated names).
     fn conforming_with_sans(uris: &[&str], dns: &[&str]) -> Vec<u8> {
         let key = KeyPair::generate().expect("key");
-        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
-        p.distinguished_name.push(DnType::CommonName, "peer");
+        let mut params = CertificateParams::new(Vec::<String>::new()).expect("params");
+        params.distinguished_name.push(DnType::CommonName, "peer");
         for uri in uris {
-            p.subject_alt_names
+            params
+                .subject_alt_names
                 .push(SanType::URI((*uri).try_into().expect("uri san")));
         }
-        for d in dns {
-            p.subject_alt_names
-                .push(SanType::DnsName((*d).try_into().expect("dns san")));
+        for dns_name in dns {
+            params
+                .subject_alt_names
+                .push(SanType::DnsName((*dns_name).try_into().expect("dns san")));
         }
-        p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
-        p.self_signed(&key).expect("self signed").der().to_vec()
+        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
+        params.self_signed(&key).expect("self signed").der().to_vec()
     }
 
     /// A leaf carrying a raw extension (OID 2.5.29.x content) plus a conforming
     /// keyUsage, to exercise one malformed or non-standard extension in isolation.
     fn leaf_with_custom_ext(uri: &str, ext: CustomExtension, with_key_usage: bool) -> Vec<u8> {
         let key = KeyPair::generate().expect("key");
-        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
-        p.distinguished_name.push(DnType::CommonName, "peer");
-        p.subject_alt_names.push(SanType::URI(uri.try_into().expect("uri")));
+        let mut params = CertificateParams::new(Vec::<String>::new()).expect("params");
+        params.distinguished_name.push(DnType::CommonName, "peer");
+        params
+            .subject_alt_names
+            .push(SanType::URI(uri.try_into().expect("uri")));
         if with_key_usage {
-            p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+            params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
         }
-        p.custom_extensions.push(ext);
-        p.self_signed(&key).expect("self signed").der().to_vec()
+        params.custom_extensions.push(ext);
+        params.self_signed(&key).expect("self signed").der().to_vec()
     }
 
     /// A present-but-unparseable basicConstraints (a bare NULL where a SEQUENCE

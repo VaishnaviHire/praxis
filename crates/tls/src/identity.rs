@@ -93,7 +93,7 @@ mod tests {
         };
         let hex = id.hex_digest();
         assert_eq!(hex.len(), 64, "32-byte digest should produce 64 hex chars");
-        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()), "all chars should be hex");
+        assert!(hex.chars().all(|ch| ch.is_ascii_hexdigit()), "all chars should be hex");
         assert_eq!(hex, "0".repeat(64), "all-zero digest should be all-zero hex");
     }
 

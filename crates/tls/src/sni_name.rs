@@ -265,8 +265,8 @@ mod tests {
             }
 
             #[test]
-            fn underscore_rejected(a in label(), b in label()) {
-                let name = format!("{a}_{b}.example.com");
+            fn underscore_rejected(first in label(), second in label()) {
+                let name = format!("{first}_{second}.example.com");
                 prop_assert_eq!(
                     validate(&name),
                     Err(SniNameError::InvalidLabel(DnsLabelError::InvalidCharacter))

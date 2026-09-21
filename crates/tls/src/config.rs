@@ -23,7 +23,9 @@ pub use listener::{ClientCertMode, ListenerTls, TlsVersion};
 ///
 /// [`Component::ParentDir`]: std::path::Component::ParentDir
 pub(crate) fn has_parent_dir_component(path: &str) -> bool {
-    Path::new(path).components().any(|c| matches!(c, Component::ParentDir))
+    Path::new(path)
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
 }
 
 /// Emit a warning if `path` is a symlink.

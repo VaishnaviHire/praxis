@@ -53,7 +53,7 @@ pub(crate) struct SniCertResolver {
 
 impl std::fmt::Debug for SniCertResolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let wildcards: Vec<String> = self.wildcard_certs.keys().map(|s| format!(".{s}")).collect();
+        let wildcards: Vec<String> = self.wildcard_certs.keys().map(|suffix| format!(".{suffix}")).collect();
         f.debug_struct("SniCertResolver")
             .field("hostnames", &self.certs.keys().collect::<Vec<_>>())
             .field("wildcards", &wildcards)
@@ -104,7 +104,7 @@ impl SniCertResolver {
         };
         // Real-world SNI is virtually always lowercase already; keys are
         // lowercased at build, so only a mixed-case hello pays for a copy.
-        let lower: std::borrow::Cow<'_, str> = if sni.bytes().any(|b| b.is_ascii_uppercase()) {
+        let lower: std::borrow::Cow<'_, str> = if sni.bytes().any(|byte| byte.is_ascii_uppercase()) {
             std::borrow::Cow::Owned(sni.to_ascii_lowercase())
         } else {
             std::borrow::Cow::Borrowed(sni)
@@ -187,26 +187,26 @@ fn register_server_names(
 
         if let Some(suffix) = lower.strip_prefix("*.") {
             match wildcard_certs.entry(suffix.to_owned()) {
-                Entry::Occupied(e) => {
+                Entry::Occupied(entry) => {
                     return Err(TlsError::DuplicateServerName {
-                        name: format!("*.{}", e.key()),
+                        name: format!("*.{}", entry.key()),
                         path: pair.cert_path.clone(),
                     });
                 },
-                Entry::Vacant(e) => {
-                    e.insert(Arc::clone(certified));
+                Entry::Vacant(entry) => {
+                    entry.insert(Arc::clone(certified));
                 },
             }
         } else {
             match certs.entry(lower) {
-                Entry::Occupied(e) => {
+                Entry::Occupied(entry) => {
                     return Err(TlsError::DuplicateServerName {
-                        name: e.key().clone(),
+                        name: entry.key().clone(),
                         path: pair.cert_path.clone(),
                     });
                 },
-                Entry::Vacant(e) => {
-                    e.insert(Arc::clone(certified));
+                Entry::Vacant(entry) => {
+                    entry.insert(Arc::clone(certified));
                 },
             }
         }
@@ -699,9 +699,9 @@ mod tests {
             }
 
             #[test]
-            fn wildcard_does_not_cross_labels(a in label(), b in label()) {
+            fn wildcard_does_not_cross_labels(first in label(), second in label()) {
                 let (resolver, _, _) = &*RESOLVER;
-                let sni = format!("{a}.{b}.example.com");
+                let sni = format!("{first}.{second}.example.com");
                 prop_assert!(resolver.lookup(Some(&sni)).is_none());
             }
 

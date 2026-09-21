@@ -90,15 +90,15 @@ pub(crate) fn build_client_verifier(
         ClientCertMode::Request => builder
             .allow_unauthenticated()
             .build()
-            .map_err(|e| verifier_err(format!("failed to build verifier: {e}"))),
+            .map_err(|err| verifier_err(format!("failed to build verifier: {err}"))),
         ClientCertMode::Require => builder
             .build()
-            .map_err(|e| verifier_err(format!("failed to build verifier: {e}"))),
+            .map_err(|err| verifier_err(format!("failed to build verifier: {err}"))),
         #[cfg(feature = "spiffe")]
         ClientCertMode::RequireNamed => builder
             .build()
             .map(|inner| named_verifier(inner, trusted_spiffe_ids))
-            .map_err(|e| verifier_err(format!("failed to build verifier: {e}"))),
+            .map_err(|err| verifier_err(format!("failed to build verifier: {err}"))),
         ClientCertMode::None => Err(TlsError::ClientVerifierNotRequired),
     }
 }
@@ -218,16 +218,16 @@ impl ClientCertVerifier for NamedPeerVerifier {
 fn load_crls(paths: &[String]) -> Result<Vec<CertificateRevocationListDer<'static>>, TlsError> {
     let mut crls = Vec::new();
     for path in paths {
-        let pem = zeroize::Zeroizing::new(std::fs::read(path).map_err(|e| TlsError::FileLoadError {
+        let pem = zeroize::Zeroizing::new(std::fs::read(path).map_err(|err| TlsError::FileLoadError {
             path: path.clone(),
-            detail: e.to_string(),
+            detail: err.to_string(),
         })?);
 
         let parsed: Vec<_> = CertificateRevocationListDer::pem_slice_iter(&pem)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| TlsError::FileLoadError {
+            .map_err(|err| TlsError::FileLoadError {
                 path: path.clone(),
-                detail: format!("failed to parse CRL PEM: {e}"),
+                detail: format!("failed to parse CRL PEM: {err}"),
             })?;
         if parsed.is_empty() {
             return Err(TlsError::FileLoadError {
@@ -253,7 +253,7 @@ fn load_crls(paths: &[String]) -> Result<Vec<CertificateRevocationListDer<'stati
 pub(crate) fn roots_from_pem(pem: &[u8]) -> Result<RootCertStore, String> {
     let certs: Vec<_> = CertificateDer::pem_slice_iter(pem)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("failed to parse PEM: {e}"))?;
+        .map_err(|err| format!("failed to parse PEM: {err}"))?;
     if certs.is_empty() {
         return Err("no certificates found in PEM".to_owned());
     }
@@ -262,7 +262,7 @@ pub(crate) fn roots_from_pem(pem: &[u8]) -> Result<RootCertStore, String> {
     for cert in certs {
         root_store
             .add(cert)
-            .map_err(|e| format!("failed to add CA cert: {e}"))?;
+            .map_err(|err| format!("failed to add CA cert: {err}"))?;
     }
 
     Ok(root_store)
@@ -272,9 +272,9 @@ pub(crate) fn roots_from_pem(pem: &[u8]) -> Result<RootCertStore, String> {
 ///
 /// [`RootCertStore`]: rustls::RootCertStore
 fn load_ca_root_store(ca_path: &str) -> Result<RootCertStore, TlsError> {
-    let ca_pem = zeroize::Zeroizing::new(std::fs::read(ca_path).map_err(|e| TlsError::FileLoadError {
+    let ca_pem = zeroize::Zeroizing::new(std::fs::read(ca_path).map_err(|err| TlsError::FileLoadError {
         path: ca_path.to_owned(),
-        detail: e.to_string(),
+        detail: err.to_string(),
     })?);
 
     roots_from_pem(&ca_pem).map_err(|detail| TlsError::FileLoadError {

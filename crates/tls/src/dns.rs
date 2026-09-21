@@ -106,7 +106,7 @@ pub fn validate_dns_label(label: &str) -> Result<(), DnsLabelError> {
     if label.len() > MAX_LABEL_LEN {
         return Err(DnsLabelError::LabelTooLong);
     }
-    if !label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+    if !label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
         return Err(DnsLabelError::InvalidCharacter);
     }
     if label.starts_with('-') || label.ends_with('-') {

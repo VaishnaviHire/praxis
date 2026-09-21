@@ -133,7 +133,13 @@ pub use tcp_filter::{TcpFilter, TcpFilterContext};
 
 // Registration macros are defined in the registration module and
 // automatically exported to the crate root via #[macro_export].
-#[allow(clippy::expect_used, reason = "test utilities")]
+
+/// Test utilities for filter unit tests.
+///
+/// Provides builders for minimal HTTP requests, filter contexts, and
+/// responses to simplify filter testing across the crate.
+#[expect(clippy::expect_used, reason = "test utilities")]
+#[expect(clippy::allow_attributes, reason = "test utilities conditionally used")]
 pub(crate) mod test_utils {
     use std::sync::LazyLock;
 
@@ -143,9 +149,11 @@ pub(crate) mod test_utils {
     use crate::{HttpFilterContext, Request};
 
     /// Deterministic ID generator for tests (seed=0).
+    #[allow(dead_code, reason = "used by test modules")]
     static TEST_ID_GENERATOR: LazyLock<IdGenerator> = LazyLock::new(|| IdGenerator::with_seed(0));
 
     /// Build a minimal HTTP request for filter unit tests.
+    #[allow(dead_code, reason = "used by test modules")]
     pub(crate) fn make_request(method: Method, path: &str) -> Request {
         Request {
             method,
@@ -155,7 +163,7 @@ pub(crate) mod test_utils {
     }
 
     /// Build a default [`HttpFilterContext`] for filter unit tests.
-    #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
+    #[allow(dead_code, reason = "used by test modules")]
     #[allow(
         clippy::too_many_lines,
         reason = "test context constructor mirrors all context fields"
@@ -213,6 +221,7 @@ pub(crate) mod test_utils {
     }
 
     /// Build a minimal OK response for filter unit tests.
+    #[allow(dead_code, reason = "used by test modules")]
     pub(crate) fn make_response() -> crate::context::Response {
         crate::context::Response {
             headers: HeaderMap::new(),

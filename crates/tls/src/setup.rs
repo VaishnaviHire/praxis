@@ -67,8 +67,8 @@ pub fn build_server_config(tls: &ListenerTls, advertise_http_alpn: bool) -> Resu
         let (certs, key) = loader::load_cert_and_key(primary)?;
         builder
             .with_single_cert(certs, key)
-            .map_err(|e| TlsError::ServerConfigError {
-                detail: format!("failed to build ServerConfig: {e}"),
+            .map_err(|err| TlsError::ServerConfigError {
+                detail: format!("failed to build ServerConfig: {err}"),
             })?
     } else {
         let resolver = sni::build_sni_resolver(&tls.certificates)?;
@@ -181,8 +181,8 @@ fn build_config_builder(
     let provider = maybe_filter_provider(default_crypto_provider(), tls.cipher_suites.as_deref())?;
     ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&versions)
-        .map_err(|e| TlsError::ServerConfigError {
-            detail: format!("failed to set TLS protocol versions: {e}"),
+        .map_err(|err| TlsError::ServerConfigError {
+            detail: format!("failed to set TLS protocol versions: {err}"),
         })
 }
 
@@ -236,7 +236,11 @@ fn maybe_filter_provider(
         .iter()
         .filter_map(|id| {
             let target = id.to_rustls().suite();
-            provider.cipher_suites.iter().find(|s| s.suite() == target).copied()
+            provider
+                .cipher_suites
+                .iter()
+                .find(|suite| suite.suite() == target)
+                .copied()
         })
         .collect();
 
@@ -312,10 +316,14 @@ fn cipher_strength_tier(suite: &CipherSuiteId) -> u8 {
 /// Returns `None` when the ordering is non-increasing by strength
 /// (i.e. strongest-first or all equal).
 fn find_weak_before_strong(suites: &[CipherSuiteId]) -> Option<(&CipherSuiteId, &CipherSuiteId)> {
-    suites.windows(2).find_map(|w| match (w.first(), w.get(1)) {
-        (Some(a), Some(b)) if cipher_strength_tier(a) < cipher_strength_tier(b) => Some((a, b)),
-        _ => None,
-    })
+    suites
+        .windows(2)
+        .find_map(|window| match (window.first(), window.get(1)) {
+            (Some(weak), Some(strong)) if cipher_strength_tier(weak) < cipher_strength_tier(strong) => {
+                Some((weak, strong))
+            },
+            _ => None,
+        })
 }
 
 // -----------------------------------------------------------------------------

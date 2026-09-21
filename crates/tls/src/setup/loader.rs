@@ -72,14 +72,14 @@ pub(crate) fn load_certified_key(pair: &CertKeyPair) -> Result<CertifiedKey, Tls
     let signing_key = provider
         .key_provider
         .load_private_key(key)
-        .map_err(|e| TlsError::FileLoadError {
+        .map_err(|err| TlsError::FileLoadError {
             path: pair.key_path.clone(),
-            detail: format!("unsupported private key type: {e}"),
+            detail: format!("unsupported private key type: {err}"),
         })?;
     let certified = CertifiedKey::new(certs, signing_key);
-    certified.keys_match().map_err(|e| TlsError::FileLoadError {
+    certified.keys_match().map_err(|err| TlsError::FileLoadError {
         path: pair.cert_path.clone(),
-        detail: keys_match_error_detail(&e),
+        detail: keys_match_error_detail(&err),
     })?;
     Ok(certified)
 }
@@ -90,20 +90,20 @@ pub(crate) fn load_certified_key(pair: &CertKeyPair) -> Result<CertifiedKey, Tls
 /// (`InvalidCertificate`) or the signing key cannot expose its public key
 /// (`Unknown`); reporting those as "do not match" sends operators chasing the
 /// wrong problem.
-fn keys_match_error_detail(e: &rustls::Error) -> String {
+fn keys_match_error_detail(error: &rustls::Error) -> String {
     #[expect(
         clippy::wildcard_enum_match_arm,
         reason = "rustls::Error is non_exhaustive; only the two InconsistentKeys cases are special-cased"
     )]
-    match e {
+    match error {
         rustls::Error::InconsistentKeys(rustls::InconsistentKeys::KeyMismatch) => {
-            format!("certificate and private key do not match: {e}")
+            format!("certificate and private key do not match: {error}")
         },
         rustls::Error::InconsistentKeys(rustls::InconsistentKeys::Unknown) => format!(
             "could not verify the certificate against the private key \
-             (the signing key cannot expose its public key): {e}"
+             (the signing key cannot expose its public key): {error}"
         ),
-        _ => format!("failed to validate the certificate against the private key: {e}"),
+        _ => format!("failed to validate the certificate against the private key: {error}"),
     }
 }
 
@@ -123,21 +123,21 @@ fn keys_match_error_detail(e: &rustls::Error) -> String {
 pub(super) fn load_cert_and_key(
     pair: &CertKeyPair,
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), TlsError> {
-    let cert_pem = Zeroizing::new(std::fs::read(&pair.cert_path).map_err(|e| TlsError::FileLoadError {
+    let cert_pem = Zeroizing::new(std::fs::read(&pair.cert_path).map_err(|err| TlsError::FileLoadError {
         path: pair.cert_path.clone(),
-        detail: format!("failed to read cert: {e}"),
+        detail: format!("failed to read cert: {err}"),
     })?);
 
-    let key_pem = Zeroizing::new(std::fs::read(&pair.key_path).map_err(|e| TlsError::FileLoadError {
+    let key_pem = Zeroizing::new(std::fs::read(&pair.key_path).map_err(|err| TlsError::FileLoadError {
         path: pair.key_path.clone(),
-        detail: format!("failed to read key: {e}"),
+        detail: format!("failed to read key: {err}"),
     })?);
 
     let certs = CertificateDer::pem_slice_iter(&cert_pem)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| TlsError::FileLoadError {
+        .map_err(|err| TlsError::FileLoadError {
             path: pair.cert_path.clone(),
-            detail: format!("failed to parse cert PEM: {e}"),
+            detail: format!("failed to parse cert PEM: {err}"),
         })?;
 
     if certs.is_empty() {
@@ -147,12 +147,12 @@ pub(super) fn load_cert_and_key(
         });
     }
 
-    let key = PrivateKeyDer::from_pem_slice(&key_pem).map_err(|e| TlsError::FileLoadError {
+    let key = PrivateKeyDer::from_pem_slice(&key_pem).map_err(|err| TlsError::FileLoadError {
         path: pair.key_path.clone(),
-        detail: if matches!(e, rustls::pki_types::pem::Error::NoItemsFound) {
+        detail: if matches!(err, rustls::pki_types::pem::Error::NoItemsFound) {
             "no private key found in PEM file".to_owned()
         } else {
-            format!("failed to parse key PEM: {e}")
+            format!("failed to parse key PEM: {err}")
         },
     })?;
 

@@ -2,11 +2,6 @@
 // Copyright (c) 2024 Praxis Contributors
 
 #![deny(unreachable_pub)]
-// TODO(conventions-sync): rename the remaining single-char identifiers
-// (closure params and byte accumulators) to meaningful names, then drop
-// this. The as_conversions and arithmetic_side_effects overrides have
-// already been cleared.
-#![expect(clippy::min_ident_chars, reason = "single-char bindings not yet renamed")]
 
 //! TLS configuration types for the Praxis proxy.
 //!

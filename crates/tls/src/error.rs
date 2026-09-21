@@ -135,44 +135,44 @@ mod tests {
 
     #[test]
     fn error_display_path_traversal() {
-        let e = TlsError::PathTraversal {
+        let err = TlsError::PathTraversal {
             field: "key_path".to_owned(),
             path: "../secret/key.pem".to_owned(),
         };
         assert!(
-            e.to_string().contains("path traversal"),
+            err.to_string().contains("path traversal"),
             "should mention path traversal"
         );
-        assert!(e.to_string().contains("key_path"), "should mention key_path field");
+        assert!(err.to_string().contains("key_path"), "should mention key_path field");
     }
 
     #[test]
     fn error_display_missing_client_ca() {
-        let e = TlsError::MissingClientCa {
+        let err = TlsError::MissingClientCa {
             mode: ClientCertMode::Require,
         };
         assert!(
-            e.to_string().contains("client_ca"),
-            "should mention missing client_ca: {e}"
+            err.to_string().contains("client_ca"),
+            "should mention missing client_ca: {err}"
         );
     }
 
     #[test]
     fn error_display_no_certificates() {
-        let e = TlsError::NoCertificates;
+        let err = TlsError::NoCertificates;
         assert!(
-            e.to_string().contains("at least one certificate"),
+            err.to_string().contains("at least one certificate"),
             "should mention certificate requirement"
         );
     }
 
     #[test]
     fn error_display_duplicate_server_name() {
-        let e = TlsError::DuplicateServerName {
+        let err = TlsError::DuplicateServerName {
             name: "api.example.com".to_owned(),
             path: "/certs/server.pem".to_owned(),
         };
-        let msg = e.to_string();
+        let msg = err.to_string();
         assert!(
             msg.contains("duplicate server_name"),
             "should mention duplicate server_name: {msg}"
@@ -185,14 +185,17 @@ mod tests {
 
     #[test]
     fn error_display_hot_reload_multiple_certs() {
-        let e = TlsError::HotReloadMultipleCerts;
-        assert!(e.to_string().contains("hot_reload"), "should mention hot_reload: {e}");
+        let err = TlsError::HotReloadMultipleCerts;
+        assert!(
+            err.to_string().contains("hot_reload"),
+            "should mention hot_reload: {err}"
+        );
     }
 
     #[test]
     fn error_display_client_verifier_not_required() {
-        let e = TlsError::ClientVerifierNotRequired;
-        let msg = e.to_string();
+        let err = TlsError::ClientVerifierNotRequired;
+        let msg = err.to_string();
         assert!(
             msg.contains("client_cert_mode=None"),
             "should mention client_cert_mode=None: {msg}"
@@ -201,18 +204,18 @@ mod tests {
 
     #[test]
     fn error_display_ambiguous_cert() {
-        let e = TlsError::AmbiguousCert {
+        let err = TlsError::AmbiguousCert {
             path: "/etc/ssl/mystery.pem".to_owned(),
         };
-        let msg = e.to_string();
+        let msg = err.to_string();
         assert!(msg.contains("ambiguous"), "should mention ambiguous: {msg}");
         assert!(msg.contains("default: true"), "should mention default: true: {msg}");
     }
 
     #[test]
     fn error_display_multiple_defaults() {
-        let e = TlsError::MultipleDefaults;
-        let msg = e.to_string();
+        let err = TlsError::MultipleDefaults;
+        let msg = err.to_string();
         assert!(msg.contains("multiple"), "should mention multiple: {msg}");
         assert!(
             msg.contains("only one default"),
@@ -222,8 +225,8 @@ mod tests {
 
     #[test]
     fn error_display_empty_cipher_suites() {
-        let e = TlsError::EmptyCipherSuites;
-        let msg = e.to_string();
+        let err = TlsError::EmptyCipherSuites;
+        let msg = err.to_string();
         assert!(
             msg.contains("cipher_suites must not be empty"),
             "should mention empty cipher_suites: {msg}"
@@ -232,10 +235,10 @@ mod tests {
 
     #[test]
     fn error_display_server_config_error() {
-        let e = TlsError::ServerConfigError {
+        let err = TlsError::ServerConfigError {
             detail: "cert/key mismatch".to_owned(),
         };
-        let msg = e.to_string();
+        let msg = err.to_string();
         assert!(
             msg.contains("TLS server config error"),
             "should mention server config error: {msg}"
@@ -245,18 +248,18 @@ mod tests {
 
     #[test]
     fn error_display_tls12_suite_with_tls13_only() {
-        let e = TlsError::Tls12SuiteWithTls13Only;
-        let msg = e.to_string();
+        let err = TlsError::Tls12SuiteWithTls13Only;
+        let msg = err.to_string();
         assert!(msg.contains("TLS 1.2 suites"), "should mention TLS 1.2 suites: {msg}");
         assert!(msg.contains("tls13"), "should mention tls13: {msg}");
     }
 
     #[test]
     fn error_display_invalid_sni() {
-        let e = TlsError::InvalidSni {
+        let err = TlsError::InvalidSni {
             value: "not a valid hostname!".to_owned(),
         };
-        let msg = e.to_string();
+        let msg = err.to_string();
         assert!(
             msg.contains("sni must be a valid DNS hostname"),
             "should mention SNI validation: {msg}"

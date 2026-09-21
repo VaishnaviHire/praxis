@@ -162,7 +162,7 @@ pub fn parse_sni(buf: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
             let hello_body = reassemble_handshake(buf)?;
             parse_client_hello(&hello_body)
         },
-        Err(e) => Err(e),
+        Err(err) => Err(err),
     }
 }
 
@@ -268,7 +268,7 @@ impl SniReassembler {
             let (mut fragment, next_pos) = match handshake_record_fragment(buf, self.pos) {
                 Ok(parts) => parts,
                 Err(SniParseError::NeedMoreData | SniParseError::TooShort) => return Ok(None),
-                Err(e) => return Err(e),
+                Err(err) => return Err(err),
             };
             self.pos = next_pos;
 
@@ -513,23 +513,23 @@ fn parse_sni_extension(data: &[u8]) -> Result<ClientHelloInfo, SniParseError> {
 
 /// Read a big-endian `u16` from `data` at `offset`.
 fn read_u16(data: &[u8], offset: usize) -> Result<u16, SniParseError> {
-    let a = *data.get(offset).ok_or(SniParseError::MalformedExtension)?;
-    let b = *data
+    let high_byte = *data.get(offset).ok_or(SniParseError::MalformedExtension)?;
+    let low_byte = *data
         .get(offset.saturating_add(1))
         .ok_or(SniParseError::MalformedExtension)?;
-    Ok(u16::from_be_bytes([a, b]))
+    Ok(u16::from_be_bytes([high_byte, low_byte]))
 }
 
 /// Read a big-endian 24-bit integer as `u32` from `data` at `offset`.
 fn read_u24(data: &[u8], offset: usize) -> Result<u32, SniParseError> {
-    let a = *data.get(offset).ok_or(SniParseError::MalformedExtension)?;
-    let b = *data
+    let byte0 = *data.get(offset).ok_or(SniParseError::MalformedExtension)?;
+    let byte1 = *data
         .get(offset.saturating_add(1))
         .ok_or(SniParseError::MalformedExtension)?;
-    let c = *data
+    let byte2 = *data
         .get(offset.saturating_add(2))
         .ok_or(SniParseError::MalformedExtension)?;
-    Ok(u32::from_be_bytes([0, a, b, c]))
+    Ok(u32::from_be_bytes([0, byte0, byte1, byte2]))
 }
 
 // -----------------------------------------------------------------------------
@@ -546,7 +546,7 @@ fn reject_ip_literal(hostname: &str) -> Result<(), SniParseError> {
 
     // The IpAddr parse above already tried the unbracketed IPv6 form;
     // a second parse is only needed when brackets were actually stripped.
-    if let Some(trimmed) = hostname.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+    if let Some(trimmed) = hostname.strip_prefix('[').and_then(|inner| inner.strip_suffix(']'))
         && trimmed.parse::<std::net::Ipv6Addr>().is_ok()
     {
         return Err(SniParseError::InvalidHostname);
@@ -715,16 +715,16 @@ mod tests {
 
     #[test]
     fn client_hello_info_equality() {
-        let a = ClientHelloInfo {
+        let with_sni_1 = ClientHelloInfo {
             sni: Some("a.com".to_owned()),
         };
-        let b = ClientHelloInfo {
+        let with_sni_2 = ClientHelloInfo {
             sni: Some("a.com".to_owned()),
         };
-        let c = ClientHelloInfo { sni: None };
+        let without_sni = ClientHelloInfo { sni: None };
 
-        assert_eq!(a, b, "identical SNI should be equal");
-        assert_ne!(a, c, "different SNI should not be equal");
+        assert_eq!(with_sni_1, with_sni_2, "identical SNI should be equal");
+        assert_ne!(with_sni_1, without_sni, "different SNI should not be equal");
     }
 
     /// RFC 6066 section 3: SNI hostname must not be empty.
@@ -1162,17 +1162,17 @@ mod tests {
     /// Build an SNI extension payload carrying two `host_name` entries, which
     /// RFC 6066 forbids.
     #[expect(clippy::cast_possible_truncation, reason = "test hostnames are short")]
-    fn build_sni_extension_two_hosts(a: &str, b: &str) -> Vec<u8> {
+    fn build_sni_extension_two_hosts(first: &str, second: &str) -> Vec<u8> {
         let entry = |name: &str| {
             let nb = name.as_bytes();
-            let mut e = Vec::new();
-            e.push(SNI_NAME_TYPE_HOST);
-            e.extend_from_slice(&(nb.len() as u16).to_be_bytes());
-            e.extend_from_slice(nb);
-            e
+            let mut ext = Vec::new();
+            ext.push(SNI_NAME_TYPE_HOST);
+            ext.extend_from_slice(&(nb.len() as u16).to_be_bytes());
+            ext.extend_from_slice(nb);
+            ext
         };
-        let mut list = entry(a);
-        list.extend_from_slice(&entry(b));
+        let mut list = entry(first);
+        list.extend_from_slice(&entry(second));
 
         let mut ext = Vec::new();
         ext.extend_from_slice(&0_u16.to_be_bytes());

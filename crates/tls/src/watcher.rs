@@ -117,8 +117,8 @@ impl CertWatcher {
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                 Ok(rt) => rt,
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to start certificate watcher runtime; hot reload disabled");
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to start certificate watcher runtime; hot reload disabled");
                     return;
                 },
             };
@@ -170,8 +170,8 @@ async fn watch_loop(
     let extra_dirs = verifier_extra_dirs(verifier_reload.as_ref());
     let _watcher = match setup_watcher(tx, &cert_dir, &key_dir, &extra_dirs) {
         Ok(w) => w,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to start certificate file watcher");
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to start certificate file watcher");
             return;
         },
     };
@@ -271,7 +271,7 @@ fn setup_watcher(
 fn handle_watch_event(res: Result<notify::Event, notify::Error>, tx: &mpsc::Sender<()>) {
     match res {
         Ok(event) if is_relevant_event(event.kind) => try_notify(tx),
-        Err(e) => tracing::warn!(error = %e, "file watcher error"),
+        Err(err) => tracing::warn!(error = %err, "file watcher error"),
         _ => {},
     }
 }
@@ -320,10 +320,10 @@ fn reload_cert(current: &Arc<ArcSwap<CertifiedKey>>, pair: &CertKeyPair) -> bool
             );
             true
         },
-        Err(e) => {
+        Err(err) => {
             tracing::warn!(
                 cert_path = %pair.cert_path,
-                error = %e,
+                error = %err,
                 "TLS certificate reload failed, keeping previous certificate"
             );
             false
@@ -356,10 +356,10 @@ fn reload_client_verifier(reload: Option<&ClientVerifierReload>) -> bool {
             );
             true
         },
-        Err(e) => {
+        Err(err) => {
             tracing::warn!(
                 ca_path = %cfg.ca_path,
-                error = %e,
+                error = %err,
                 "client verifier reload failed, keeping previous verifier"
             );
             false
@@ -394,7 +394,7 @@ fn is_relevant_event(kind: EventKind) -> bool {
 fn parent_dir(path: &str) -> PathBuf {
     Path::new(path)
         .parent()
-        .filter(|p| !p.as_os_str().is_empty())
+        .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf()
 }

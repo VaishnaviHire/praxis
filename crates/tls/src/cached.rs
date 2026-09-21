@@ -299,13 +299,13 @@ impl CachedClusterTls {
         let ca = tls
             .ca
             .as_ref()
-            .map(|c| CachedCaCerts::from_pem_file(&c.ca_path).map(Arc::new))
+            .map(|cfg| CachedCaCerts::from_pem_file(&cfg.ca_path).map(Arc::new))
             .transpose()?;
 
         let client_cert = tls
             .client_cert
             .as_ref()
-            .map(|c| CachedClientCert::from_pem_files(&c.cert_path, &c.key_path).map(Arc::new))
+            .map(|cfg| CachedClientCert::from_pem_files(&cfg.cert_path, &cfg.key_path).map(Arc::new))
             .transpose()?;
 
         Ok(Self {
@@ -368,9 +368,9 @@ fn parse_cert_pem(cert_path: &str) -> Result<Vec<Vec<u8>>, TlsError> {
     CertificateDer::pem_slice_iter(&pem)
         .map(|item| item.map(|cert| cert.to_vec()))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| TlsError::FileLoadError {
+        .map_err(|err| TlsError::FileLoadError {
             path: cert_path.to_owned(),
-            detail: e.to_string(),
+            detail: err.to_string(),
         })
 }
 
@@ -380,15 +380,15 @@ fn parse_key_pem(key_path: &str) -> Result<Zeroizing<Vec<u8>>, TlsError> {
 
     let pem = read_pem_file(key_path)?;
     PrivateKeyDer::from_pem_slice(&pem)
-        .map_err(|e| TlsError::FileLoadError {
+        .map_err(|err| TlsError::FileLoadError {
             path: key_path.to_owned(),
-            detail: if matches!(e, rustls::pki_types::pem::Error::NoItemsFound) {
+            detail: if matches!(err, rustls::pki_types::pem::Error::NoItemsFound) {
                 "no private key found".to_owned()
             } else {
-                e.to_string()
+                err.to_string()
             },
         })
-        .map(|k| Zeroizing::new(k.secret_der().to_vec()))
+        .map(|key| Zeroizing::new(key.secret_der().to_vec()))
 }
 
 /// Read a file into a zeroizing byte vector, mapping I/O errors
@@ -403,9 +403,9 @@ fn parse_key_pem(key_path: &str) -> Result<Zeroizing<Vec<u8>>, TlsError> {
 fn read_pem_file(path: &str) -> Result<Zeroizing<Vec<u8>>, TlsError> {
     std::fs::read(path)
         .map(Zeroizing::new)
-        .map_err(|e| TlsError::FileLoadError {
+        .map_err(|err| TlsError::FileLoadError {
             path: path.to_owned(),
-            detail: e.to_string(),
+            detail: err.to_string(),
         })
 }
 

@@ -146,8 +146,8 @@ pub fn pinned_client_config(
     let verifier = SpiffePinnedPeer::new(&provider, Arc::new(roots), Arc::from(expected_spiffe));
     let builder = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|e| TlsError::ClientConfigError {
-            detail: format!("protocol versions: {e}"),
+        .map_err(|err| TlsError::ClientConfigError {
+            detail: format!("protocol versions: {err}"),
         })?
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier));
@@ -157,8 +157,8 @@ pub fn pinned_client_config(
             let (chain, key) = split_identity(pem)?;
             builder
                 .with_client_auth_cert(chain, key)
-                .map_err(|e| TlsError::ClientConfigError {
-                    detail: format!("client identity: {e}"),
+                .map_err(|err| TlsError::ClientConfigError {
+                    detail: format!("client identity: {err}"),
                 })?
         },
         None => builder.with_no_client_auth(),
@@ -175,11 +175,11 @@ pub fn pinned_client_config(
 fn split_identity(pem: &[u8]) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), TlsError> {
     let chain = CertificateDer::pem_slice_iter(pem)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| TlsError::ClientConfigError {
-            detail: format!("client certificate PEM: {e}"),
+        .map_err(|err| TlsError::ClientConfigError {
+            detail: format!("client certificate PEM: {err}"),
         })?;
-    let key = PrivateKeyDer::from_pem_slice(pem).map_err(|e| TlsError::ClientConfigError {
-        detail: format!("client key PEM: {e}"),
+    let key = PrivateKeyDer::from_pem_slice(pem).map_err(|err| TlsError::ClientConfigError {
+        detail: format!("client key PEM: {err}"),
     })?;
     Ok((chain, key))
 }
@@ -197,23 +197,23 @@ mod tests {
     #[test]
     fn the_pinned_identity_is_accepted() {
         let (ca, leaf) = mint("Grid CA", &["spiffe://grid.internal/signals"], &Eku::ServerAndClient);
-        let v = verifier(&ca, "spiffe://grid.internal/signals");
-        verify(&v, &leaf).expect("the pinned identity verifies");
+        let verifier = verifier(&ca, "spiffe://grid.internal/signals");
+        verify(&verifier, &leaf).expect("the pinned identity verifies");
     }
 
     #[test]
     fn a_different_identity_is_refused() {
         let (ca, leaf) = mint("Grid CA", &["spiffe://grid.internal/other"], &Eku::ServerAndClient);
-        let v = verifier(&ca, "spiffe://grid.internal/signals");
-        verify(&v, &leaf).expect_err("a CA-signed but unpinned identity is refused");
+        let verifier = verifier(&ca, "spiffe://grid.internal/signals");
+        verify(&verifier, &leaf).expect_err("a CA-signed but unpinned identity is refused");
     }
 
     #[test]
     fn a_certificate_off_the_ca_is_refused() {
         let (_rogue, leaf) = mint("Rogue CA", &["spiffe://grid.internal/signals"], &Eku::ServerAndClient);
         let (grid_ca, _unused) = mint("Grid CA", &["spiffe://grid.internal/signals"], &Eku::ServerAndClient);
-        let v = verifier(&grid_ca, "spiffe://grid.internal/signals");
-        verify(&v, &leaf).expect_err("a certificate off the trusted CA is refused");
+        let verifier = verifier(&grid_ca, "spiffe://grid.internal/signals");
+        verify(&verifier, &leaf).expect_err("a certificate off the trusted CA is refused");
     }
 
     #[test]
@@ -223,23 +223,23 @@ mod tests {
             &["spiffe://grid.internal/signals", "spiffe://grid.internal/other"],
             &Eku::ServerAndClient,
         );
-        let v = verifier(&ca, "spiffe://grid.internal/signals");
-        verify(&v, &leaf).expect_err("two names match no pin");
+        let verifier = verifier(&ca, "spiffe://grid.internal/signals");
+        verify(&verifier, &leaf).expect_err("two names match no pin");
     }
 
     #[test]
     fn a_client_only_certificate_is_refused() {
         // Right CA, right SAN, but marked for client use: it cannot be the server.
         let (ca, leaf) = mint("Grid CA", &["spiffe://grid.internal/signals"], &Eku::ClientOnly);
-        let v = verifier(&ca, "spiffe://grid.internal/signals");
-        verify(&v, &leaf).expect_err("a client-only EKU is refused for server auth");
+        let verifier = verifier(&ca, "spiffe://grid.internal/signals");
+        verify(&verifier, &leaf).expect_err("a client-only EKU is refused for server auth");
     }
 
     #[test]
     fn an_absent_eku_is_accepted() {
         let (ca, leaf) = mint("Grid CA", &["spiffe://grid.internal/signals"], &Eku::Absent);
-        let v = verifier(&ca, "spiffe://grid.internal/signals");
-        verify(&v, &leaf).expect("a certificate without an EKU extension is accepted");
+        let verifier = verifier(&ca, "spiffe://grid.internal/signals");
+        verify(&verifier, &leaf).expect("a certificate without an EKU extension is accepted");
     }
 
     #[test]
@@ -360,8 +360,8 @@ mod tests {
         leaf.not_after = rcgen::date_time_ymd(2000, 12, 31);
         let leaf_der = leaf.signed_by(&leaf_key, &issuer).expect("leaf cert").der().clone();
 
-        let v = verifier(&ca_der, "spiffe://grid.internal/signals");
-        verify(&v, &leaf_der).expect_err("an expired certificate is rejected");
+        let verifier = verifier(&ca_der, "spiffe://grid.internal/signals");
+        verify(&verifier, &leaf_der).expect_err("an expired certificate is rejected");
     }
 
     // -------------------------------------------------------------------------
@@ -530,9 +530,10 @@ mod tests {
         SpiffePinnedPeer::new(&provider(), Arc::new(roots), Arc::from(expected))
     }
 
-    fn verify(v: &SpiffePinnedPeer, leaf: &CertificateDer<'_>) -> Result<(), rustls::Error> {
+    fn verify(verifier: &SpiffePinnedPeer, leaf: &CertificateDer<'_>) -> Result<(), rustls::Error> {
         let name = ServerName::try_from("peer.grid").expect("server name");
-        v.verify_server_cert(leaf, &[], &name, &[], UnixTime::now())
+        verifier
+            .verify_server_cert(leaf, &[], &name, &[], UnixTime::now())
             .map(|_verified| ())
     }
 }
